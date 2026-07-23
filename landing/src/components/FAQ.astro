@@ -1,0 +1,65 @@
+---
+import { SITE } from "../lib/site";
+
+const faqs = [
+  {
+    question: "Do I need to download an app?",
+    answer: `No. Everything happens inside the WhatsApp you already use — there's nothing new to install and nothing to learn from scratch.`,
+  },
+  {
+    question: "Which countries do you support?",
+    answer: `${SITE.name} is built for shop owners in ${SITE.supportedCountries.join(", ")} today, with more countries on the way.`,
+  },
+  {
+    question: "Will TradePal message my customers?",
+    answer:
+      "Never. TradePal only ever replies to you, the merchant. Payment links, reminders, and your catalog are text you choose to copy and forward yourself.",
+  },
+  {
+    question: "How do I get paid online?",
+    answer:
+      "The /paylink command generates a one-off checkout link your customer can pay by card or mobile money — you just forward it to them on WhatsApp.",
+  },
+  {
+    question: "Can my staff use it too?",
+    answer:
+      "Yes. /addstaff lets you give another WhatsApp number access to log sales and expenses for your business, and /removestaff revokes it instantly.",
+  },
+  {
+    question: "What does it cost?",
+    answer:
+      "The Free plan covers up to 100 entries a month at no cost. Starter is ₦5,000/month for up to 1,000 entries and voice note logging.",
+  },
+];
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: faqs.map((faq) => ({
+    "@type": "Question",
+    name: faq.question,
+    acceptedAnswer: { "@type": "Answer", text: faq.answer },
+  })),
+};
+---
+
+<section id="faq" class="bg-slate-50 py-24">
+  <div class="mx-auto max-w-3xl px-6">
+    <h2 class="text-center text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
+      Frequently asked questions
+    </h2>
+
+    <dl class="mt-12 space-y-6">
+      {
+        faqs.map((faq) => (
+          <div class="rounded-2xl bg-white p-6 shadow-sm">
+            <dt class="text-base font-bold text-slate-900">{faq.question}</dt>
+            <dd class="mt-2 text-sm leading-relaxed text-slate-600">{faq.answer}</dd>
+          </div>
+        ))
+      }
+    </dl>
+  </div>
+
+  <script type="application/ld+json" is:inline set:html={JSON.stringify(jsonLd)} />
+</section>

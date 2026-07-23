@@ -1,0 +1,58 @@
+---
+import { SITE, whatsappCtaHref } from "../lib/site";
+
+const steps = [
+  {
+    number: "1",
+    title: "Message us on WhatsApp",
+    description: `Send a message to set up your shop. We detect your country and currency automatically — built for ${SITE.supportedCountries.join(", ")}.`,
+  },
+  {
+    number: "2",
+    title: "Log sales and expenses like you'd text a friend",
+    description: '"sold 2 bags of rice for 12000" is all it takes — no forms, no menus to navigate.',
+  },
+  {
+    number: "3",
+    title: "Use a command whenever you need a number",
+    description: "/today for the day's totals, /stock for what's left, /paylink to get paid — all in the same chat.",
+  },
+  {
+    number: "4",
+    title: "Get a weekly digest",
+    description: "A short summary lands in your chat so you always know how the business is doing, even on a busy week.",
+  },
+];
+---
+
+<section id="how-it-works" class="bg-slate-50 py-24">
+  <div class="mx-auto max-w-6xl px-6">
+    <div class="mx-auto max-w-2xl text-center">
+      <h2 class="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">How it works</h2>
+      <p class="mt-4 text-lg text-slate-600">From first message to your first payment link, in minutes.</p>
+    </div>
+
+    <ol class="mt-16 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+      {
+        steps.map((step) => (
+          <li class="relative rounded-2xl bg-white p-6 shadow-sm">
+            <span class="flex h-10 w-10 items-center justify-center rounded-full bg-teal-600 text-lg font-bold text-white">
+              {step.number}
+            </span>
+            <h3 class="mt-4 text-lg font-bold text-slate-900">{step.title}</h3>
+            <p class="mt-2 text-sm leading-relaxed text-slate-600">{step.description}</p>
+          </li>
+        ))
+      }
+    </ol>
+
+    <div class="mt-14 text-center">
+      <a
+        href={whatsappCtaHref()}
+        class="inline-flex items-center gap-2 rounded-full bg-teal-600 px-6 py-3 text-base font-semibold text-white shadow-md transition hover:bg-teal-700"
+      >
+        Start free on WhatsApp
+      </a>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,15 @@
+---
+import { SITE } from "../lib/site";
+
+const year = new Date().getFullYear();
+---
+
+<footer class="border-t border-slate-100 py-10">
+  <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-sm text-slate-500 sm:flex-row">
+    <p>&copy; {year} {SITE.name}. All rights reserved.</p>
+    <div class="flex items-center gap-6">
+      <a href="/privacy" class="transition hover:text-slate-700">Privacy</a>
+      <a href="/terms" class="transition hover:text-slate-700">Terms</a>
+    </div>
+  </div>
+</footer>

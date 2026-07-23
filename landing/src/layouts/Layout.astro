@@ -1,0 +1,65 @@
+---
+import "../styles/global.css";
+import { SITE } from "../lib/site";
+
+interface Props {
+  title: string;
+  description?: string;
+  /** Path only, e.g. "/pricing" — canonical/OG URLs are derived from Astro.site + this. */
+  path?: string;
+}
+
+const { title, description = SITE.description, path = "/" } = Astro.props;
+const canonicalURL = new URL(path, Astro.site);
+const ogImageURL = new URL("/og-image.png", Astro.site);
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: SITE.name,
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "Web, WhatsApp",
+  description: SITE.description,
+  url: SITE.url,
+  offers: [
+    { "@type": "Offer", name: "Free", price: "0", priceCurrency: "NGN" },
+    { "@type": "Offer", name: "Starter", price: "5000", priceCurrency: "NGN" },
+  ],
+  areaServed: SITE.supportedCountries,
+};
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="canonical" href={canonicalURL} />
+    <meta name="generator" content={Astro.generator} />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#0d9488" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={SITE.name} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalURL} />
+    <meta property="og:image" content={ogImageURL} />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageURL} />
+
+    <script type="application/ld+json" is:inline set:html={JSON.stringify(jsonLd)} />
+  </head>
+  <body class="bg-white text-slate-900 antialiased">
+    <slot />
+  </body>
+</html>
