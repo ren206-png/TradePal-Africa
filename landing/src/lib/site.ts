@@ -13,7 +13,7 @@ export const SITE = {
   url: "https://tradepalafrica.com",
   description:
     "TradePal Africa turns the WhatsApp you already use into a bookkeeping, stock, and payment-collection tool for your shop — no app to download, no training required.",
-  whatsappNumber: "234XXXXXXXXXX",
+  whatsappNumber: "14123341362", // temporary placeholder — swap for the real business number later
   supportedCountries: ["Nigeria", "Kenya", "Ghana", "Sierra Leone"],
 } as const;
 
