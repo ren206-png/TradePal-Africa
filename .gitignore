@@ -6,11 +6,14 @@
 # Dependencies
 node_modules/
 admin-frontend/node_modules/
+landing/node_modules/
 
 # Build output
 dist/
 admin-frontend/dist/
 admin-frontend/build/
+landing/dist/
+landing/.astro/
 
 # Logs
 *.log

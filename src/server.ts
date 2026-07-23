@@ -89,6 +89,14 @@ app.use(
   }),
 );
 
+// Minimal liveness/health-check route. This API has no browser-facing
+// homepage (the marketing site lives separately, see landing/) — this just
+// gives GET / and infra health-checkers (e.g. Railway) a 200 instead of a
+// 404, since the only other routes mounted below are webhook/admin routes.
+app.get("/", (_req, res) => {
+  res.status(200).json({ status: "ok", service: "tradepal-africa-api" });
+});
+
 app.get("/webhooks/whatsapp", (req, res) => {
   verifyWebhookSubscription(req, res, verifyToken);
 });
