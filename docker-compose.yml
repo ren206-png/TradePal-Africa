@@ -1,0 +1,160 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tradepal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tradepal}
+      POSTGRES_DB: ${POSTGRES_DB:-tradepal}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tradepal}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      # Host-side port only — remapped to 5433 so this doesn't collide with
+      # another local project's Postgres already bound to the default 5432.
+      # Matches DATABASE_URL in .env, which already points at localhost:5433.
+      # Container-to-container traffic (server/worker -> postgres:5432 above)
+      # is unaffected, since that uses the Docker network's internal port.
+      - "5433:5432"
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      # Same reasoning as postgres above — remapped to 6380 to match .env's
+      # REDIS_URL (localhost:6380) and avoid colliding with another local
+      # project's Redis on the default 6379.
+      - "6380:6379"
+
+  # One-shot: applies pending Prisma migrations, then exits. `server` and
+  # `worker` wait for this to finish successfully rather than each racing to
+  # run `prisma migrate deploy` themselves on startup.
+  migrate:
+    build: .
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tradepal}:${POSTGRES_PASSWORD:-tradepal}@postgres:5432/${POSTGRES_DB:-tradepal}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  server:
+    build: .
+    command: ["node", "dist/src/server.js"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tradepal}:${POSTGRES_PASSWORD:-tradepal}@postgres:5432/${POSTGRES_DB:-tradepal}
+      REDIS_URL: redis://redis:6379
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["node", "dist/src/worker.js"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tradepal}:${POSTGRES_PASSWORD:-tradepal}@postgres:5432/${POSTGRES_DB:-tradepal}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Phases 6/7: the hourly subscription-expiry sweep (flips lapsed ACTIVE
+  # subscriptions to PAST_DUE and sends the WhatsApp lapse notification) plus
+  # the BullMQ repeatable-job scheduler that drives it. This is a separate
+  # process/service from `worker` (which only consumes inbound WhatsApp
+  # messages) — src/subscriptionExpiryWorker.ts registers its own repeatable
+  # job on boot, so without this service running, `docker compose up` would
+  # silently never run the sweep at all: no crash, no log, no error, the
+  # feature just never fires. WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID
+  # in .env are optional (see subscriptionExpiryWorker.ts): missing credentials
+  # only skip the WhatsApp lapse-notification send via a console.warn fallback,
+  # they don't stop this process from starting.
+  subscription-expiry-worker:
+    build: .
+    command: ["node", "dist/src/subscriptionExpiryWorker.js"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tradepal}:${POSTGRES_PASSWORD:-tradepal}@postgres:5432/${POSTGRES_DB:-tradepal}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Phase 12: the weekly business-health digest sweep (src/domain/businessDigest.ts)
+  # plus the BullMQ repeatable-job scheduler that drives it. Its own process/service,
+  # separate from `worker` and `subscription-expiry-worker`, for the same reason those
+  # two are already separate from each other: src/businessDigestWorker.ts registers its
+  # own repeatable job on boot, so without this service running, `docker compose up`
+  # would silently never send a single digest — no crash, no log, no error, the feature
+  # just never fires (the exact lesson Phase 8 disclosed about this same class of
+  # mistake). WHATSAPP_ACCESS_TOKEN/WHATSAPP_PHONE_NUMBER_ID are optional here, same as
+  # `subscription-expiry-worker` actually behaves (see businessDigestWorker.ts): missing
+  # credentials only skip the WhatsApp send, they don't stop this process from starting.
+  business-digest-worker:
+    build: .
+    command: ["node", "dist/src/businessDigestWorker.js"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tradepal}:${POSTGRES_PASSWORD:-tradepal}@postgres:5432/${POSTGRES_DB:-tradepal}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Phase 26: the hourly payment-request-expiry sweep (flips stale PENDING
+  # PaymentRequest rows to EXPIRED once they're more than 24h old — see
+  # src/domain/paymentRequestExpiry.ts) plus the BullMQ repeatable-job
+  # scheduler that drives it. Same separate-process rationale as
+  # `subscription-expiry-worker`/`business-digest-worker` above:
+  # src/paymentRequestExpiryWorker.ts registers its own repeatable job on
+  # boot, so without this service running, `docker compose up` would
+  # silently never run the sweep at all. Unlike those two workers, this one
+  # sends no WhatsApp notification of any kind, so it needs no
+  # WHATSAPP_ACCESS_TOKEN/WHATSAPP_PHONE_NUMBER_ID at all — env_file is still
+  # included for consistency with every other service, not because this
+  # process reads anything WhatsApp-related from it.
+  payment-request-expiry-worker:
+    build: .
+    command: ["node", "dist/src/paymentRequestExpiryWorker.js"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tradepal}:${POSTGRES_PASSWORD:-tradepal}@postgres:5432/${POSTGRES_DB:-tradepal}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

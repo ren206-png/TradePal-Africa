@@ -1,0 +1,768 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Reference / master data
+// ─────────────────────────────────────────────────────────────────────────
+
+model Country {
+  code            String   @id // ISO 3166-1 alpha-2: NG, KE, SL, GH
+  name            String
+  callingCode     String // e.g. "234"
+  defaultCurrency String // FK -> Currency.code
+  defaultTimezone String // IANA tz, e.g. Africa/Lagos
+  createdAt       DateTime @default(now()) @db.Timestamptz()
+
+  currency      Currency        @relation(fields: [defaultCurrency], references: [code])
+  countryConfig CountryConfig[]
+  businesses    Business[]
+
+  @@index([defaultCurrency])
+}
+
+model Currency {
+  code         String @id // ISO 4217, e.g. NGN, KES, GHS, SLE, TZS
+  name         String
+  minorUnitExp Int // decimal places of the minor unit; TZS documented as 0 (whole shilling treated as minor unit)
+
+  countries       Country[]
+  businesses      Business[]
+  transactions    Transaction[]
+  debts           Debt[]
+  plans           Plan[]
+  invoices        Invoice[]
+  paymentRequests PaymentRequest[]
+}
+
+model Language {
+  code String @id // e.g. en, pcm (Nigerian Pidgin), sw (Swahili/Sheng), kri (Krio), tw (Twi)
+  name String
+
+  countryConfigs CountryConfig[]
+  businesses     Business[]
+}
+
+model CountryConfig {
+  id                String  @id @default(uuid())
+  countryCode       String
+  defaultLanguage   String
+  voiceEnabled      Boolean @default(false) // Krio (Sierra Leone) launches text-first per Phase 0 KQ4 finding
+  asrProviderConfig Json? // per-country ASR provider selection, null when voiceEnabled is false
+  waTemplateNamespace String?
+
+  country  Country  @relation(fields: [countryCode], references: [code])
+  language Language @relation(fields: [defaultLanguage], references: [code])
+
+  createdAt DateTime @default(now()) @db.Timestamptz()
+  updatedAt DateTime @updatedAt @db.Timestamptz()
+
+  @@unique([countryCode])
+  @@index([countryCode])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Tenancy: Business (the shop) and Merchant (the WhatsApp-identified operator)
+// ─────────────────────────────────────────────────────────────────────────
+
+model Business {
+  id           String   @id @default(uuid())
+  name         String
+  countryCode  String
+  currencyCode String
+  languageCode String
+  timezone     String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
+  createdAt    DateTime @default(now()) @db.Timestamptz()
+  updatedAt    DateTime @updatedAt @db.Timestamptz()
+
+  country  Country  @relation(fields: [countryCode], references: [code])
+  currency Currency @relation(fields: [currencyCode], references: [code])
+  language Language @relation(fields: [languageCode], references: [code])
+
+  merchants            Merchant[]
+  users                User[]
+  transactions          Transaction[]
+  transactionItems       TransactionItem[]
+  customers             Customer[]
+  suppliers              Supplier[]
+  debts                  Debt[]
+  debtPayments           DebtPayment[]
+  inventoryItems         InventoryItem[]
+  inventoryMovements     InventoryMovement[]
+  reminders              Reminder[]
+  whatsappMessages       WhatsAppMessage[]
+  mobileMoneyAlerts      MobileMoneyAlert[]
+  aiParseLogs            AiParseLog[]
+  subscriptions          Subscription[]
+  auditLogs              AuditLog[]
+  consentLogs            ConsentLog[]
+  deletionRequests       DeletionRequest[]
+  businessFeatureFlags   BusinessFeatureFlag[]
+  paymentRequests        PaymentRequest[]
+
+  @@index([countryCode])
+}
+
+enum MerchantRole {
+  OWNER
+  STAFF
+}
+
+enum OnboardingStep {
+  AWAITING_COUNTRY
+  AWAITING_LANGUAGE
+  AWAITING_BUSINESS_NAME
+  AWAITING_CONSENT
+  COMPLETE
+}
+
+model Merchant {
+  id              String          @id @default(uuid())
+  businessId      String
+  phoneNumber     String          @unique // WhatsApp number = merchant identity (KQ6)
+  role            MerchantRole    @default(OWNER)
+  onboardingStep  OnboardingStep  @default(AWAITING_COUNTRY)
+  // Phase 14: /removestaff soft-deactivates a STAFF merchant rather than
+  // deleting the row (preserves AuditLog/ConsentLog history, and keeps
+  // Merchant.phoneNumber's own row around so recordAuditLog's entityId FKs
+  // never dangle). null = active. Never set for an OWNER (see removeStaffMerchant).
+  removedAt       DateTime?       @db.Timestamptz()
+  createdAt       DateTime        @default(now()) @db.Timestamptz()
+  updatedAt       DateTime        @updatedAt @db.Timestamptz()
+
+  business     Business      @relation(fields: [businessId], references: [id])
+  consentLogs  ConsentLog[]
+
+  @@index([businessId])
+}
+
+/// Placeholder for future magic-link merchant dashboard login (Phase 4). Not used by the Phase 1 conversation flow.
+model User {
+  id         String   @id @default(uuid())
+  businessId String
+  merchantId String?  @unique
+  createdAt  DateTime @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId])
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  ANALYST
+  SUPPORT
+}
+
+/// Internal TradePal staff — never tenant-scoped, backs the Phase 2 admin dashboard (read-only first, RBAC before any write).
+model AdminUser {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  name         String
+  role         AdminRole
+  passwordHash String // bcrypt hash (see src/admin/auth.ts) — never stores or logs the raw password
+  createdAt    DateTime  @default(now()) @db.Timestamptz()
+}
+
+/// Revocation list for admin JWTs (see src/admin/tokenRevocation.ts). A stateless JWT can't be
+/// invalidated on its own — POST /admin/logout inserts the token's `jti` here, and
+/// requireAdminAuth checks it on every request. Rows are opportunistically pruned once
+/// `expiresAt` passes, since the token would be rejected on expiry alone at that point.
+model RevokedAdminToken {
+  jti       String   @id
+  expiresAt DateTime @db.Timestamptz()
+  revokedAt DateTime @default(now()) @db.Timestamptz()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Ledger core — append-only
+// ─────────────────────────────────────────────────────────────────────────
+
+enum TransactionType {
+  SALE
+  PURCHASE
+  PAYMENT_RECEIVED
+  EXPENSE
+  DEBT_NOTE
+  STOCK_ADJUSTMENT
+}
+
+enum PaymentStatus {
+  PAID
+  CREDIT
+  PARTIAL
+}
+
+/// Append-only. No UPDATE or DELETE is permitted on a posted row at the application layer —
+/// corrections happen exclusively via a new row with reversalOfTransactionId set. Enforced by
+/// TenantScopedClient (src/db/tenantScope.ts), which blocks `.update` and `.delete` for this model.
+model Transaction {
+  id                     String          @id @default(uuid())
+  businessId             String
+  type                   TransactionType
+  amountMinor            BigInt // integer minor units — never a float. See src/domain/money.ts.
+  currencyCode           String
+  paymentStatus          PaymentStatus
+  customerId             String?
+  supplierId             String?
+  description            String? // merchant-facing one-line summary
+  rawMerchantText        String? // the original message that produced this row, for audit/undo context
+  whatsappMessageId      String?
+  reversalOfTransactionId String?        @unique // set only on a reversal row; original rows leave this null
+  createdAt              DateTime        @default(now()) @db.Timestamptz()
+
+  business  Business   @relation(fields: [businessId], references: [id])
+  currency  Currency   @relation(fields: [currencyCode], references: [code])
+  customer  Customer?  @relation(fields: [customerId], references: [id])
+  supplier  Supplier?  @relation(fields: [supplierId], references: [id])
+
+  reversalOf   Transaction? @relation("Reversal", fields: [reversalOfTransactionId], references: [id])
+  reversedBy   Transaction? @relation("Reversal")
+
+  items             TransactionItem[]
+  debtsCreated       Debt[]              @relation("DebtOriginTransaction")
+  debtPayments       DebtPayment[]
+  inventoryMovements InventoryMovement[]
+  aiParseLogs        AiParseLog[]
+  mobileMoneyMatch   MobileMoneyAlert[]
+
+  @@index([businessId, createdAt])
+  @@index([businessId, type])
+  @@index([businessId, customerId])
+}
+
+model TransactionItem {
+  id              String  @id @default(uuid())
+  businessId      String // denormalized from transaction so tenant-scoping can be enforced mechanically without a join
+  transactionId   String
+  inventoryItemId String?
+  itemName        String
+  quantity        Int
+  unitPriceMinor  BigInt
+  lineTotalMinor  BigInt // must equal quantity * unitPriceMinor within rounding — validated in the AI parsing layer, not just here
+
+  business       Business       @relation(fields: [businessId], references: [id])
+  transaction    Transaction    @relation(fields: [transactionId], references: [id])
+  inventoryItem  InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+
+  @@index([businessId])
+  @@index([transactionId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Customers, suppliers, debts
+// ─────────────────────────────────────────────────────────────────────────
+
+enum RiskLabel {
+  UNKNOWN
+  GOOD_PAYER
+  LATE_PAYER
+  RISKY
+}
+
+/// Deliberately has no phone number field: per Phase 0 KQ5, TradePal never resolves or stores a
+/// WhatsApp/phone number for a merchant's customer, since that person has not consented to TradePal
+/// processing their data. Only the merchant-given label is stored.
+model Customer {
+  id          String    @id @default(uuid())
+  businessId  String
+  name        String // merchant-given label, e.g. "John the tailor" — anonymized to a placeholder on deletion request
+  riskLabel   RiskLabel @default(UNKNOWN) // derived only from payment history (src/domain/riskLabel.ts), never from AI inference
+  isAnonymized Boolean  @default(false)
+  createdAt   DateTime  @default(now()) @db.Timestamptz()
+  updatedAt   DateTime  @updatedAt @db.Timestamptz()
+
+  business        Business         @relation(fields: [businessId], references: [id])
+  transactions    Transaction[]
+  debts           Debt[]
+  reminders       Reminder[]
+  paymentRequests PaymentRequest[]
+
+  @@index([businessId, name])
+}
+
+model Supplier {
+  id         String   @id @default(uuid())
+  businessId String
+  name       String
+  note       String?
+  createdAt  DateTime @default(now()) @db.Timestamptz()
+
+  business     Business      @relation(fields: [businessId], references: [id])
+  transactions Transaction[]
+
+  @@index([businessId, name])
+}
+
+enum DebtStatus {
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  WRITTEN_OFF
+}
+
+model Debt {
+  id                     String     @id @default(uuid())
+  businessId             String
+  customerId             String
+  originTransactionId    String?
+  originalAmountMinor    BigInt
+  outstandingAmountMinor BigInt
+  currencyCode           String
+  dueDate                DateTime?  @db.Timestamptz()
+  status                 DebtStatus @default(OPEN)
+  createdAt              DateTime   @default(now()) @db.Timestamptz()
+  updatedAt              DateTime   @updatedAt @db.Timestamptz()
+
+  business          Business     @relation(fields: [businessId], references: [id])
+  customer          Customer     @relation(fields: [customerId], references: [id])
+  originTransaction Transaction? @relation("DebtOriginTransaction", fields: [originTransactionId], references: [id])
+  currency          Currency     @relation(fields: [currencyCode], references: [code])
+  payments          DebtPayment[]
+  reminders         Reminder[]
+
+  @@index([businessId, status])
+  @@index([businessId, customerId])
+}
+
+model DebtPayment {
+  id            String   @id @default(uuid())
+  businessId    String // denormalized from debt so tenant-scoping can be enforced mechanically without a join
+  debtId        String
+  transactionId String
+  amountMinor   BigInt
+  createdAt     DateTime @default(now()) @db.Timestamptz()
+
+  business    Business    @relation(fields: [businessId], references: [id])
+  debt        Debt        @relation(fields: [debtId], references: [id])
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  @@index([businessId])
+  @@index([debtId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Inventory — approximate mode, never blocks a sale
+// ─────────────────────────────────────────────────────────────────────────
+
+model InventoryItem {
+  id                String    @id @default(uuid())
+  businessId        String
+  name              String
+  // Phase 17: lowercased/trimmed mirror of `name`, maintained by the application layer
+  // (not a DB trigger/generated column — Prisma has no portable support for either here).
+  // Backs the `@@unique` below, which closes the race where two concurrent WhatsApp
+  // messages naming the same brand-new item for the first time (e.g. both say "Bread")
+  // could previously create two separate rows: `findOrCreateInventoryItem`'s prior
+  // check-then-create had no DB backstop, unlike `Merchant.phoneNumber`'s `@unique`.
+  // Postgres has no case-insensitive unique constraint without `citext`/an expression
+  // index, so the app computes this column itself on every write.
+  normalizedName    String
+  unit              String? // e.g. "bottle", "bag", "kg"
+  estimatedStockQty Int       @default(0) // an estimate; a sale is never blocked by this reaching zero
+  lowStockThreshold Int?
+  // Phase 24: set via /setprice. Nullable — most items still have no price, same as lowStockThreshold.
+  priceMinor        BigInt?
+  createdAt         DateTime  @default(now()) @db.Timestamptz()
+  updatedAt         DateTime  @updatedAt @db.Timestamptz()
+
+  business  Business            @relation(fields: [businessId], references: [id])
+  items     TransactionItem[]
+  movements InventoryMovement[]
+
+  @@unique([businessId, normalizedName])
+  @@index([businessId, name])
+}
+
+enum MovementSource {
+  SALE
+  PURCHASE
+  ADJUSTMENT
+  SHRINKAGE_UNKNOWN
+}
+
+model InventoryMovement {
+  id              String         @id @default(uuid())
+  businessId      String
+  inventoryItemId String
+  quantityDelta   Int // signed
+  source          MovementSource
+  transactionId   String?
+  createdAt       DateTime       @default(now()) @db.Timestamptz()
+
+  business      Business       @relation(fields: [businessId], references: [id])
+  inventoryItem InventoryItem  @relation(fields: [inventoryItemId], references: [id])
+  transaction   Transaction?   @relation(fields: [transactionId], references: [id])
+
+  @@index([businessId, inventoryItemId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Reminders — merchant-forwarded only (KQ2). Never sent to a customer directly.
+// ─────────────────────────────────────────────────────────────────────────
+
+model Reminder {
+  id                    String   @id @default(uuid())
+  businessId            String
+  customerId            String
+  debtId                String?
+  languageCode          String
+  generatedText         String
+  deliveredToMerchantAt DateTime @db.Timestamptz()
+  createdAt             DateTime @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+  debt     Debt?    @relation(fields: [debtId], references: [id])
+
+  @@index([businessId, customerId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// WhatsApp plumbing
+// ─────────────────────────────────────────────────────────────────────────
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model WhatsAppMessage {
+  id             String            @id @default(uuid())
+  businessId     String? // nullable: inbound messages before onboarding resolves a business
+  waMessageId    String            @unique
+  direction      MessageDirection
+  fromNumber     String
+  toNumber       String
+  messageType    String // text, audio, template, etc.
+  rawPayload     Json
+  createdAt      DateTime          @default(now()) @db.Timestamptz()
+
+  business Business? @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+enum WebhookStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+/// Dedupe table for Meta webhook retries. Unique constraint on waMessageId is the enforcement
+/// mechanism for exactly-once processing (KQ / Non-Negotiable Standard #3).
+model WebhookEvent {
+  id          String        @id @default(uuid())
+  waMessageId String        @unique
+  payload     Json
+  status      WebhookStatus @default(PENDING)
+  receivedAt  DateTime      @default(now()) @db.Timestamptz()
+  processedAt DateTime?     @db.Timestamptz()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Mobile money reconciliation (Phase 3, schema now)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum MatchStatus {
+  UNMATCHED
+  SUGGESTED
+  CONFIRMED
+}
+
+model MobileMoneyAlert {
+  id                    String      @id @default(uuid())
+  businessId            String
+  provider              String
+  amountMinor           BigInt
+  currencyCode          String
+  senderMasked          String?
+  providerTransactionId String?
+  rawText               String
+  matchStatus           MatchStatus @default(UNMATCHED)
+  matchedTransactionId  String?
+  createdAt             DateTime    @default(now()) @db.Timestamptz()
+
+  business           Business     @relation(fields: [businessId], references: [id])
+  matchedTransaction Transaction? @relation(fields: [matchedTransactionId], references: [id])
+
+  @@index([businessId, matchStatus])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AI parsing audit trail
+// ─────────────────────────────────────────────────────────────────────────
+
+enum IntentType {
+  SALE
+  PURCHASE
+  PAYMENT_RECEIVED
+  EXPENSE
+  DEBT_NOTE
+  STOCK_ADJUSTMENT
+  QUERY
+  GREETING
+  UNKNOWN
+}
+
+enum ConfidenceTier {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum FinalAction {
+  AUTO_LOGGED
+  CLARIFIED_THEN_LOGGED
+  CONFIRMED_THEN_LOGGED
+  REJECTED
+  ANSWERED // for query/greeting intents that never produce a transaction
+}
+
+/// Every parse — raw input, raw output, validation result, final action — is logged here.
+/// A validation failure must never result in a persisted transaction (see src/ai/parse.ts).
+model AiParseLog {
+  id                  String         @id @default(uuid())
+  businessId          String?
+  whatsappMessageId   String?
+  rawInput            String
+  rawModelOutput      Json
+  intent              IntentType
+  confidenceScore     Float
+  confidenceTier      ConfidenceTier
+  validationPassed    Boolean
+  validationErrors    Json?
+  finalAction         FinalAction
+  resultingTransactionId String?
+  createdAt           DateTime       @default(now()) @db.Timestamptz()
+
+  business           Business?    @relation(fields: [businessId], references: [id])
+  resultingTransaction Transaction? @relation(fields: [resultingTransactionId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Billing (Phase 3, schema now)
+// ─────────────────────────────────────────────────────────────────────────
+
+model Plan {
+  code               String   @id // e.g. FREE, STARTER
+  name                String
+  priceMinor          BigInt
+  currencyCode        String
+  entryCapPerMonth    Int? // null = uncapped
+  voiceEnabled        Boolean  @default(false)
+  // Phase 14: caps how many STAFF-role Merchant rows a business's /addstaff
+  // can create. null = uncapped. Mirrors entryCapPerMonth's null-is-uncapped
+  // convention exactly; the OWNER is never counted against this cap.
+  staffCapCount       Int?
+  createdAt           DateTime @default(now()) @db.Timestamptz()
+
+  currency      Currency       @relation(fields: [currencyCode], references: [code])
+  subscriptions Subscription[]
+}
+
+enum SubscriptionStatus {
+  // Phase 22: a checkout link was generated (an Invoice exists) but Flutterwave
+  // hasn't yet confirmed payment. Distinct from ACTIVE so a business that never
+  // completes checkout doesn't look subscribed, and from PAST_DUE so
+  // subscriptionExpiry.ts's lapse sweep (which only ever targets ACTIVE rows)
+  // never touches it.
+  PENDING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+model Subscription {
+  id                 String             @id @default(uuid())
+  businessId         String
+  planCode           String
+  status             SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime           @db.Timestamptz()
+  currentPeriodEnd   DateTime           @db.Timestamptz()
+  createdAt          DateTime           @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+  plan     Plan     @relation(fields: [planCode], references: [code])
+  invoices Invoice[]
+
+  @@index([businessId])
+}
+
+model Invoice {
+  id             String    @id @default(uuid())
+  subscriptionId String
+  amountMinor    BigInt
+  currencyCode   String
+  status         String // PENDING, PAID, FAILED
+  dueDate        DateTime  @db.Timestamptz()
+  paidAt         DateTime? @db.Timestamptz()
+  createdAt      DateTime  @default(now()) @db.Timestamptz()
+  // Phase 22: reconciles a Flutterwave webhook back to this Invoice. tx_ref is
+  // a string we generate at checkout-link creation time and pass to
+  // Flutterwave; it comes back unchanged on both the webhook payload and the
+  // Verify Transaction API response, so it (not Flutterwave's own numeric
+  // transaction id, which we don't have until the webhook fires) is what we
+  // hand to Flutterwave up front. @unique also gives us idempotency: a
+  // replayed webhook for the same tx_ref finds the same already-PAID row
+  // instead of creating a duplicate charge record. providerCode is nullable
+  // because every Invoice created before Phase 22 has no provider at all.
+  providerCode      String?
+  providerReference String? @unique
+
+  subscription Subscription    @relation(fields: [subscriptionId], references: [id])
+  currency     Currency        @relation(fields: [currencyCode], references: [code])
+  provider     PaymentProvider? @relation(fields: [providerCode], references: [code])
+
+  @@index([subscriptionId])
+}
+
+model PaymentProvider {
+  code        String   @id // PAYSTACK, MPESA, FLUTTERWAVE, MTN_MOMO, AIRTEL_MONEY, MONIME
+  countryCode String
+  config      Json
+  enabled     Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+
+  invoices        Invoice[]
+  paymentRequests PaymentRequest[]
+
+  @@index([countryCode])
+}
+
+/// Phase 24: a merchant-initiated request for one of their own customers to pay via
+/// Flutterwave (`/paylink`), as opposed to Invoice which is TradePal's own subscription
+/// billing of the merchant. Tenant-scoped (direct businessId), unlike Invoice.
+model PaymentRequest {
+  id           String   @id @default(uuid())
+  businessId   String
+  customerId   String?
+  description  String
+  amountMinor  BigInt
+  currencyCode String
+  status       String // PENDING, PAID, FAILED, EXPIRED
+  // Phase 24: same reconciliation role as Invoice.providerReference (see comment there),
+  // but prefixed "tpr_" (vs Invoice's "tp_") so the two txRef namespaces never collide even
+  // though they live in different tables/unique constraints.
+  providerCode      String?
+  providerReference String? @unique
+  checkoutUrl       String?
+  // Set once confirmPaymentRequestPayment records the sale via recordTransaction.
+  transactionId String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz()
+  paidAt        DateTime? @db.Timestamptz()
+
+  business Business        @relation(fields: [businessId], references: [id])
+  customer Customer?       @relation(fields: [customerId], references: [id])
+  currency Currency        @relation(fields: [currencyCode], references: [code])
+  provider PaymentProvider? @relation(fields: [providerCode], references: [code])
+
+  @@index([businessId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Cross-cutting: audit, flags, consent, deletion
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ActorType {
+  MERCHANT
+  ADMIN
+  SYSTEM
+}
+
+/// One row per state-changing action, per Non-Negotiable Standard #8.
+model AuditLog {
+  id         String    @id @default(uuid())
+  businessId String?
+  actorType  ActorType
+  actorId    String? // merchant message id, admin user id, or job name
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime  @default(now()) @db.Timestamptz()
+
+  business Business? @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+model FeatureFlag {
+  key         String   @id
+  description String
+  enabledByDefault Boolean @default(false) // all flags default OFF in production per Non-Negotiable Standard #7
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+
+  overrides BusinessFeatureFlag[]
+}
+
+model BusinessFeatureFlag {
+  id         String  @id @default(uuid())
+  businessId String
+  flagKey    String
+  enabled    Boolean
+
+  business Business    @relation(fields: [businessId], references: [id])
+  flag     FeatureFlag @relation(fields: [flagKey], references: [key])
+
+  @@unique([businessId, flagKey])
+  @@index([businessId])
+}
+
+enum ConsentType {
+  ONBOARDING_TERMS
+  DATA_PROCESSING
+}
+
+model ConsentLog {
+  id           String      @id @default(uuid())
+  businessId   String
+  merchantId   String
+  consentType  ConsentType
+  textVersion  String // version identifier of the consent copy shown, for audit
+  channel      String // e.g. "whatsapp"
+  consentedAt  DateTime    @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@index([businessId])
+}
+
+enum DeletionRequestorType {
+  MERCHANT
+  CUSTOMER_VIA_MERCHANT
+  CUSTOMER_DIRECT
+}
+
+enum DeletionRequestStatus {
+  PENDING
+  COMPLETED
+  REJECTED
+}
+
+/// Because Transaction rows are append-only and cannot be deleted, the compliant resolution for a
+/// customer-data deletion request is anonymizing Customer.name (see src/domain/deletion.ts), not
+/// deleting financial history. See Phase 0 KQ5.
+model DeletionRequest {
+  id             String                @id @default(uuid())
+  businessId     String
+  customerId     String?
+  requestorType  DeletionRequestorType
+  description    String
+  status         DeletionRequestStatus @default(PENDING)
+  resolutionNote String?
+  createdAt      DateTime              @default(now()) @db.Timestamptz()
+  resolvedAt     DateTime?             @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, status])
+}

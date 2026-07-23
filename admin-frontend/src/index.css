@@ -1,0 +1,200 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f5f6f8;
+  color: #1a1a2e;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 4px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.9rem;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+input,
+select {
+  padding: 0.4rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: #333;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1.5rem;
+  background: #1a1a2e;
+  color: #fff;
+}
+
+.app-title {
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.app-header nav {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+}
+
+.nav-link {
+  color: #cfcfe6;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.nav-link.active,
+.nav-link:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.app-user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.role-badge {
+  background: #4a4a7a;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
+.app-content {
+  flex: 1;
+  padding: 1.5rem;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.page h1 {
+  margin-top: 0;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  margin: 1rem 0;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #e5e5ec;
+  font-size: 0.9rem;
+}
+
+.data-table th {
+  background: #eceef4;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.filter-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.filter-label {
+  min-width: 200px;
+}
+
+.form-error {
+  color: #b3261e;
+  font-size: 0.85rem;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  background: #fff;
+  padding: 1rem;
+  border-radius: 6px;
+  max-width: 500px;
+}
+
+.detail-grid dt {
+  font-weight: 600;
+  color: #555;
+}
+
+.detail-grid dd {
+  margin: 0;
+}
+
+.inline-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  padding: 0.75rem;
+  background: #f9f9fb;
+}
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: #fff;
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  width: 320px;
+}
+
+.login-form h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.3rem;
+  text-align: center;
+}

@@ -1,0 +1,24 @@
+# Secrets — never commit real credentials
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+admin-frontend/node_modules/
+
+# Build output
+dist/
+admin-frontend/dist/
+admin-frontend/build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS junk
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
