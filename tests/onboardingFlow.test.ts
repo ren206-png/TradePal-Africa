@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
+import { getTenantScopedClient } from "../src/db/tenantScope.js";
 import {
   continueOnboarding,
   findMerchantByPhoneNumber,
@@ -54,7 +55,7 @@ describe("startOnboarding", () => {
 });
 
 describe("continueOnboarding", () => {
-  it("walks a merchant through business name and consent to completion, logging both consent types", async () => {
+  it("walks a merchant through business name, consent, and adding a first customer to completion, logging both consent types", async () => {
     const started = await startOnboarding(prisma, "254712345678");
     expect(started.merchant.onboardingStep).toBe("AWAITING_BUSINESS_NAME");
 
@@ -69,11 +70,33 @@ describe("continueOnboarding", () => {
     expect(afterGarbage.merchant.onboardingStep).toBe("AWAITING_CONSENT");
 
     const afterConsent = await continueOnboarding(prisma, afterGarbage.merchant, "yes");
-    expect(afterConsent.merchant.onboardingStep).toBe("COMPLETE");
-    expect(isOnboardingComplete(afterConsent.merchant)).toBe(true);
+    expect(afterConsent.merchant.onboardingStep).toBe("AWAITING_FIRST_CUSTOMER");
+    expect(afterConsent.reply).toMatch(/first customer/i);
+    expect(isOnboardingComplete(afterConsent.merchant)).toBe(false);
 
     const logs = await prisma.consentLog.findMany({ where: { merchantId: started.merchant.id } });
     expect(logs.map((l) => l.consentType).sort()).toEqual(["DATA_PROCESSING", "ONBOARDING_TERMS"]);
+
+    const afterCustomer = await continueOnboarding(prisma, afterConsent.merchant, "Chinedu");
+    expect(afterCustomer.merchant.onboardingStep).toBe("COMPLETE");
+    expect(isOnboardingComplete(afterCustomer.merchant)).toBe(true);
+    expect(afterCustomer.reply).toContain("Chinedu");
+
+    const scoped = getTenantScopedClient(prisma, started.merchant.businessId);
+    const customer = await scoped.customer.findFirst({ where: { name: "Chinedu" } });
+    expect(customer).not.toBeNull();
+  });
+
+  it("lets a merchant skip adding a first customer and still reach completion", async () => {
+    const started = await startOnboarding(prisma, "254711112222");
+    const afterName = await continueOnboarding(prisma, started.merchant, "Bosco Traders");
+    const afterConsent = await continueOnboarding(prisma, afterName.merchant, "yes");
+    expect(afterConsent.merchant.onboardingStep).toBe("AWAITING_FIRST_CUSTOMER");
+
+    const afterSkip = await continueOnboarding(prisma, afterConsent.merchant, "skip");
+    expect(afterSkip.merchant.onboardingStep).toBe("COMPLETE");
+    expect(isOnboardingComplete(afterSkip.merchant)).toBe(true);
+    expect(afterSkip.reply).toMatch(/no problem/i);
   });
 
   it("re-prompts for a business name instead of accepting a blank reply", async () => {
@@ -81,6 +104,15 @@ describe("continueOnboarding", () => {
     const afterBlank = await continueOnboarding(prisma, started.merchant, "   ");
 
     expect(afterBlank.merchant.onboardingStep).toBe("AWAITING_BUSINESS_NAME");
+  });
+
+  it("re-prompts for a customer name instead of accepting a blank reply", async () => {
+    const started = await startOnboarding(prisma, "254733334444");
+    const afterName = await continueOnboarding(prisma, started.merchant, "Zawadi Shop");
+    const afterConsent = await continueOnboarding(prisma, afterName.merchant, "yes");
+
+    const afterBlank = await continueOnboarding(prisma, afterConsent.merchant, "   ");
+    expect(afterBlank.merchant.onboardingStep).toBe("AWAITING_FIRST_CUSTOMER");
   });
 });
 

@@ -17,5 +17,5 @@ export const SITE = {
   supportedCountries: ["Nigeria", "Kenya", "Ghana", "Sierra Leone"],
 } as const;
 
-export const whatsappCtaHref = (prefilledMessage = "Hi! I'd like to get started with TradePal."): string =>
+export const whatsappCtaHref = (prefilledMessage = "Hi TradePal, I'd like to set up my shop."): string =>
   `https://wa.me/${SITE.whatsappNumber}?text=${encodeURIComponent(prefilledMessage)}`;

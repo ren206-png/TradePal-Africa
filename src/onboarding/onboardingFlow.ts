@@ -1,6 +1,7 @@
 import type { Merchant, PrismaClient } from "@prisma/client";
 import { getCountryByPhoneNumber } from "../config/countries.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
+import { findOrCreateCustomerByName } from "../domain/debtBook.js";
 
 export class UnsupportedCountryError extends Error {}
 
@@ -112,12 +113,53 @@ async function handleAwaitingConsent(
 
   const updated = await scoped.merchant.update({
     where: { id: merchant.id },
+    data: { onboardingStep: "AWAITING_FIRST_CUSTOMER" },
+  });
+
+  return {
+    merchant: updated,
+    reply:
+      "You're all set! Now let's add your first customer — reply with their name " +
+      '(e.g. "Amina"), or type SKIP to do this later with /debt <name> <amount>.',
+  };
+}
+
+export const ONBOARDING_COMPLETE_REPLY =
+  "Just tell me about a sale, expense, or debt in plain language, or type /help to see commands.";
+
+async function handleAwaitingFirstCustomer(
+  prisma: PrismaClient,
+  merchant: Merchant,
+  text: string,
+): Promise<OnboardingStepResult> {
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    return {
+      merchant,
+      reply: 'Please reply with your customer\'s name, or type SKIP to do this later.',
+    };
+  }
+
+  const scoped = getTenantScopedClient(prisma, merchant.businessId);
+
+  if (/^skip$/i.test(trimmed)) {
+    const updated = await scoped.merchant.update({
+      where: { id: merchant.id },
+      data: { onboardingStep: "COMPLETE" },
+    });
+    return { merchant: updated, reply: `No problem — you can add customers anytime with /debt <name> <amount>. ${ONBOARDING_COMPLETE_REPLY}` };
+  }
+
+  const customer = await findOrCreateCustomerByName(scoped, merchant.businessId, trimmed);
+  const updated = await scoped.merchant.update({
+    where: { id: merchant.id },
     data: { onboardingStep: "COMPLETE" },
   });
 
   return {
     merchant: updated,
-    reply: "You're all set! Just tell me about a sale, expense, or debt in plain language, or type /help to see commands.",
+    reply: `Added ${customer.name} as a customer. You're all set! ${ONBOARDING_COMPLETE_REPLY}`,
   };
 }
 
@@ -132,6 +174,8 @@ export async function continueOnboarding(
       return handleAwaitingBusinessName(prisma, merchant, text);
     case "AWAITING_CONSENT":
       return handleAwaitingConsent(prisma, merchant, text);
+    case "AWAITING_FIRST_CUSTOMER":
+      return handleAwaitingFirstCustomer(prisma, merchant, text);
     case "AWAITING_COUNTRY":
     case "AWAITING_LANGUAGE":
     case "COMPLETE":

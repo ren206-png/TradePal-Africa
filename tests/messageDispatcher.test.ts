@@ -226,7 +226,7 @@ describe("dispatchInboundMessage", () => {
     expect(webhookEvent.status).toBe("PROCESSED");
   });
 
-  it("continues onboarding through business name and consent to completion", async () => {
+  it("continues onboarding through business name, consent, and first-customer prompt to completion", async () => {
     const fromNumber = "2348011110002";
     const { deps } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
 
@@ -242,10 +242,15 @@ describe("dispatchInboundMessage", () => {
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.OB2.3", fromNumber, text: "yes" }));
 
     merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
-    expect(merchant.onboardingStep).toBe("COMPLETE");
+    expect(merchant.onboardingStep).toBe("AWAITING_FIRST_CUSTOMER");
 
     const consentLogs = await prisma.consentLog.findMany({ where: { merchantId: merchant.id } });
     expect(consentLogs).toHaveLength(2);
+
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.OB2.4", fromNumber, text: "SKIP" }));
+
+    merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    expect(merchant.onboardingStep).toBe("COMPLETE");
   });
 
   it("routes a slash command to the command router for an onboarded merchant", async () => {
@@ -258,6 +263,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.CMD.2", fromNumber, text: "Bola Stores" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.CMD.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.CMD.skip", fromNumber, text: "SKIP" }));
 
     fetchImpl.mockClear();
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.CMD.4", fromNumber, text: "/help" }));
@@ -277,6 +283,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.SALE.2", fromNumber, text: "Tunde Trading" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.SALE.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.SALE.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
 
@@ -311,6 +318,7 @@ describe("dispatchInboundMessage", () => {
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.LOW.1", fromNumber, text: "hi" }));
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.LOW.2", fromNumber, text: "Chidi Shop" }));
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.LOW.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.LOW.skip", fromNumber, text: "SKIP" }));
 
     const lowConfidenceProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.4 });
     const { deps: lowDeps, fetchImpl: lowFetch } = buildDeps(lowConfidenceProvider);
@@ -332,6 +340,7 @@ describe("dispatchInboundMessage", () => {
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.STOCK.1", fromNumber, text: "hi" }));
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.STOCK.2", fromNumber, text: "Ngozi Mart" }));
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.STOCK.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.STOCK.skip", fromNumber, text: "SKIP" }));
 
     const stockProvider = fakeProvider({ intent: "STOCK_ADJUSTMENT", itemName: "bread", quantityDelta: -2, confidence: 0.95 });
     const { deps: stockDeps, fetchImpl: stockFetch } = buildDeps(stockProvider);
@@ -356,6 +365,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.STOCKON.2", fromNumber, text: "Ngozi Mart 2" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.STOCKON.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.STOCKON.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     await prisma.featureFlag.upsert({
@@ -392,6 +402,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.SALEITEMS.2", fromNumber, text: "Bola Stores" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.SALEITEMS.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.SALEITEMS.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     await prisma.featureFlag.upsert({
@@ -448,6 +459,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.SALEOFF.2", fromNumber, text: "Kemi Store" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.SALEOFF.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.SALEOFF.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
 
@@ -486,6 +498,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.REMOVED.2", fromNumber, text: "Removed Merchant Shop" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.REMOVED.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.REMOVED.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     await prisma.merchant.update({ where: { id: merchant.id }, data: { removedAt: new Date() } });
@@ -565,6 +578,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.VOICE.3", fromNumber, text: "Aisha's Kiosk" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICE.4", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICE.skip", fromNumber, text: "SKIP" }));
     fetchImpl.mockClear();
 
     await dispatchInboundMessage(deps, await storeInboundAudioMessage({ waMessageId: "wamid.VOICE.5", fromNumber }));
@@ -583,6 +597,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.QUOTA.2", fromNumber, text: "Quota Test Shop" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.QUOTA.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.QUOTA.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     const scopedPrisma = getTenantScopedClient(prisma, merchant.businessId);
@@ -650,6 +665,7 @@ describe("dispatchInboundMessage", () => {
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEOK.1", fromNumber, text: "hi" }));
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEOK.2", fromNumber, text: "Kemi Foods" }));
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEOK.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEOK.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     await enableVoiceTranscriptionFlag(merchant.businessId);
@@ -681,6 +697,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.VOICEEMPTY.2", fromNumber, text: "Emeka Stores" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEEMPTY.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEEMPTY.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     await enableVoiceTranscriptionFlag(merchant.businessId);
@@ -708,6 +725,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.VOICEERR.2", fromNumber, text: "Funke Foods" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEERR.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEERR.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     await enableVoiceTranscriptionFlag(merchant.businessId);
@@ -738,6 +756,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.VOICEFLAGOFF.2", fromNumber, text: "Yemi Traders" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEFLAGOFF.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEFLAGOFF.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     // Deliberately NOT calling enableVoiceTranscriptionFlag — the flag stays off by default.
@@ -764,6 +783,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.VOICESL.2", fromNumber, text: "Freetown Traders" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICESL.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICESL.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     await enableVoiceTranscriptionFlag(merchant.businessId);
@@ -789,6 +809,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.VOICEPLAN.2", fromNumber, text: "Lagos Wares" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEPLAN.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICEPLAN.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     await enableVoiceTranscriptionFlag(merchant.businessId);
@@ -815,6 +836,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.VOICENOSTT.2", fromNumber, text: "Ibadan Mart" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICENOSTT.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.VOICENOSTT.skip", fromNumber, text: "SKIP" }));
 
     const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
     await enableVoiceTranscriptionFlag(merchant.businessId);
@@ -840,6 +862,7 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.STAFF.2", fromNumber: ownerNumber, text: "Halima Wares" }),
     );
     await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.STAFF.3", fromNumber: ownerNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.STAFF.skip", fromNumber: ownerNumber, text: "SKIP" }));
 
     const owner = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: ownerNumber } });
     await prisma.featureFlag.upsert({
@@ -881,7 +904,17 @@ describe("dispatchInboundMessage", () => {
       await storeInboundTextMessage({ waMessageId: "wamid.STAFF.5", fromNumber: staffNumber, text: "yes" }),
     );
     body = JSON.parse((staffFetch.mock.calls[0]?.[1] as RequestInit).body as string);
-    expect(body.text.body).toMatch(/all set/i);
+    expect(body.text.body).toMatch(/first customer/i);
+
+    staffMerchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: staffNumber } });
+    expect(staffMerchant.onboardingStep).toBe("AWAITING_FIRST_CUSTOMER");
+
+    await dispatchInboundMessage(
+      staffDeps,
+      await storeInboundTextMessage({ waMessageId: "wamid.STAFF.5b", fromNumber: staffNumber, text: "SKIP" }),
+    );
+    body = JSON.parse((staffFetch.mock.calls[1]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toMatch(/no problem/i);
 
     staffMerchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: staffNumber } });
     expect(staffMerchant.onboardingStep).toBe("COMPLETE");

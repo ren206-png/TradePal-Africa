@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "OnboardingStep" ADD VALUE 'AWAITING_FIRST_CUSTOMER';
+
