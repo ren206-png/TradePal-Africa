@@ -13,7 +13,18 @@ export const SITE = {
   url: "https://tradepalafrica.com",
   description:
     "TradePal Africa turns the WhatsApp you already use into a bookkeeping, stock, and payment-collection tool for your shop — no app to download, no training required.",
-  whatsappNumber: "14123341362", // temporary placeholder — swap for the real business number later
+  // TradePal Africa's real Cloud API number (+1 825-823-9920), registered
+  // under the TradePal Africa WhatsApp Business Account and matching
+  // production's WHATSAPP_PHONE_NUMBER_ID env var. The Meta app that owns it
+  // switched from Development to Live mode on 2026-07-24, so it's no longer
+  // subject to the recipient-allowlist restriction test-mode numbers have —
+  // any visitor can message it and get a reply. (Previously this pointed at
+  // Meta's free Cloud API test number, +1 555-154-3856, which was under a
+  // separate, still-Development-mode app — CTA clicks would have silently
+  // gone nowhere. 14123341362 is a third, unrelated number still registered
+  // to the regular WhatsApp Business mobile app rather than Cloud API, so
+  // messages to it never reach this backend at all.)
+  whatsappNumber: "18258239920",
   supportedCountries: ["Nigeria", "Kenya", "Ghana", "Sierra Leone", "Liberia", "Gambia"],
 } as const;
 
