@@ -560,6 +560,131 @@ describe("POST /admin/businesses/:id/subscription (+ /cancel) (RBAC + write path
   });
 });
 
+describe("POST /admin/businesses/:id/suspend (+ /reinstate) (RBAC + Phase 29 write path)", () => {
+  // Self-contained business, independent of the shared `businessId` used by other describe
+  // blocks, so this block's suspend/reinstate cycle can't be affected by test-execution order.
+  let suspendBusinessId: string;
+
+  beforeAll(async () => {
+    const business = await prisma.business.create({
+      data: { name: "Suspend Shop", countryCode: "NG", currencyCode: "NGN", languageCode: "en", timezone: "Africa/Lagos" },
+    });
+    suspendBusinessId = business.id;
+  });
+
+  it("refuses a SUPPORT admin — suspension is SUPER_ADMIN-only, stricter than other business writes", async () => {
+    const { body } = await login("support@tradepal.test", "correct-horse");
+    const res = await request(app)
+      .post(`/admin/businesses/${suspendBusinessId}/suspend`)
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({ reason: "Fraudulent activity." });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses an ANALYST admin", async () => {
+    const { body } = await login("analyst@tradepal.test", "correct-horse");
+    const res = await request(app)
+      .post(`/admin/businesses/${suspendBusinessId}/suspend`)
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({ reason: "Fraudulent activity." });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects a missing reason with a 400", async () => {
+    const { body } = await login("super@tradepal.test", "correct-horse");
+    const res = await request(app)
+      .post(`/admin/businesses/${suspendBusinessId}/suspend`)
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 suspending an unknown business", async () => {
+    const { body } = await login("super@tradepal.test", "correct-horse");
+    const res = await request(app)
+      .post("/admin/businesses/does-not-exist/suspend")
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({ reason: "Fraudulent activity." });
+
+    expect(res.status).toBe(404);
+  });
+
+  it("SUPER_ADMIN can suspend a business, and GET /admin/businesses/:id reflects it", async () => {
+    const { body } = await login("super@tradepal.test", "correct-horse");
+
+    const suspendRes = await request(app)
+      .post(`/admin/businesses/${suspendBusinessId}/suspend`)
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({ reason: "Multiple customer fraud reports, confirmed via support review." });
+    expect(suspendRes.status).toBe(200);
+    expect(suspendRes.body.business.status).toBe("SUSPENDED");
+    expect(suspendRes.body.business.suspensionReason).toBe(
+      "Multiple customer fraud reports, confirmed via support review.",
+    );
+
+    const detailRes = await request(app)
+      .get(`/admin/businesses/${suspendBusinessId}`)
+      .set("Authorization", `Bearer ${body.token}`);
+    expect(detailRes.body.business.status).toBe("SUSPENDED");
+  });
+
+  it("returns 409 suspending an already-suspended business", async () => {
+    const { body } = await login("super@tradepal.test", "correct-horse");
+    const res = await request(app)
+      .post(`/admin/businesses/${suspendBusinessId}/suspend`)
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({ reason: "Second attempt." });
+
+    expect(res.status).toBe(409);
+  });
+
+  it("refuses a SUPPORT admin from reinstating", async () => {
+    const { body } = await login("support@tradepal.test", "correct-horse");
+    const res = await request(app)
+      .post(`/admin/businesses/${suspendBusinessId}/reinstate`)
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({});
+
+    expect(res.status).toBe(403);
+  });
+
+  it("SUPER_ADMIN can reinstate a suspended business, clearing status back to ACTIVE", async () => {
+    const { body } = await login("super@tradepal.test", "correct-horse");
+
+    const reinstateRes = await request(app)
+      .post(`/admin/businesses/${suspendBusinessId}/reinstate`)
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({ reason: "Review concluded no violation occurred." });
+    expect(reinstateRes.status).toBe(200);
+    expect(reinstateRes.body.business.status).toBe("ACTIVE");
+    expect(reinstateRes.body.business.suspendedAt).toBeNull();
+    expect(reinstateRes.body.business.suspensionReason).toBeNull();
+  });
+
+  it("returns 409 reinstating a business that isn't suspended", async () => {
+    const { body } = await login("super@tradepal.test", "correct-horse");
+    const res = await request(app)
+      .post(`/admin/businesses/${suspendBusinessId}/reinstate`)
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({});
+
+    expect(res.status).toBe(409);
+  });
+
+  it("returns 404 reinstating an unknown business", async () => {
+    const { body } = await login("super@tradepal.test", "correct-horse");
+    const res = await request(app)
+      .post("/admin/businesses/does-not-exist/reinstate")
+      .set("Authorization", `Bearer ${body.token}`)
+      .send({});
+
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("POST /admin/maintenance/expire-subscriptions (RBAC + Phase 6 sweep trigger)", () => {
   it("refuses a SUPPORT admin — this is a global maintenance action, not a single-business write", async () => {
     const { body } = await login("support@tradepal.test", "correct-horse");

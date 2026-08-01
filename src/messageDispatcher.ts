@@ -7,6 +7,7 @@ import { parseTransactionText, type AiParseResult } from "./ai/parse.js";
 import type { AiProvider } from "./ai/provider.js";
 import type { ParsedIntent } from "./ai/schema.js";
 import { handleCommand } from "./commands/commandRouter.js";
+import { isBusinessSuspended } from "./domain/businessModeration.js";
 import { getTenantScopedClient } from "./db/tenantScope.js";
 import {
   continueOnboarding,
@@ -89,6 +90,16 @@ export const STOCK_TRACKING_FEATURE_FLAG_KEY = "stockTracking";
  */
 const MERCHANT_REMOVED_REPLY =
   "This WhatsApp number no longer has access to this business. Contact the business owner if this is a mistake.";
+
+/**
+ * Phase 29: platform-moderation suspension (src/domain/businessModeration.ts)
+ * — a whole `Business` cut off by a SUPER_ADMIN for violating platform rules.
+ * Checked before the per-merchant MERCHANT_REMOVED_REPLY gate below since a
+ * business-wide suspension is the more severe, higher-precedence condition
+ * (it blocks every merchant on the business, not just one removed staffer).
+ */
+const BUSINESS_SUSPENDED_REPLY =
+  "This account has been suspended for a violation of our terms of service. Contact support if you believe this is a mistake.";
 
 const VOICE_NOT_SUPPORTED_REPLY = "Sorry, I can only understand text messages right now — please type your message.";
 const VOICE_TRANSCRIPTION_FAILED_REPLY =
@@ -474,6 +485,8 @@ export async function dispatchInboundMessage(deps: DispatcherDeps, job: InboundM
         // No Merchant row exists (or ever will, for this number) to send to — the outbound
         // gateway would refuse it anyway (Non-Negotiable Standard #9), so there is nothing to do.
       }
+    } else if (await isBusinessSuspended(deps.prisma, merchant.businessId)) {
+      await reply(deps, job.fromNumber, BUSINESS_SUSPENDED_REPLY);
     } else if (merchant.removedAt) {
       await reply(deps, job.fromNumber, MERCHANT_REMOVED_REPLY);
     } else if (!isOnboardingComplete(merchant)) {

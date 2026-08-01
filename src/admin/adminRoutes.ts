@@ -35,6 +35,12 @@ import {
   upsertPlan,
 } from "../domain/planAdmin.js";
 import { backfillInventoryLinksForBusiness } from "../domain/inventory.js";
+import {
+  BusinessAlreadySuspendedError,
+  BusinessNotSuspendedError,
+  reinstateBusiness,
+  suspendBusiness,
+} from "../domain/businessModeration.js";
 import { expireLapsedSubscriptions, type SubscriptionExpiryOutboundGateway } from "../domain/subscriptionExpiry.js";
 import { expireStalePaymentRequests } from "../domain/paymentRequestExpiry.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
@@ -92,6 +98,14 @@ const assignSubscriptionBodySchema = z.object({
 });
 
 const cancelSubscriptionBodySchema = z.object({
+  reason: z.string().optional(),
+});
+
+const suspendBusinessBodySchema = z.object({
+  reason: z.string().min(1),
+});
+
+const reinstateBusinessBodySchema = z.object({
   reason: z.string().optional(),
 });
 
@@ -477,6 +491,66 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
       } catch (error) {
         if (error instanceof NoActiveSubscriptionError) {
           res.status(404).json({ error: error.message });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+
+  // Phase 29: platform-moderation suspension — SUPER_ADMIN only, stricter than
+  // the SUPER_ADMIN-or-SUPPORT bar used for subscription writes above, since
+  // this is the highest-blast-radius admin action in the codebase (cuts off
+  // every merchant on the business at once, everywhere, via messageDispatcher.ts).
+  router.post(
+    "/businesses/:id/suspend",
+    requireAdminRole("SUPER_ADMIN"),
+    async (req: AuthenticatedAdminRequest, res) => {
+      const parsed = suspendBusinessBodySchema.safeParse(req.body);
+      if (!parsed.success) return sendZodError(res, parsed.error);
+
+      try {
+        const business = await suspendBusiness(prisma, {
+          businessId: req.params["id"] as string,
+          reason: parsed.data.reason,
+          ...(req.adminUser ? { suspendedByAdminUserId: req.adminUser.adminUserId } : {}),
+        });
+        res.json({ business });
+      } catch (error) {
+        if (error instanceof BusinessNotFoundError) {
+          res.status(404).json({ error: error.message });
+          return;
+        }
+        if (error instanceof BusinessAlreadySuspendedError) {
+          res.status(409).json({ error: error.message });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+
+  router.post(
+    "/businesses/:id/reinstate",
+    requireAdminRole("SUPER_ADMIN"),
+    async (req: AuthenticatedAdminRequest, res) => {
+      const parsed = reinstateBusinessBodySchema.safeParse(req.body);
+      if (!parsed.success) return sendZodError(res, parsed.error);
+
+      try {
+        const business = await reinstateBusiness(prisma, {
+          businessId: req.params["id"] as string,
+          ...(parsed.data.reason !== undefined ? { reason: parsed.data.reason } : {}),
+          ...(req.adminUser ? { reinstatedByAdminUserId: req.adminUser.adminUserId } : {}),
+        });
+        res.json({ business });
+      } catch (error) {
+        if (error instanceof BusinessNotFoundError) {
+          res.status(404).json({ error: error.message });
+          return;
+        }
+        if (error instanceof BusinessNotSuspendedError) {
+          res.status(409).json({ error: error.message });
           return;
         }
         throw error;

@@ -50,6 +50,7 @@ export function BusinessesPage() {
               <th>Country</th>
               <th>Currency</th>
               <th>Timezone</th>
+              <th>Status</th>
               <th>Merchants</th>
               <th>Created</th>
             </tr>
@@ -63,13 +64,14 @@ export function BusinessesPage() {
                 <td>{business.countryCode}</td>
                 <td>{business.currencyCode}</td>
                 <td>{business.timezone}</td>
+                <td>{business.status === "SUSPENDED" ? "Suspended" : "Active"}</td>
                 <td>{business._count?.merchants ?? "—"}</td>
                 <td>{new Date(business.createdAt).toLocaleString()}</td>
               </tr>
             ))}
             {businesses.length === 0 ? (
               <tr>
-                <td colSpan={6}>No businesses found.</td>
+                <td colSpan={7}>No businesses found.</td>
               </tr>
             ) : null}
           </tbody>

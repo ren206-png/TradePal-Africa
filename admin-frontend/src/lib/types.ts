@@ -23,6 +23,8 @@ export interface Paginated<T> {
   pagination: PaginationMeta;
 }
 
+export type BusinessStatus = "ACTIVE" | "SUSPENDED";
+
 export interface Business {
   id: string;
   name: string;
@@ -30,6 +32,10 @@ export interface Business {
   currencyCode: string;
   languageCode: string;
   timezone: string;
+  /** Phase 29: platform-moderation suspension — see src/domain/businessModeration.ts on the backend. */
+  status: BusinessStatus;
+  suspendedAt: string | null;
+  suspensionReason: string | null;
   createdAt: string;
   _count?: { merchants: number };
 }

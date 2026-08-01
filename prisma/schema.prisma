@@ -70,6 +70,11 @@ model CountryConfig {
 // Tenancy: Business (the shop) and Merchant (the WhatsApp-identified operator)
 // ─────────────────────────────────────────────────────────────────────────
 
+enum BusinessStatus {
+  ACTIVE
+  SUSPENDED
+}
+
 model Business {
   id           String   @id @default(uuid())
   name         String
@@ -77,6 +82,15 @@ model Business {
   currencyCode String
   languageCode String
   timezone     String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
+  // Phase 29: platform-moderation suspension (src/domain/businessModeration.ts),
+  // distinct from Merchant.removedAt's per-staff soft-deactivation — this cuts
+  // off every merchant on the business at once, for a platform-rules
+  // violation. suspendedAt/suspensionReason are null whenever status is
+  // ACTIVE (reinstateBusiness clears them). Enforced in the live message path
+  // by messageDispatcher.ts's own gate, not just by hiding admin UI.
+  status           BusinessStatus @default(ACTIVE)
+  suspendedAt      DateTime?      @db.Timestamptz()
+  suspensionReason String?
   createdAt    DateTime @default(now()) @db.Timestamptz()
   updatedAt    DateTime @updatedAt @db.Timestamptz()
 

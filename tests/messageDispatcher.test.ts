@@ -585,6 +585,37 @@ describe("dispatchInboundMessage", () => {
     expect(webhookEvent.status).toBe("PROCESSED");
   });
 
+  it("refuses all processing and replies with a fixed message when the merchant's Business is SUSPENDED (Phase 29)", async () => {
+    const fromNumber = "2348011110019";
+    const { deps } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.SUSPENDED.1", fromNumber, text: "hi" }));
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.SUSPENDED.2", fromNumber, text: "Suspended Merchant Shop" }),
+    );
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.SUSPENDED.3", fromNumber, text: "yes" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.SUSPENDED.skip", fromNumber, text: "SKIP" }));
+
+    const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    await prisma.business.update({
+      where: { id: merchant.businessId },
+      data: { status: "SUSPENDED", suspendedAt: new Date(), suspensionReason: "Platform rules violation." },
+    });
+
+    const { deps: suspendedDeps, fetchImpl: suspendedFetch } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+    const job = await storeInboundTextMessage({ waMessageId: "wamid.SUSPENDED.4", fromNumber, text: "/today" });
+    await dispatchInboundMessage(suspendedDeps, job);
+
+    expect(suspendedFetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((suspendedFetch.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toMatch(/suspended/i);
+
+    // The webhook event is still marked PROCESSED, exactly like every other branch of dispatchInboundMessage.
+    const webhookEvent = await prisma.webhookEvent.findUniqueOrThrow({ where: { id: job.webhookEventId } });
+    expect(webhookEvent.status).toBe("PROCESSED");
+  });
+
   async function storeInboundAudioMessage(params: { waMessageId: string; fromNumber: string }): Promise<InboundMessageJob> {
     const payload = {
       object: "whatsapp_business_account",

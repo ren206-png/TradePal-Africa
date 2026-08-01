@@ -39,6 +39,11 @@ const FEATURE_FLAG_WRITE_ROLES = new Set(["SUPER_ADMIN", "SUPPORT"]);
  * the phone-number-change and feature-flag-override precedents rather than PlansPage's SUPER_ADMIN-only
  * global expiry sweep, since this action's blast radius is a single business. */
 const INVENTORY_BACKFILL_WRITE_ROLES = new Set(["SUPER_ADMIN", "SUPPORT"]);
+/** SUPER_ADMIN only (see requireAdminRole on POST /businesses/:id/suspend|reinstate in
+ * adminRoutes.ts) — stricter than every other write role set on this page, since suspending a
+ * business is the highest-blast-radius admin action in the codebase (cuts off every merchant on
+ * the business at once, everywhere). */
+const SUSPENSION_WRITE_ROLES = new Set(["SUPER_ADMIN"]);
 
 export function BusinessDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -55,6 +60,7 @@ export function BusinessDetailPage() {
   const canManageSubscription = admin ? SUBSCRIPTION_WRITE_ROLES.has(admin.role) : false;
   const canManageFeatureFlags = admin ? FEATURE_FLAG_WRITE_ROLES.has(admin.role) : false;
   const canBackfillInventory = admin ? INVENTORY_BACKFILL_WRITE_ROLES.has(admin.role) : false;
+  const canManageSuspension = admin ? SUSPENSION_WRITE_ROLES.has(admin.role) : false;
 
   const load = () => {
     if (!id) return;
@@ -99,9 +105,14 @@ export function BusinessDetailPage() {
         <dd>{business.languageCode}</dd>
         <dt>Timezone</dt>
         <dd>{business.timezone}</dd>
+        <dt>Status</dt>
+        <dd>{business.status === "SUSPENDED" ? "Suspended" : "Active"}</dd>
         <dt>Created</dt>
         <dd>{new Date(business.createdAt).toLocaleString()}</dd>
       </dl>
+
+      <h2>Status</h2>
+      <SuspensionSection business={business} canManage={canManageSuspension} onChanged={load} />
 
       <h2>Subscription</h2>
       <SubscriptionSection
@@ -382,6 +393,123 @@ function InventoryBackfillSection({ businessId, canRun }: { businessId: string; 
       )}
       {result ? <p>{result}</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Phase 29: platform-moderation suspension. SUPER_ADMIN-only (see
+ * SUSPENSION_WRITE_ROLES above) — mirrors InventoryBackfillSection's
+ * inline-result shape for the reinstate action (no body needed beyond an
+ * optional reason), but suspend requires a mandatory reason first, so it
+ * gets its own small inline form like MerchantRow's phone-number-change one.
+ */
+function SuspensionSection({
+  business,
+  canManage,
+  onChanged,
+}: {
+  business: BusinessDetail;
+  canManage: boolean;
+  onChanged: () => void;
+}) {
+  const [suspending, setSuspending] = useState(false);
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSuspend() {
+    setError(null);
+    if (!reason.trim()) {
+      setError("Reason is required to suspend a business.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await apiFetch(`/admin/businesses/${business.id}/suspend`, {
+        method: "POST",
+        body: { reason },
+      });
+      setSuspending(false);
+      setReason("");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to suspend business.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleReinstate() {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiFetch(`/admin/businesses/${business.id}/reinstate`, {
+        method: "POST",
+        body: { ...(reason ? { reason } : {}) },
+      });
+      setReason("");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to reinstate business.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (business.status === "SUSPENDED") {
+    return (
+      <div style={{ marginBottom: "1rem" }}>
+        <p>
+          This business is <strong>suspended</strong> and every merchant on it is currently blocked from using
+          WhatsApp.
+          {business.suspendedAt ? ` Suspended ${new Date(business.suspendedAt).toLocaleString()}.` : null}
+          {business.suspensionReason ? ` Reason: ${business.suspensionReason}` : null}
+        </p>
+        {canManage ? (
+          <>
+            <label>
+              Reinstatement note (optional, recorded in the audit log)
+              <input value={reason} onChange={(e) => setReason(e.target.value)} />
+            </label>
+            <button type="button" onClick={handleReinstate} disabled={submitting} style={{ marginLeft: "0.5rem" }}>
+              {submitting ? "Reinstating…" : "Reinstate business"}
+            </button>
+          </>
+        ) : (
+          <p>Requires SUPER_ADMIN to reinstate.</p>
+        )}
+        {error ? <p className="form-error">{error}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: "1rem" }}>
+      <p>This business is active.</p>
+      {canManage ? (
+        !suspending ? (
+          <button type="button" onClick={() => setSuspending(true)}>
+            Suspend business
+          </button>
+        ) : (
+          <div className="inline-form">
+            <label>
+              Reason (required, recorded in the audit log)
+              <input value={reason} onChange={(e) => setReason(e.target.value)} />
+            </label>
+            {error ? <p className="form-error">{error}</p> : null}
+            <button type="button" disabled={submitting || !reason.trim()} onClick={handleSuspend}>
+              {submitting ? "Suspending…" : "Suspend business"}
+            </button>
+            <button type="button" onClick={() => setSuspending(false)} disabled={submitting}>
+              Cancel
+            </button>
+          </div>
+        )
+      ) : (
+        <p>Requires SUPER_ADMIN to suspend.</p>
+      )}
     </div>
   );
 }
