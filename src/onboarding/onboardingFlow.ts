@@ -27,11 +27,12 @@ export async function findMerchantByPhoneNumber(prisma: PrismaClient, phoneNumbe
 
 /**
  * A merchant's WhatsApp number is their identity (KQ6) and its calling code
- * maps 1:1 to one of the four launch countries, so country is inferred
- * rather than asked — skipping straight to the business-name question. A
- * number whose calling code isn't one of the four means TradePal genuinely
- * isn't available there yet, so no Business/Merchant row is created at all
- * (there is no valid country/currency/timezone to put on one).
+ * maps 1:1 to one of the supported launch countries (SUPPORTED_COUNTRIES), so
+ * country is inferred rather than asked — skipping straight to the
+ * business-name question. A number whose calling code isn't one of them
+ * means TradePal genuinely isn't available there yet, so no Business/Merchant
+ * row is created at all (there is no valid country/currency/timezone to put
+ * on one).
  */
 export async function startOnboarding(prisma: PrismaClient, phoneNumber: string): Promise<OnboardingStepResult> {
   const country = getCountryByPhoneNumber(phoneNumber);

@@ -11,7 +11,7 @@ import type { InboundMessageJob } from "../src/whatsapp/webhookHandler.js";
 import type { AiParseRequest, AiProvider } from "../src/ai/provider.js";
 import { CircuitBreaker } from "../src/monitoring/circuitBreaker.js";
 import type { SttProvider } from "../src/stt/provider.js";
-import { SUPPORTED_COUNTRIES } from "../src/config/countries.js";
+import { LANGUAGE_NAMES, SUPPORTED_COUNTRIES } from "../src/config/countries.js";
 import { getTenantScopedClient } from "../src/db/tenantScope.js";
 import { setFeatureFlagForBusiness } from "../src/domain/featureFlags.js";
 import { BILLING_QUOTA_FEATURE_FLAG_KEY } from "../src/domain/billing.js";
@@ -21,7 +21,10 @@ let prisma: PrismaClient;
 
 /** Mirrors prisma/seed.ts (tests seed a PGlite instance, not the real DB seed.ts entrypoint). */
 async function runSeed(client: PrismaClient): Promise<void> {
-  await client.language.upsert({ where: { code: "en" }, update: {}, create: { code: "en", name: "English" } });
+  const languageCodes = new Set(SUPPORTED_COUNTRIES.map((c) => c.defaultLanguage));
+  for (const code of languageCodes) {
+    await client.language.upsert({ where: { code }, update: {}, create: { code, name: LANGUAGE_NAMES[code] ?? code } });
+  }
 
   for (const country of SUPPORTED_COUNTRIES) {
     await client.currency.upsert({

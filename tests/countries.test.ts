@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { getCountryByCode, getCountryByPhoneNumber, SUPPORTED_COUNTRIES } from "../src/config/countries.js";
 
 describe("country config", () => {
-  it("lists exactly the four target markets", () => {
-    expect(SUPPORTED_COUNTRIES.map((c) => c.code).sort()).toEqual(["GH", "KE", "NG", "SL"]);
+  it("lists exactly the six target markets", () => {
+    expect(SUPPORTED_COUNTRIES.map((c) => c.code).sort()).toEqual(["GH", "GM", "KE", "LR", "NG", "SL"]);
   });
 
   it("resolves a country by ISO code", () => {
@@ -16,11 +16,15 @@ describe("country config", () => {
     expect(getCountryByPhoneNumber("+254712345678")?.code).toBe("KE");
     expect(getCountryByPhoneNumber("23276123456")?.code).toBe("SL");
     expect(getCountryByPhoneNumber("233241234567")?.code).toBe("GH");
+    expect(getCountryByPhoneNumber("231770123456")?.code).toBe("LR");
+    expect(getCountryByPhoneNumber("220301234")?.code).toBe("GM");
     expect(getCountryByPhoneNumber("15550001111")).toBeUndefined();
   });
 
-  it("gates voice off for Sierra Leone only, per the Krio ASR finding", () => {
+  it("gates voice off for Sierra Leone and the unconfirmed Mano River Union countries", () => {
     expect(getCountryByCode("SL")?.voiceEnabled).toBe(false);
+    expect(getCountryByCode("LR")?.voiceEnabled).toBe(false);
+    expect(getCountryByCode("GM")?.voiceEnabled).toBe(false);
     expect(getCountryByCode("NG")?.voiceEnabled).toBe(true);
     expect(getCountryByCode("KE")?.voiceEnabled).toBe(true);
     expect(getCountryByCode("GH")?.voiceEnabled).toBe(true);

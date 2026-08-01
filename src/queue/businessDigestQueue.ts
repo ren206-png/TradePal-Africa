@@ -8,7 +8,7 @@ export const WEEKLY_DIGEST_QUEUE_NAME = "weekly-business-digest";
  * Ticks hourly, same cadence as subscriptionExpiryQueue.ts — not because the
  * digest itself is hourly (it's weekly, per business, per
  * getWeekBoundsInTimezone), but so that whichever hour a given business's
- * local Monday actually starts in (the 4 launch countries span UTC+0 to
+ * local Monday actually starts in (the 6 launch countries span UTC+0 to
  * UTC+3), that business's digest goes out within an hour of its week
  * completing rather than waiting for a once-a-day tick to happen to land
  * after local midnight. sendWeeklyBusinessDigests's own idempotency check

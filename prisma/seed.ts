@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { SUPPORTED_COUNTRIES } from "../src/config/countries.js";
+import { LANGUAGE_NAMES, SUPPORTED_COUNTRIES } from "../src/config/countries.js";
 
 const prisma = new PrismaClient();
 
@@ -10,7 +10,12 @@ const prisma = new PrismaClient();
  * Merchant rows: those are created by the onboarding flow, never by seeding.
  */
 async function main(): Promise<void> {
-  await prisma.language.upsert({ where: { code: "en" }, update: {}, create: { code: "en", name: "English" } });
+  // Every defaultLanguage code actually used by SUPPORTED_COUNTRIES (not just "en") needs a
+  // seeded Language row, since CountryConfig.defaultLanguage is a foreign key to Language.code.
+  const languageCodes = new Set(SUPPORTED_COUNTRIES.map((c) => c.defaultLanguage));
+  for (const code of languageCodes) {
+    await prisma.language.upsert({ where: { code }, update: {}, create: { code, name: LANGUAGE_NAMES[code] ?? code } });
+  }
 
   for (const country of SUPPORTED_COUNTRIES) {
     await prisma.currency.upsert({

@@ -1,14 +1,17 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
-import { SUPPORTED_COUNTRIES } from "../src/config/countries.js";
+import { LANGUAGE_NAMES, SUPPORTED_COUNTRIES } from "../src/config/countries.js";
 import { startOnboarding } from "../src/onboarding/onboardingFlow.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
 
 async function runSeed(client: PrismaClient): Promise<void> {
-  await client.language.upsert({ where: { code: "en" }, update: {}, create: { code: "en", name: "English" } });
+  const languageCodes = new Set(SUPPORTED_COUNTRIES.map((c) => c.defaultLanguage));
+  for (const code of languageCodes) {
+    await client.language.upsert({ where: { code }, update: {}, create: { code, name: LANGUAGE_NAMES[code] ?? code } });
+  }
 
   for (const country of SUPPORTED_COUNTRIES) {
     await client.currency.upsert({
@@ -53,13 +56,13 @@ afterAll(async () => {
 });
 
 describe("seed data", () => {
-  it("seeds all four launch countries with matching currencies and country configs, idempotently", async () => {
+  it("seeds all six launch countries with matching currencies and country configs, idempotently", async () => {
     await runSeed(prisma);
     await runSeed(prisma); // must be safe to run twice (upsert, not create)
 
     const countries = await prisma.country.findMany();
-    expect(countries).toHaveLength(4);
-    expect(countries.map((c) => c.code).sort()).toEqual(["GH", "KE", "NG", "SL"]);
+    expect(countries).toHaveLength(6);
+    expect(countries.map((c) => c.code).sort()).toEqual(["GH", "GM", "KE", "LR", "NG", "SL"]);
 
     const slConfig = await prisma.countryConfig.findUniqueOrThrow({ where: { countryCode: "SL" } });
     expect(slConfig.voiceEnabled).toBe(false);
