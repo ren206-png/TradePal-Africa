@@ -16,11 +16,17 @@ import {
   UnsupportedCountryError,
 } from "./onboarding/onboardingFlow.js";
 import type { FlutterwaveDeps } from "./flutterwave/client.js";
+import type { AlertEmailDeps } from "./monitoring/alerts.js";
+import { reportIncident } from "./monitoring/alerts.js";
+import type { CircuitBreaker } from "./monitoring/circuitBreaker.js";
 import type { SttProvider } from "./stt/provider.js";
 import { downloadWhatsAppMedia } from "./whatsapp/mediaGateway.js";
 import { sendWhatsAppTextMessage, type OutboundGatewayDeps } from "./whatsapp/outboundGateway.js";
 import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
 import { extractInboundMessages, parseWhatsAppWebhookPayload } from "./whatsapp/webhookPayload.js";
+
+/** Every reportIncident call in this file is tagged with this, since dispatchInboundMessage only ever runs inside worker.ts. */
+const SERVICE_NAME = "worker";
 
 export interface DispatcherDeps {
   prisma: PrismaClient;
@@ -41,6 +47,23 @@ export interface DispatcherDeps {
    */
   flutterwave?: FlutterwaveDeps | undefined;
   paymentsCheckoutRedirectUrl?: string | undefined;
+  /**
+   * Optional: monitoring-system email alerting (monitoring/alerts.ts).
+   * Unset means every reportIncident call below still logs to console (via
+   * that function's own unconditional console.error), it just never emails —
+   * same "additive, never a boot/behavior requirement" treatment as every
+   * other optional dep here.
+   */
+  alerts?: AlertEmailDeps | undefined;
+  /**
+   * Optional: gates the AI-parse call below so a sustained Anthropic outage
+   * degrades to AI_PROVIDER_DEGRADED_REPLY for every merchant instead of
+   * every single message separately paying the full latency of a doomed
+   * call. Unset means every call is attempted directly, exactly as before
+   * this monitoring system existed — tests that don't care about circuit-
+   * breaker behavior are unaffected.
+   */
+  aiCircuitBreaker?: CircuitBreaker | undefined;
 }
 
 /** Off by default (Standard #7). See resolveVoiceNote's doc comment for the full gating story. */
@@ -76,6 +99,22 @@ const GREETING_REPLY = "Hello! Tell me about a sale, expense, or debt in plain l
 const QUERY_REPLY = "Try /today for today's summary or /customer <name> to see what someone owes.";
 const CLARIFICATION_REPLY =
   'I couldn\'t confidently understand that. Try rephrasing, e.g. "sold 2 bread for 500" or "paid 3000 to supplier".';
+/**
+ * Shown instead of CLARIFICATION_REPLY specifically when the AI provider
+ * call was skipped or failed (see parseWithCircuitBreaker below) — a
+ * distinct message so the merchant knows the problem is transient/on
+ * TradePal's end, not that their message itself was unclear, and so they
+ * know to simply retry shortly rather than rephrase.
+ */
+const AI_PROVIDER_DEGRADED_REPLY =
+  "Sorry, I'm having trouble understanding messages right now — please try again in a few minutes. Commands like /today and /help still work.";
+/**
+ * Best-effort reply for the "something in dispatchInboundMessage itself
+ * threw" case (see that function's try/catch) — deliberately generic, since
+ * by definition this path is reached by a failure this file didn't already
+ * have a specific reply for.
+ */
+const GENERIC_FAILURE_REPLY = "Sorry, something went wrong processing that message. Please try again in a moment.";
 
 async function extractMessageText(prisma: PrismaClient, job: InboundMessageJob): Promise<string | null> {
   const webhookEvent = await prisma.webhookEvent.findUniqueOrThrow({ where: { id: job.webhookEventId } });
@@ -176,6 +215,61 @@ async function reply(deps: DispatcherDeps, toPhoneNumber: string, body: string):
   await sendWhatsAppTextMessage({ prisma: deps.prisma, ...deps.outboundGateway }, { toPhoneNumber, body });
 }
 
+/**
+ * A synthetic AiParseResult standing in for "the AI provider was never even
+ * called" (circuit open) or "it was called and threw" (caught below) —
+ * shaped so it still satisfies `recordAiParseLog`'s "every parse is logged,
+ * success or failure" contract (Standard #8) with a real, if minimal,
+ * AiParseResult row, rather than skipping the log for this case.
+ * `rawModelOutput` deliberately isn't plain `null`: `AiParseLog.rawModelOutput`
+ * is a non-nullable `Json` column (schema.prisma), and Prisma rejects a bare
+ * JS `null` there (it requires `Prisma.JsonNull` for an explicit database
+ * NULL) — a small, valid JSON object sidesteps that entirely.
+ */
+const AI_PROVIDER_UNAVAILABLE_RESULT: AiParseResult = {
+  rawModelOutput: { error: "ai_provider_unavailable" },
+  validationPassed: false,
+  confidenceTier: "LOW",
+  requiresClarification: true,
+};
+
+/**
+ * Wraps the raw `parseTransactionText` call with the optional
+ * `aiCircuitBreaker` (see DispatcherDeps's doc comment): when the breaker
+ * says not to attempt the call at all (open, mid-outage), or when the call
+ * itself throws (network blip, Anthropic-side error, etc.), this degrades to
+ * AI_PROVIDER_UNAVAILABLE_RESULT/AI_PROVIDER_DEGRADED_REPLY instead of
+ * propagating the failure — a thrown error here, uncaught, is exactly the
+ * "single AI hiccup permanently strands a WebhookEvent" gap this monitoring
+ * phase closes. A thrown error is also reported as an incident; the breaker
+ * being open is not (that's an already-reported, ongoing condition, not a
+ * new one — see circuitBreaker.ts's own onOpen callback for where that
+ * one-time report happens instead).
+ */
+async function parseWithCircuitBreaker(
+  deps: DispatcherDeps,
+  text: string,
+): Promise<{ result: AiParseResult; degraded: boolean }> {
+  const breaker = deps.aiCircuitBreaker;
+  if (breaker && !breaker.canAttempt()) {
+    return { result: AI_PROVIDER_UNAVAILABLE_RESULT, degraded: true };
+  }
+
+  try {
+    const result = await parseTransactionText(deps.aiProvider, { text });
+    breaker?.recordSuccess();
+    return { result, degraded: false };
+  } catch (error) {
+    breaker?.recordFailure();
+    await reportIncident(deps.alerts, {
+      service: SERVICE_NAME,
+      title: "AI provider call failed",
+      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    });
+    return { result: AI_PROVIDER_UNAVAILABLE_RESULT, degraded: true };
+  }
+}
+
 const LOGGABLE_INTENTS = new Set(["SALE", "PURCHASE", "EXPENSE", "PAYMENT_RECEIVED", "DEBT_NOTE", "STOCK_ADJUSTMENT"]);
 
 /** Narrows a validated, HIGH-confidence ParsedIntent down to the subset applyLoggableIntent understands. */
@@ -248,7 +342,7 @@ async function dispatchCommandOrParse(
     return;
   }
 
-  const result = await parseTransactionText(deps.aiProvider, { text });
+  const { result, degraded } = await parseWithCircuitBreaker(deps, text);
   // Phase 15: also needed for a SALE/PURCHASE carrying itemized `items`, so
   // those can link to InventoryItem too — not just the STOCK_ADJUSTMENT
   // intent from Phase 14. Still skipped for every other parse (QUERY,
@@ -259,7 +353,12 @@ async function dispatchCommandOrParse(
   const stockTrackingEnabled = needsStockTrackingCheck
     ? await isFeatureEnabled(scopedPrisma, business.id, STOCK_TRACKING_FEATURE_FLAG_KEY)
     : false;
-  const outcome = replyForParseResult(result, stockTrackingEnabled);
+  // Degraded (AI provider unavailable) gets its own distinct reply ahead of
+  // the normal parse-result mapping — see AI_PROVIDER_DEGRADED_REPLY's doc
+  // comment for why this shouldn't just fall through to CLARIFICATION_REPLY.
+  const outcome: ParseOutcome = degraded
+    ? { replyText: AI_PROVIDER_DEGRADED_REPLY, finalAction: "REJECTED" }
+    : replyForParseResult(result, stockTrackingEnabled);
   let finalAction = outcome.finalAction;
   let replyText: string;
 
@@ -307,50 +406,108 @@ async function dispatchCommandOrParse(
  * WebhookEvent row PROCESSED — a webhook is durably recorded the moment it's
  * accepted (webhookHandler.ts), so a downstream failure here must not turn
  * into an infinite BullMQ retry storm on top of whatever already failed.
+ *
+ * Monitoring-phase gap closure: everything above the `finally` used to be
+ * un-guarded, so any thrown error (a DB blip, an unhandled edge case, an AI
+ * failure the circuit breaker didn't already degrade) left the WebhookEvent
+ * permanently stuck un-PROCESSED with zero merchant-visible reply and only a
+ * scattered console.error as a trace — confirmed live by reading the code,
+ * not by an actual incident. Marking PROCESSED is now unconditional (moved
+ * into `finally`, itself failure-tolerant) and any other failure is both
+ * reported (reportIncident) and given a best-effort generic reply, so a
+ * merchant is never left silently hanging and every failure leaves a trace
+ * beyond a log line BullMQ's own `.on("failed")` might never even see (this
+ * function still resolves, so BullMQ sees success — the point is never to
+ * retry a job just because a reply failed, per this doc comment's own
+ * long-standing rule above).
  */
 export async function dispatchInboundMessage(deps: DispatcherDeps, job: InboundMessageJob): Promise<void> {
-  const text = await extractMessageText(deps.prisma, job);
-  const merchant = await findMerchantByPhoneNumber(deps.prisma, job.fromNumber);
+  try {
+    const text = await extractMessageText(deps.prisma, job);
+    const merchant = await findMerchantByPhoneNumber(deps.prisma, job.fromNumber);
 
-  if (!merchant) {
-    try {
-      const started = await startOnboarding(deps.prisma, job.fromNumber);
-      await reply(deps, job.fromNumber, started.reply);
-    } catch (error) {
-      if (!(error instanceof UnsupportedCountryError)) throw error;
-      // No Merchant row exists (or ever will, for this number) to send to — the outbound
-      // gateway would refuse it anyway (Non-Negotiable Standard #9), so there is nothing to do.
-    }
-  } else if (merchant.removedAt) {
-    await reply(deps, job.fromNumber, MERCHANT_REMOVED_REPLY);
-  } else if (!isOnboardingComplete(merchant)) {
-    if (text === null) {
-      await reply(deps, job.fromNumber, VOICE_NOT_SUPPORTED_REPLY);
-    } else {
-      const onboarding = await continueOnboarding(deps.prisma, merchant, text);
-      await reply(deps, job.fromNumber, onboarding.reply);
-    }
-  } else if (text === null) {
-    const audio = await extractMessageAudio(deps.prisma, job);
-    if (!audio) {
-      await reply(deps, job.fromNumber, VOICE_NOT_SUPPORTED_REPLY);
-    } else {
-      const business = await deps.prisma.business.findUniqueOrThrow({ where: { id: merchant.businessId } });
-      const outcome = await resolveVoiceNote(deps, business, audio);
-      if (outcome.kind === "not_eligible") {
-        await reply(deps, job.fromNumber, VOICE_NOT_SUPPORTED_REPLY);
-      } else if (outcome.kind === "transcription_failed") {
-        await reply(deps, job.fromNumber, VOICE_TRANSCRIPTION_FAILED_REPLY);
-      } else {
-        await dispatchCommandOrParse(deps, merchant, outcome.text, job.waMessageId);
+    if (!merchant) {
+      try {
+        const started = await startOnboarding(deps.prisma, job.fromNumber);
+        try {
+          await reply(deps, job.fromNumber, started.reply);
+        } catch (sendError) {
+          // The welcome reply failed to send (e.g. Meta rejected the recipient — a known
+          // failure mode while this number is still on Meta's test tier, whose recipient
+          // allowlist can silently block a brand-new prospect). startOnboarding() already
+          // committed a Business/Merchant row before this point, so leaving it in place would
+          // strand this phone number at AWAITING_BUSINESS_NAME with no idea a question was ever
+          // asked — their *next* message (e.g. "Hey") would then be silently misread as the
+          // answer to "what's your business name?" instead of retrying onboarding from scratch.
+          // Deleting it here means the next inbound message re-enters this same `!merchant`
+          // branch and gets a clean retry instead of corrupted state. Nothing else could have
+          // been created off this merchant yet (this is the very first message for this
+          // number), so there's nothing else to clean up.
+          await deps.prisma.merchant.delete({ where: { id: started.merchant.id } }).catch(() => {});
+          await deps.prisma.business.delete({ where: { id: started.merchant.businessId } }).catch(() => {});
+          throw sendError;
+        }
+      } catch (error) {
+        if (!(error instanceof UnsupportedCountryError)) throw error;
+        // No Merchant row exists (or ever will, for this number) to send to — the outbound
+        // gateway would refuse it anyway (Non-Negotiable Standard #9), so there is nothing to do.
       }
+    } else if (merchant.removedAt) {
+      await reply(deps, job.fromNumber, MERCHANT_REMOVED_REPLY);
+    } else if (!isOnboardingComplete(merchant)) {
+      if (text === null) {
+        await reply(deps, job.fromNumber, VOICE_NOT_SUPPORTED_REPLY);
+      } else {
+        const onboarding = await continueOnboarding(deps.prisma, merchant, text);
+        await reply(deps, job.fromNumber, onboarding.reply);
+      }
+    } else if (text === null) {
+      const audio = await extractMessageAudio(deps.prisma, job);
+      if (!audio) {
+        await reply(deps, job.fromNumber, VOICE_NOT_SUPPORTED_REPLY);
+      } else {
+        const business = await deps.prisma.business.findUniqueOrThrow({ where: { id: merchant.businessId } });
+        const outcome = await resolveVoiceNote(deps, business, audio);
+        if (outcome.kind === "not_eligible") {
+          await reply(deps, job.fromNumber, VOICE_NOT_SUPPORTED_REPLY);
+        } else if (outcome.kind === "transcription_failed") {
+          await reply(deps, job.fromNumber, VOICE_TRANSCRIPTION_FAILED_REPLY);
+        } else {
+          await dispatchCommandOrParse(deps, merchant, outcome.text, job.waMessageId);
+        }
+      }
+    } else {
+      await dispatchCommandOrParse(deps, merchant, text, job.waMessageId);
     }
-  } else {
-    await dispatchCommandOrParse(deps, merchant, text, job.waMessageId);
-  }
+  } catch (error) {
+    await reportIncident(deps.alerts, {
+      service: SERVICE_NAME,
+      title: "dispatchInboundMessage threw",
+      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    });
 
-  await deps.prisma.webhookEvent.update({
-    where: { id: job.webhookEventId },
-    data: { status: "PROCESSED", processedAt: new Date() },
-  });
+    // Best-effort only: this dispatch has already failed once, so a second
+    // failure here (e.g. the merchant number itself isn't sendable for some
+    // reason) is logged and swallowed rather than allowed to escape and
+    // skip the `finally` block below.
+    try {
+      await reply(deps, job.fromNumber, GENERIC_FAILURE_REPLY);
+    } catch (replyError) {
+      console.error(`dispatchInboundMessage: best-effort failure reply also failed for '${job.fromNumber}':`, replyError);
+    }
+  } finally {
+    try {
+      await deps.prisma.webhookEvent.update({
+        where: { id: job.webhookEventId },
+        data: { status: "PROCESSED", processedAt: new Date() },
+      });
+    } catch (updateError) {
+      console.error(`dispatchInboundMessage: failed to mark WebhookEvent '${job.webhookEventId}' PROCESSED:`, updateError);
+      await reportIncident(deps.alerts, {
+        service: SERVICE_NAME,
+        title: "Failed to mark WebhookEvent PROCESSED",
+        detail: updateError instanceof Error ? (updateError.stack ?? updateError.message) : String(updateError),
+      });
+    }
+  }
 }

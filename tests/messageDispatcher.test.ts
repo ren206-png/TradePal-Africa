@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll, beforeEach, vi } from "vitest";
-import type { PrismaClient } from "@prisma/client";
+import type { Merchant, PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
 import {
   dispatchInboundMessage,
@@ -9,6 +9,7 @@ import {
 } from "../src/messageDispatcher.js";
 import type { InboundMessageJob } from "../src/whatsapp/webhookHandler.js";
 import type { AiParseRequest, AiProvider } from "../src/ai/provider.js";
+import { CircuitBreaker } from "../src/monitoring/circuitBreaker.js";
 import type { SttProvider } from "../src/stt/provider.js";
 import { SUPPORTED_COUNTRIES } from "../src/config/countries.js";
 import { getTenantScopedClient } from "../src/db/tenantScope.js";
@@ -58,6 +59,15 @@ async function runSeed(client: PrismaClient): Promise<void> {
 function fakeProvider(response: unknown): AiProvider {
   return {
     parseTransactionText: async (_request: AiParseRequest) => response,
+  };
+}
+
+/** An AiProvider whose parseTransactionText always rejects — for AI-provider-outage/circuit-breaker tests. */
+function fakeFailingProvider(error: Error): AiProvider {
+  return {
+    parseTransactionText: async (_request: AiParseRequest) => {
+      throw error;
+    },
   };
 }
 
@@ -177,6 +187,19 @@ async function storeInboundTextMessage(params: {
   };
 }
 
+/** Fully onboards a fresh merchant (hi -> business name -> yes -> SKIP) via a throwaway GREETING-only provider, returning the merchant row. */
+async function onboardMerchant(fromNumber: string, businessName: string): Promise<Merchant> {
+  const { deps } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+  await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: `wamid.${fromNumber}.1`, fromNumber, text: "hi" }));
+  await dispatchInboundMessage(
+    deps,
+    await storeInboundTextMessage({ waMessageId: `wamid.${fromNumber}.2`, fromNumber, text: businessName }),
+  );
+  await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: `wamid.${fromNumber}.3`, fromNumber, text: "yes" }));
+  await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: `wamid.${fromNumber}.skip`, fromNumber, text: "SKIP" }));
+  return prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+}
+
 beforeAll(async () => {
   testDb = await createTestDb();
   prisma = testDb.prisma;
@@ -209,6 +232,49 @@ describe("dispatchInboundMessage", () => {
     const webhookEvent = await prisma.webhookEvent.findUniqueOrThrow({ where: { id: job.webhookEventId } });
     expect(webhookEvent.status).toBe("PROCESSED");
     expect(webhookEvent.processedAt).not.toBeNull();
+  });
+
+  it("rolls back the new merchant when the welcome reply fails to send, so the next message gets a clean onboarding retry", async () => {
+    const fromNumber = "2348011110099";
+    // Simulates Meta rejecting the send (e.g. the recipient isn't on a test-tier allowlist) —
+    // the failure happens on the outbound HTTP call itself, after startOnboarding() has already
+    // committed a Business/Merchant row.
+    const failingFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "(#131030) Recipient phone number not in allowed list" } }), {
+          status: 400,
+        }),
+      );
+    const deps: DispatcherDeps = {
+      prisma,
+      aiProvider: fakeProvider({ intent: "GREETING", confidence: 0.9 }),
+      outboundGateway: { accessToken: "test-token", phoneNumberId: "pn-1", fetchImpl: failingFetch },
+    };
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.ROLLBACK.1", fromNumber, text: "Hi TradePal, I'd like to set up my shop." }),
+    );
+
+    // No half-onboarded merchant left behind for a future message to be silently misread against.
+    expect(await prisma.merchant.findUnique({ where: { phoneNumber: fromNumber } })).toBeNull();
+    // Only the one failed welcome-message attempt: the best-effort failure reply can't send
+    // either (no merchant row left to pass the outbound gateway's registered-merchant guard), so
+    // it never reaches a second HTTP call.
+    expect(failingFetch).toHaveBeenCalledTimes(1);
+
+    // A later message from the same number gets a genuine fresh onboarding start, not "Hey"
+    // silently misread as an answer to a business-name question they never received.
+    const { deps: retryDeps, fetchImpl: retryFetch } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+    await dispatchInboundMessage(retryDeps, await storeInboundTextMessage({ waMessageId: "wamid.ROLLBACK.2", fromNumber, text: "Hey" }));
+
+    expect(retryFetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((retryFetch.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("Welcome to TradePal");
+
+    const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    expect(merchant.onboardingStep).toBe("AWAITING_BUSINESS_NAME");
   });
 
   it("silently drops the reply for an unsupported-country number, still marking the webhook processed", async () => {
@@ -933,5 +999,102 @@ describe("dispatchInboundMessage", () => {
 
     const debtTransactions = await prisma.transaction.findMany({ where: { businessId: owner.businessId, type: "DEBT_NOTE" } });
     expect(debtTransactions).toHaveLength(1);
+  });
+});
+
+/**
+ * Monitoring-phase gap closure (see messageDispatcher.ts's own doc comments
+ * on DispatcherDeps.aiCircuitBreaker/alerts and dispatchInboundMessage's
+ * try/catch/finally): before this phase, an AI-provider failure or any other
+ * unexpected thrown error left the WebhookEvent permanently un-PROCESSED and
+ * gave the merchant no reply at all. These tests exercise both the
+ * degraded-AI-reply path and the "always ends up PROCESSED, with some reply"
+ * guarantee for a genuinely unexpected failure elsewhere in dispatch.
+ */
+describe("dispatchInboundMessage: AI-provider outage / unexpected-error handling", () => {
+  it("degrades to AI_PROVIDER_DEGRADED_REPLY, still logs the parse, and marks the webhook processed when the AI provider call throws", async () => {
+    const fromNumber = "2348011119001";
+    await onboardMerchant(fromNumber, "Outage Stores");
+
+    const { deps, fetchImpl } = buildDeps(fakeFailingProvider(new Error("Anthropic API is down")));
+    const job = await storeInboundTextMessage({ waMessageId: "wamid.OUTAGE.1", fromNumber, text: "sold bread for 2000" });
+
+    await dispatchInboundMessage(deps, job);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toMatch(/having trouble understanding/i);
+
+    const merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    const parseLogs = await prisma.aiParseLog.findMany({ where: { businessId: merchant.businessId, whatsappMessageId: "wamid.OUTAGE.1" } });
+    expect(parseLogs).toHaveLength(1);
+    expect(parseLogs[0]?.finalAction).toBe("REJECTED");
+    expect(parseLogs[0]?.validationPassed).toBe(false);
+
+    const webhookEvent = await prisma.webhookEvent.findUniqueOrThrow({ where: { id: job.webhookEventId } });
+    expect(webhookEvent.status).toBe("PROCESSED");
+  });
+
+  it("reports the failure to and trips the circuit breaker on a thrown AI-provider error", async () => {
+    const fromNumber = "2348011119002";
+    await onboardMerchant(fromNumber, "Breaker Stores");
+
+    const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 60_000 });
+    const { deps } = buildDeps(fakeFailingProvider(new Error("Anthropic API is down")));
+    deps.aiCircuitBreaker = breaker;
+
+    expect(breaker.getState()).toBe("closed");
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.BREAKER.1", fromNumber, text: "sold bread for 2000" }),
+    );
+    expect(breaker.getState()).toBe("open");
+  });
+
+  it("skips the AI provider call entirely when the circuit breaker is open, still giving a degraded reply", async () => {
+    const fromNumber = "2348011119003";
+    await onboardMerchant(fromNumber, "Open Breaker Stores");
+
+    const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 60_000 });
+    breaker.recordFailure(); // Pre-trip the breaker open, as if a prior message already failed.
+    expect(breaker.getState()).toBe("open");
+
+    const parseSpy = vi.fn(async () => ({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 }));
+    const { deps, fetchImpl } = buildDeps({ parseTransactionText: parseSpy });
+    deps.aiCircuitBreaker = breaker;
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.OPENBREAKER.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(parseSpy).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toMatch(/having trouble understanding/i);
+  });
+
+  it("marks the webhook processed and gives a generic reply when an unexpected error is thrown outside the AI-parse path", async () => {
+    const fromNumber = "2348011119004";
+    await onboardMerchant(fromNumber, "Bug Stores");
+
+    const { deps, fetchImpl } = buildDeps(fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 }));
+    const job = await storeInboundTextMessage({ waMessageId: "wamid.BUG.1", fromNumber, text: "sold bread for 2000" });
+
+    // Simulates a genuinely unexpected bug/DB blip somewhere dispatchCommandOrParse doesn't
+    // already handle, well downstream of (and unrelated to) the AI-parse circuit breaker above.
+    const businessSpy = vi
+      .spyOn(prisma.business, "findUniqueOrThrow")
+      .mockRejectedValueOnce(new Error("simulated unexpected DB error"));
+
+    await dispatchInboundMessage(deps, job);
+    businessSpy.mockRestore();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toMatch(/something went wrong/i);
+
+    const webhookEvent = await prisma.webhookEvent.findUniqueOrThrow({ where: { id: job.webhookEventId } });
+    expect(webhookEvent.status).toBe("PROCESSED");
   });
 });
