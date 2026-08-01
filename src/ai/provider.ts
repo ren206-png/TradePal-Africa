@@ -15,7 +15,7 @@ export interface AiProvider {
   parseTransactionText(request: AiParseRequest): Promise<unknown>;
 }
 
-const SYSTEM_PROMPT = `You are a structured-data extractor for an informal-retail bookkeeping assistant used across Nigeria, Kenya, Sierra Leone, and Ghana. Given one WhatsApp message from a merchant, output ONLY a single JSON object (no prose, no markdown fences) matching one of these shapes, choosing the "intent" that best matches:
+const SYSTEM_PROMPT = `You are a structured-data extractor for an informal-retail bookkeeping assistant used across Nigeria, Kenya, Sierra Leone, Ghana, Liberia, and Gambia. Given one WhatsApp message from a merchant, output ONLY a single JSON object (no prose, no markdown fences) matching one of these shapes, choosing the "intent" that best matches:
 
 {"intent":"SALE","amountMinor":<integer minor units>,"paymentStatus":"PAID"|"CREDIT"|"PARTIAL","customerName"?:<string>,"items"?:[{"itemName":<string>,"quantity":<integer>,"unitPriceMinor":<integer>}],"confidence":<0..1>}
 {"intent":"PURCHASE","amountMinor":<integer>,"supplierName"?:<string>,"items"?:[...],"confidence":<0..1>}

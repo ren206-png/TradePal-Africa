@@ -281,7 +281,7 @@ describe("dispatchInboundMessage", () => {
   });
 
   it("silently drops the reply for an unsupported-country number, still marking the webhook processed", async () => {
-    const fromNumber = "19995550001"; // +1, not one of the four launch countries
+    const fromNumber = "19995550001"; // +1, not one of the six launch countries
     const job = await storeInboundTextMessage({ waMessageId: "wamid.UNSUPPORTED.1", fromNumber, text: "hi" });
     const { deps, fetchImpl } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
 
