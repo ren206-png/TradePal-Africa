@@ -443,8 +443,30 @@ export async function dispatchInboundMessage(deps: DispatcherDeps, job: InboundM
           // branch and gets a clean retry instead of corrupted state. Nothing else could have
           // been created off this merchant yet (this is the very first message for this
           // number), so there's nothing else to clean up.
-          await deps.prisma.merchant.delete({ where: { id: started.merchant.id } }).catch(() => {});
-          await deps.prisma.business.delete({ where: { id: started.merchant.businessId } }).catch(() => {});
+          //
+          // If the delete itself fails (e.g. a transient DB blip), swallowing it silently would
+          // leave exactly the stranded-merchant bug this whole rollback exists to prevent, just
+          // invisibly — so it's reported as its own incident rather than only relying on the
+          // outer catch's generic "dispatchInboundMessage threw" report for `sendError` below,
+          // which wouldn't otherwise mention that cleanup also failed.
+          await deps.prisma.merchant.delete({ where: { id: started.merchant.id } }).catch((deleteError: unknown) => {
+            void reportIncident(deps.alerts, {
+              service: SERVICE_NAME,
+              title: "Failed to roll back stranded Merchant after welcome-send failure",
+              detail: `merchantId=${started.merchant.id}: ${
+                deleteError instanceof Error ? (deleteError.stack ?? deleteError.message) : String(deleteError)
+              }`,
+            });
+          });
+          await deps.prisma.business.delete({ where: { id: started.merchant.businessId } }).catch((deleteError: unknown) => {
+            void reportIncident(deps.alerts, {
+              service: SERVICE_NAME,
+              title: "Failed to roll back stranded Business after welcome-send failure",
+              detail: `businessId=${started.merchant.businessId}: ${
+                deleteError instanceof Error ? (deleteError.stack ?? deleteError.message) : String(deleteError)
+              }`,
+            });
+          });
           throw sendError;
         }
       } catch (error) {
