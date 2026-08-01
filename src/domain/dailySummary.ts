@@ -38,8 +38,8 @@ export function getDayBoundsInTimezone(now: Date, timeZone: string): { start: Da
  * of the following month) in `timeZone`, expressed as UTC instants — mirrors
  * getDayBoundsInTimezone's technique. A single offset sample is sufficient
  * (rather than resampling at the month boundary) because none of TradePal's
- * supported countries (Nigeria, Kenya, Sierra Leone, Ghana) observe DST, so
- * the UTC offset is constant across the whole month.
+ * supported countries (Nigeria, Kenya, Sierra Leone, Ghana, Liberia, Gambia)
+ * observe DST, so the UTC offset is constant across the whole month.
  */
 export function getMonthBoundsInTimezone(now: Date, timeZone: string): { start: Date; end: Date } {
   const offsetMinutes = getTimezoneOffsetMinutes(now, timeZone);
