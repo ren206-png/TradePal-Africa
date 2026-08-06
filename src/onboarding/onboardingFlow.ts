@@ -93,24 +93,34 @@ async function handleAwaitingConsent(
 
   const scoped = getTenantScopedClient(prisma, merchant.businessId);
 
-  await scoped.consentLog.create({
-    data: {
-      businessId: merchant.businessId,
-      merchantId: merchant.id,
-      consentType: "ONBOARDING_TERMS",
-      textVersion: CONSENT_TEXT_VERSION,
-      channel: "whatsapp",
-    },
+  // Idempotency guard: messageDispatcher.ts reverts onboardingStep back to
+  // AWAITING_CONSENT if the reply confirming this step failed to send (see its
+  // own comment on why), which re-enters this handler on the merchant's next
+  // message. Without this check, a second genuine "YES" would insert a second
+  // pair of ConsentLog rows for the same consent instead of being a no-op.
+  const alreadyConsented = await scoped.consentLog.findFirst({
+    where: { merchantId: merchant.id, consentType: "ONBOARDING_TERMS", textVersion: CONSENT_TEXT_VERSION },
   });
-  await scoped.consentLog.create({
-    data: {
-      businessId: merchant.businessId,
-      merchantId: merchant.id,
-      consentType: "DATA_PROCESSING",
-      textVersion: CONSENT_TEXT_VERSION,
-      channel: "whatsapp",
-    },
-  });
+  if (!alreadyConsented) {
+    await scoped.consentLog.create({
+      data: {
+        businessId: merchant.businessId,
+        merchantId: merchant.id,
+        consentType: "ONBOARDING_TERMS",
+        textVersion: CONSENT_TEXT_VERSION,
+        channel: "whatsapp",
+      },
+    });
+    await scoped.consentLog.create({
+      data: {
+        businessId: merchant.businessId,
+        merchantId: merchant.id,
+        consentType: "DATA_PROCESSING",
+        textVersion: CONSENT_TEXT_VERSION,
+        channel: "whatsapp",
+      },
+    });
+  }
 
   const updated = await scoped.merchant.update({
     where: { id: merchant.id },

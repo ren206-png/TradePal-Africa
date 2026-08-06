@@ -280,6 +280,113 @@ describe("dispatchInboundMessage", () => {
     expect(merchant.onboardingStep).toBe("AWAITING_BUSINESS_NAME");
   });
 
+  it("reverts onboardingStep (not merchant deletion) when a later step's reply fails to send, so retry lands on the step actually prompted", async () => {
+    const fromNumber = "2348011110098";
+    const { deps } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.REVERT.1", fromNumber, text: "hi" }));
+
+    let merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    expect(merchant.onboardingStep).toBe("AWAITING_BUSINESS_NAME");
+
+    // The business-name step's own DB write (Business.name) commits fine, but the reply
+    // confirming it and asking for consent fails to send.
+    const failingFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "(#131030) Recipient phone number not in allowed list" } }), {
+          status: 400,
+        }),
+      );
+    const failingDeps: DispatcherDeps = {
+      prisma,
+      aiProvider: fakeProvider({ intent: "GREETING", confidence: 0.9 }),
+      outboundGateway: { accessToken: "test-token", phoneNumberId: "pn-1", fetchImpl: failingFetch },
+    };
+
+    // dispatchInboundMessage never rethrows to its caller (see its own doc comment: a failed
+    // reply is reported as an incident, not allowed to fail the BullMQ job) — it resolves
+    // normally here even though the step reply itself failed to send.
+    await dispatchInboundMessage(
+      failingDeps,
+      await storeInboundTextMessage({ waMessageId: "wamid.REVERT.2", fromNumber, text: "Amina's Provisions" }),
+    );
+
+    // Business name side effect is still committed...
+    merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    const business = await prisma.business.findUniqueOrThrow({ where: { id: merchant.businessId } });
+    expect(business.name).toBe("Amina's Provisions");
+    // ...but the step pointer is reverted, not silently left one step ahead.
+    expect(merchant.onboardingStep).toBe("AWAITING_BUSINESS_NAME");
+
+    // A retry message is correctly re-treated as an answer to the business-name question
+    // they actually saw, not misread as a reply to the consent prompt they never received.
+    const { deps: retryDeps, fetchImpl: retryFetch } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+    await dispatchInboundMessage(
+      retryDeps,
+      await storeInboundTextMessage({ waMessageId: "wamid.REVERT.3", fromNumber, text: "Amina's Provisions" }),
+    );
+
+    expect(retryFetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((retryFetch.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("Terms of Service");
+
+    merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    expect(merchant.onboardingStep).toBe("AWAITING_CONSENT");
+  });
+
+  it("does not create duplicate ConsentLog rows when the consent-step reply fails to send and the merchant retries", async () => {
+    const fromNumber = "2348011110097";
+    const { deps } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.DUPCONSENT.1", fromNumber, text: "hi" }));
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DUPCONSENT.2", fromNumber, text: "Amina's Provisions" }),
+    );
+
+    let merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    expect(merchant.onboardingStep).toBe("AWAITING_CONSENT");
+
+    // First "yes" is genuinely received and processed (ConsentLog rows are created), but the
+    // reply confirming it and asking for the first customer fails to send.
+    const failingFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "(#131030) Recipient phone number not in allowed list" } }), {
+          status: 400,
+        }),
+      );
+    const failingDeps: DispatcherDeps = {
+      prisma,
+      aiProvider: fakeProvider({ intent: "GREETING", confidence: 0.9 }),
+      outboundGateway: { accessToken: "test-token", phoneNumberId: "pn-1", fetchImpl: failingFetch },
+    };
+
+    await dispatchInboundMessage(
+      failingDeps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DUPCONSENT.3", fromNumber, text: "yes" }),
+    );
+
+    merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    expect(merchant.onboardingStep).toBe("AWAITING_CONSENT");
+    let consentLogs = await prisma.consentLog.findMany({ where: { merchantId: merchant.id } });
+    expect(consentLogs).toHaveLength(2);
+
+    // Retrying "yes" must not log a second, duplicate pair of consent rows for the same consent.
+    const { deps: retryDeps, fetchImpl: retryFetch } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+    await dispatchInboundMessage(
+      retryDeps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DUPCONSENT.4", fromNumber, text: "yes" }),
+    );
+
+    expect(retryFetch).toHaveBeenCalledTimes(1);
+    merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    expect(merchant.onboardingStep).toBe("AWAITING_FIRST_CUSTOMER");
+    consentLogs = await prisma.consentLog.findMany({ where: { merchantId: merchant.id } });
+    expect(consentLogs).toHaveLength(2);
+  });
+
   it("silently drops the reply for an unsupported-country number, still marking the webhook processed", async () => {
     const fromNumber = "19995550001"; // +1, not one of the six launch countries
     const job = await storeInboundTextMessage({ waMessageId: "wamid.UNSUPPORTED.1", fromNumber, text: "hi" });

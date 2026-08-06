@@ -493,8 +493,40 @@ export async function dispatchInboundMessage(deps: DispatcherDeps, job: InboundM
       if (text === null) {
         await reply(deps, job.fromNumber, VOICE_NOT_SUPPORTED_REPLY);
       } else {
+        const previousOnboardingStep = merchant.onboardingStep;
         const onboarding = await continueOnboarding(deps.prisma, merchant, text);
-        await reply(deps, job.fromNumber, onboarding.reply);
+        try {
+          await reply(deps, job.fromNumber, onboarding.reply);
+        } catch (sendError) {
+          // Mirrors the startOnboarding rollback above (see its comment for the full
+          // Meta-allowlist context this was root-caused to live in production, first
+          // surfaced there via Sierra Leone sign-ups) — but for every *later* onboarding
+          // step, not just the first. continueOnboarding() already committed this step's
+          // transition (e.g. AWAITING_BUSINESS_NAME -> AWAITING_CONSENT) before this reply
+          // was attempted; left in place, the merchant would be silently parked one step
+          // ahead of what they actually saw, and their next real message would be misread
+          // as the answer to a question they never received (this is exactly how four real
+          // Sierra Leone sign-ups ended up permanently stuck with their business name set to
+          // literal greeting text like "Hi" or "Hello"). Reverting onboardingStep back to
+          // where it was gives them a clean retry from a step they've actually seen a
+          // prompt for. Deliberately does NOT undo any other side effect of this step (e.g.
+          // handleAwaitingConsent's ConsentLog rows) — a merchant who genuinely replied YES
+          // did give consent, and that record shouldn't be erased just because the
+          // confirmation reply back to them failed to send; see handleAwaitingConsent's own
+          // idempotency guard for how a re-entered consent step avoids double-logging it.
+          await deps.prisma.merchant
+            .update({ where: { id: onboarding.merchant.id }, data: { onboardingStep: previousOnboardingStep } })
+            .catch((revertError: unknown) => {
+              void reportIncident(deps.alerts, {
+                service: SERVICE_NAME,
+                title: "Failed to revert onboardingStep after step reply failed to send",
+                detail: `merchantId=${onboarding.merchant.id}: ${
+                  revertError instanceof Error ? (revertError.stack ?? revertError.message) : String(revertError)
+                }`,
+              });
+            });
+          throw sendError;
+        }
       }
     } else if (text === null) {
       const audio = await extractMessageAudio(deps.prisma, job);
