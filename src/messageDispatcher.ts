@@ -4,7 +4,7 @@ import { assertWithinQuotaIfEnabled, getEffectivePlan, QuotaExceededError } from
 import { isFeatureEnabled } from "./domain/featureFlags.js";
 import { recordAiParseLog } from "./ai/logParse.js";
 import { parseTransactionText, type AiParseResult } from "./ai/parse.js";
-import type { AiProvider } from "./ai/provider.js";
+import { isAiProviderConfigurationError, type AiProvider } from "./ai/provider.js";
 import type { ParsedIntent } from "./ai/schema.js";
 import { handleCommand } from "./commands/commandRouter.js";
 import { isBusinessSuspended } from "./domain/businessModeration.js";
@@ -272,9 +272,20 @@ async function parseWithCircuitBreaker(
     return { result, degraded: false };
   } catch (error) {
     breaker?.recordFailure();
+    // A billing/auth failure (see isAiProviderConfigurationError's own doc comment for the
+    // production incident this closes) is not transient — the circuit breaker will keep
+    // probing it every resetTimeoutMs forever, and every probe will keep failing the same
+    // way, until a human tops up billing or rotates the key. Reporting it under a distinct
+    // title (rather than folding it into the generic "AI provider call failed" bucket that
+    // also covers ordinary transient blips) keeps it from being lost in routine noise, and
+    // gives it its own alerts.ts dedupe window so it doesn't get silently suppressed by an
+    // unrelated transient failure that happened to fire first.
+    const configurationFailure = isAiProviderConfigurationError(error);
     await reportIncident(deps.alerts, {
       service: SERVICE_NAME,
-      title: "AI provider call failed",
+      title: configurationFailure
+        ? "AI provider billing/auth failure (non-retryable — needs manual fix, not a retry)"
+        : "AI provider call failed",
       detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
     });
     return { result: AI_PROVIDER_UNAVAILABLE_RESULT, degraded: true };

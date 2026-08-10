@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import type { Merchant, PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
@@ -1190,6 +1191,67 @@ describe("dispatchInboundMessage: AI-provider outage / unexpected-error handling
       await storeInboundTextMessage({ waMessageId: "wamid.BREAKER.1", fromNumber, text: "sold bread for 2000" }),
     );
     expect(breaker.getState()).toBe("open");
+  });
+
+  /**
+   * Regression coverage for the 2026-08-04–2026-08-09 production outage: a $0
+   * credit balance made every AI-parse call fail the same way as an ordinary
+   * transient blip, and both were reported under the same generic incident
+   * title — so the 5-day outage never stood out from routine noise. These two
+   * tests assert parseWithCircuitBreaker's catch block (messageDispatcher.ts)
+   * now routes a billing/auth-shaped Anthropic.APIError to a distinct,
+   * high-severity title via isAiProviderConfigurationError (src/ai/provider.ts),
+   * while an ordinary thrown error still gets the generic title.
+   */
+  it("reports a distinct, high-severity incident title for a billing/auth configuration failure, not the generic outage title", async () => {
+    const fromNumber = "2348011119005";
+    await onboardMerchant(fromNumber, "Billing Stores");
+
+    const billingError = new Anthropic.APIError(
+      400,
+      {
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+        },
+      },
+      "error",
+      new Headers(),
+    );
+    const { deps } = buildDeps(fakeFailingProvider(billingError));
+    const alertFetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "email-1" }), { status: 200 }));
+    deps.alerts = { apiKey: "key-1", from: "alerts@tradepal.africa", to: ["ren@example.com"], fetchImpl: alertFetchImpl };
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.BILLING.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(alertFetchImpl).toHaveBeenCalledTimes(1);
+    const [, init] = alertFetchImpl.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.subject).toContain("billing/auth failure");
+    expect(body.subject).not.toContain("AI provider call failed");
+  });
+
+  it("reports the generic outage incident title for an ordinary (non-billing) thrown error", async () => {
+    const fromNumber = "2348011119006";
+    await onboardMerchant(fromNumber, "Generic Outage Stores");
+
+    const { deps } = buildDeps(fakeFailingProvider(new Error("Anthropic API is down")));
+    const alertFetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "email-1" }), { status: 200 }));
+    deps.alerts = { apiKey: "key-1", from: "alerts@tradepal.africa", to: ["ren@example.com"], fetchImpl: alertFetchImpl };
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.GENERIC.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(alertFetchImpl).toHaveBeenCalledTimes(1);
+    const [, init] = alertFetchImpl.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.subject).toContain("AI provider call failed");
   });
 
   it("skips the AI provider call entirely when the circuit breaker is open, still giving a degraded reply", async () => {
