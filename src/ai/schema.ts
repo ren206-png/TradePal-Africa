@@ -84,6 +84,32 @@ export const ParsedIntentSchema = z.discriminatedUnion("intent", [
 
 export type ParsedIntent = z.infer<typeof ParsedIntentSchema>;
 
+/**
+ * DeepSeek Integration Phase 4 (INTEGRATION_DESIGN.md §1, "New files — Phase
+ * 4 (safety)") originally scoped this to only the read-only, non-monetary
+ * intents Phase 0's domain correction permitted DeepSeek to touch — QUERY,
+ * GREETING, UNKNOWN — deliberately excluding every ledger-writing/monetary
+ * intent (SALE, PURCHASE, PAYMENT_RECEIVED, EXPENSE, DEBT_NOTE,
+ * STOCK_ADJUSTMENT).
+ *
+ * Phase 8 (explicit, user-directed reversal — see PHASE_0_FINDINGS.md's
+ * "Phase 8" entry): DeepSeek is now promoted to primary transaction parser,
+ * with Anthropic as fallback. `DeepSeekAiProvider.parseTransactionText`
+ * (deepseekProvider.ts) now validates against the full `ParsedIntentSchema`
+ * above, not this narrower union — the same schema Anthropic's provider is
+ * implicitly validated against via `src/ai/parse.ts`. This type is kept
+ * exported only as a legacy/reference artifact of Phase 4's original
+ * read-only-only posture; nothing in this codebase constructs it as the
+ * active validation target anymore.
+ */
+export const DeepSeekReadOnlyIntentSchema = z.discriminatedUnion("intent", [
+  ParsedQuerySchema,
+  ParsedGreetingSchema,
+  ParsedUnknownSchema,
+]);
+
+export type DeepSeekReadOnlyIntent = z.infer<typeof DeepSeekReadOnlyIntentSchema>;
+
 /** Intents that, on success, produce a ledger transaction rather than just a reply. */
 export const TRANSACTION_INTENTS = new Set([
   "SALE",

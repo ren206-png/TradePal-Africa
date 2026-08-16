@@ -4,12 +4,14 @@ import type { Merchant, PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
 import {
   dispatchInboundMessage,
+  AI_PROVIDER_DEEPSEEK_FEATURE_FLAG_KEY,
   STOCK_TRACKING_FEATURE_FLAG_KEY,
   VOICE_TRANSCRIPTION_FEATURE_FLAG_KEY,
   type DispatcherDeps,
 } from "../src/messageDispatcher.js";
 import type { InboundMessageJob } from "../src/whatsapp/webhookHandler.js";
 import type { AiParseRequest, AiProvider } from "../src/ai/provider.js";
+import { DeepSeekAiProvider } from "../src/ai/deepseekProvider.js";
 import { CircuitBreaker } from "../src/monitoring/circuitBreaker.js";
 import type { SttProvider } from "../src/stt/provider.js";
 import { LANGUAGE_NAMES, SUPPORTED_COUNTRIES } from "../src/config/countries.js";
@@ -130,6 +132,31 @@ async function enableVoiceTranscriptionFlag(businessId: string): Promise<void> {
   });
   const scopedPrisma = getTenantScopedClient(prisma, businessId);
   await setFeatureFlagForBusiness(scopedPrisma, businessId, VOICE_TRANSCRIPTION_FEATURE_FLAG_KEY, true);
+}
+
+/** Enables the (off-by-default) aiProviderDeepseek flag for one business, creating the FeatureFlag row if needed. */
+async function enableDeepSeekProviderFlag(businessId: string): Promise<void> {
+  await prisma.featureFlag.upsert({
+    where: { key: AI_PROVIDER_DEEPSEEK_FEATURE_FLAG_KEY },
+    update: {},
+    create: { key: AI_PROVIDER_DEEPSEEK_FEATURE_FLAG_KEY, description: "test", enabledByDefault: false },
+  });
+  const scopedPrisma = getTenantScopedClient(prisma, businessId);
+  await setFeatureFlagForBusiness(scopedPrisma, businessId, AI_PROVIDER_DEEPSEEK_FEATURE_FLAG_KEY, true);
+}
+
+/** A DeepSeek chat-completion HTTP response wrapping a given JSON `content` string, mirroring tests/deepseekProvider.test.ts's own helper. */
+function deepSeekCompletionResponse(content: string, usage?: { prompt_tokens: number; completion_tokens: number }): Response {
+  return new Response(JSON.stringify({ choices: [{ message: { content } }], usage }), { status: 200 });
+}
+
+/** A real DeepSeekAiProvider (not a hand-rolled fake) whose HTTP calls are answered by `fetchImpl` — same construction pattern as tests/deepseekProvider.test.ts. */
+function fakeDeepSeekProvider(fetchImpl: ReturnType<typeof vi.fn>): DeepSeekAiProvider {
+  return new DeepSeekAiProvider({
+    apiKey: "test-deepseek-key",
+    fetchImpl,
+    retryBudget: { maxAttempts: 2, perAttemptTimeoutMs: 200, totalBudgetMs: 1000, baseDelayMs: 1, maxDelayMs: 2 },
+  });
 }
 
 /** Creates a voice-enabled Plan and an ACTIVE Subscription to it for one business. */
@@ -1286,12 +1313,24 @@ describe("dispatchInboundMessage: AI-provider outage / unexpected-error handling
 
     // Simulates a genuinely unexpected bug/DB blip somewhere dispatchCommandOrParse doesn't
     // already handle, well downstream of (and unrelated to) the AI-parse circuit breaker above.
-    const businessSpy = vi
-      .spyOn(prisma.business, "findUniqueOrThrow")
-      .mockRejectedValueOnce(new Error("simulated unexpected DB error"));
+    //
+    // NOTE: deliberately never call `businessSpy.mockRestore()` here. Prisma 6's client Proxy
+    // (src/db/tenantScope.ts's $extends usage relies on the same delegate machinery) treats any
+    // model-delegate method key once touched via Object.defineProperty as permanently "owned by
+    // the target" — its `get` trap short-circuits to reading the target object directly from
+    // then on, for the lifetime of the process. vi.spyOn(...).mockRestore() writes back a
+    // *synthesized* `{ value: undefined, writable: true, ... }` descriptor (since the proxy's own
+    // getOwnPropertyDescriptor trap has nothing real to report for a key that was never a plain
+    // own-property before spying), which permanently replaces the REAL findUniqueOrThrow with
+    // `undefined` on `prisma.business` for every later test in this file — confirmed by a
+    // dedicated repro. Falling back to a captured-before-spying real implementation instead keeps
+    // the delegate fully functional forever without ever needing to "restore" the descriptor.
+    const realFindUniqueOrThrow = prisma.business.findUniqueOrThrow.bind(prisma.business);
+    const businessSpy = vi.spyOn(prisma.business, "findUniqueOrThrow");
+    businessSpy.mockRejectedValueOnce(new Error("simulated unexpected DB error"));
+    businessSpy.mockImplementation(realFindUniqueOrThrow as typeof prisma.business.findUniqueOrThrow);
 
     await dispatchInboundMessage(deps, job);
-    businessSpy.mockRestore();
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
@@ -1299,5 +1338,236 @@ describe("dispatchInboundMessage: AI-provider outage / unexpected-error handling
 
     const webhookEvent = await prisma.webhookEvent.findUniqueOrThrow({ where: { id: job.webhookEventId } });
     expect(webhookEvent.status).toBe("PROCESSED");
+  });
+});
+
+/**
+ * DeepSeek Integration Phase 8: `parseWithProviderFallback` (messageDispatcher.ts) tries DeepSeek
+ * first — subject to its own two-gate topology (`deps.deepseekProvider` configured AND the
+ * per-business `aiProviderDeepseek` FeatureFlag on) plus its own circuit breaker — falling back to
+ * the existing Anthropic path unchanged whenever DeepSeek is not attempted at all or is attempted
+ * and fails. These tests exercise each branch of that fallback decision, plus the ledger accounting
+ * (`AiUsageLedger` RESERVE -> COMMIT/RELEASE) `tryParseWithDeepSeek` performs around the DeepSeek call.
+ */
+describe("dispatchInboundMessage: parseWithProviderFallback (DeepSeek primary, Anthropic fallback)", () => {
+  it("uses DeepSeek and never calls Anthropic when the aiProviderDeepseek flag is on and DeepSeek succeeds, committing real usage to the ledger", async () => {
+    const fromNumber = "2348011119101";
+    const merchant = await onboardMerchant(fromNumber, "DeepSeek Primary Stores");
+    await enableDeepSeekProviderFlag(merchant.businessId);
+
+    const deepSeekFetch = vi
+      .fn()
+      .mockResolvedValue(
+        deepSeekCompletionResponse(
+          JSON.stringify({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 }),
+          { prompt_tokens: 50, completion_tokens: 20 },
+        ),
+      );
+    const anthropicSpy = vi.fn(async () => {
+      throw new Error("Anthropic must not be called when DeepSeek succeeds");
+    });
+
+    const { deps, fetchImpl } = buildDeps({ parseTransactionText: anthropicSpy });
+    deps.deepseekProvider = fakeDeepSeekProvider(deepSeekFetch);
+    deps.deepseekCircuitBreaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 60_000 });
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DSPRIMARY.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(anthropicSpy).not.toHaveBeenCalled();
+    expect(deepSeekFetch).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("20.00");
+
+    const transactions = await prisma.transaction.findMany({ where: { businessId: merchant.businessId, type: "SALE" } });
+    expect(transactions).toHaveLength(1);
+
+    const commitRows = await prisma.aiUsageLedger.findMany({
+      where: { businessId: merchant.businessId, provider: "DEEPSEEK", phase: "COMMIT" },
+    });
+    expect(commitRows).toHaveLength(1);
+    expect(commitRows[0]?.actualCostMicroUsd).not.toBeNull();
+  });
+
+  it("falls back to Anthropic without ever attempting DeepSeek when the aiProviderDeepseek flag is off (default)", async () => {
+    const fromNumber = "2348011119102";
+    const merchant = await onboardMerchant(fromNumber, "Flag Off Stores");
+    // Deliberately not calling enableDeepSeekProviderFlag — the flag stays off by default (Standard #7).
+
+    const deepSeekFetch = vi.fn();
+    const anthropicProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 });
+
+    const { deps, fetchImpl } = buildDeps(anthropicProvider);
+    deps.deepseekProvider = fakeDeepSeekProvider(deepSeekFetch);
+    deps.deepseekCircuitBreaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 60_000 });
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DSOFF.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(deepSeekFetch).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("20.00");
+
+    const ledgerRows = await prisma.aiUsageLedger.findMany({ where: { businessId: merchant.businessId } });
+    expect(ledgerRows).toHaveLength(0);
+  });
+
+  it("falls back to a successful Anthropic reply when DeepSeek's call fails, and records a RELEASE (not COMMIT) row for the failed DeepSeek attempt", async () => {
+    const fromNumber = "2348011119103";
+    const merchant = await onboardMerchant(fromNumber, "DeepSeek Failure Stores");
+    await enableDeepSeekProviderFlag(merchant.businessId);
+
+    const deepSeekFetch = vi.fn().mockImplementation(async () => new Response("upstream error", { status: 500 }));
+    const anthropicProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 });
+
+    const { deps, fetchImpl } = buildDeps(anthropicProvider);
+    deps.deepseekProvider = fakeDeepSeekProvider(deepSeekFetch);
+    const breaker = new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 60_000 });
+    deps.deepseekCircuitBreaker = breaker;
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DSFAIL.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(deepSeekFetch).toHaveBeenCalled(); // DeepSeek's own internal retry budget exhausted on the 500
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("20.00"); // Anthropic's own successful reply, not a degraded one
+
+    const releaseRows = await prisma.aiUsageLedger.findMany({
+      where: { businessId: merchant.businessId, provider: "DEEPSEEK", phase: "RELEASE" },
+    });
+    expect(releaseRows).toHaveLength(1);
+
+    const commitRows = await prisma.aiUsageLedger.findMany({
+      where: { businessId: merchant.businessId, provider: "DEEPSEEK", phase: "COMMIT" },
+    });
+    expect(commitRows).toHaveLength(0);
+
+    expect(breaker.getState()).toBe("closed"); // one recorded failure, threshold 5 — not yet tripped
+  });
+
+  it("skips DeepSeek entirely (never calling its provider) when the DeepSeek circuit breaker is already open, and still succeeds via Anthropic", async () => {
+    const fromNumber = "2348011119104";
+    const merchant = await onboardMerchant(fromNumber, "DeepSeek Breaker Open Stores");
+    await enableDeepSeekProviderFlag(merchant.businessId);
+
+    const deepSeekFetch = vi.fn();
+    const anthropicProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 });
+
+    const { deps, fetchImpl } = buildDeps(anthropicProvider);
+    deps.deepseekProvider = fakeDeepSeekProvider(deepSeekFetch);
+    const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 60_000 });
+    breaker.recordFailure(); // pre-trip open, as if a prior DeepSeek call already failed
+    expect(breaker.getState()).toBe("open");
+    deps.deepseekCircuitBreaker = breaker;
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DSBREAKER.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(deepSeekFetch).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("20.00");
+  });
+
+  it("degrades to AI_PROVIDER_DEGRADED_REPLY only when both DeepSeek and Anthropic fail", async () => {
+    const fromNumber = "2348011119105";
+    await onboardMerchant(fromNumber, "Both Down Stores");
+    const merchant2 = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: fromNumber } });
+    await enableDeepSeekProviderFlag(merchant2.businessId);
+
+    const deepSeekFetch = vi.fn().mockImplementation(async () => new Response("upstream error", { status: 500 }));
+    const anthropicSpy = vi.fn(async () => {
+      throw new Error("Anthropic API is down");
+    });
+
+    const { deps, fetchImpl } = buildDeps({ parseTransactionText: anthropicSpy });
+    deps.deepseekProvider = fakeDeepSeekProvider(deepSeekFetch);
+    deps.deepseekCircuitBreaker = new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 60_000 });
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.BOTHDOWN.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(anthropicSpy).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toMatch(/having trouble understanding/i);
+  });
+
+  it("does not attempt DeepSeek at all when deps.deepseekProvider is undefined (boot-time gate off), mirroring today's default worker config unless AI_PROVIDER_DEEPSEEK_ENABLED is set", async () => {
+    const fromNumber = "2348011119106";
+    const merchant = await onboardMerchant(fromNumber, "No DeepSeek Provider Stores");
+    await enableDeepSeekProviderFlag(merchant.businessId);
+
+    const anthropicProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 });
+    const { deps, fetchImpl } = buildDeps(anthropicProvider);
+    // deps.deepseekProvider is intentionally left undefined — mirrors worker.ts's boot-time gate being off.
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DSNOPROV.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("20.00");
+
+    const ledgerRows = await prisma.aiUsageLedger.findMany({ where: { businessId: merchant.businessId } });
+    expect(ledgerRows).toHaveLength(0);
+  });
+
+  it("refuses to re-call DeepSeek for a whatsappMessageId that was already committed, falling back to Anthropic instead of risking a double charge", async () => {
+    const fromNumber = "2348011119107";
+    const merchant = await onboardMerchant(fromNumber, "DeepSeek Idempotency Stores");
+    await enableDeepSeekProviderFlag(merchant.businessId);
+
+    const deepSeekFetch = vi
+      .fn()
+      .mockResolvedValue(
+        deepSeekCompletionResponse(JSON.stringify({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 }), {
+          prompt_tokens: 50,
+          completion_tokens: 20,
+        }),
+      );
+    const anthropicProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 });
+
+    const { deps } = buildDeps(anthropicProvider);
+    deps.deepseekProvider = fakeDeepSeekProvider(deepSeekFetch);
+    deps.deepseekCircuitBreaker = new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 60_000 });
+
+    // First message commits a DeepSeek reservation under idempotencyKey "wamid.DSIDEMPOTENT.1".
+    // waMessageId is @unique on WebhookEvent (prisma/schema.prisma), so the redelivery below reuses
+    // this same `job` — a fresh storeInboundTextMessage call with the same waMessageId would itself
+    // throw a unique-constraint violation before dispatchInboundMessage is even reached.
+    const job = await storeInboundTextMessage({ waMessageId: "wamid.DSIDEMPOTENT.1", fromNumber, text: "sold bread for 2000" });
+    await dispatchInboundMessage(deps, job);
+    expect(deepSeekFetch).toHaveBeenCalledTimes(1);
+
+    // Simulates BullMQ redelivering the exact same job (same waMessageId) — e.g. after a crash between
+    // the DeepSeek commit and the WebhookEvent being marked PROCESSED. reserveAiUsage's own
+    // AiUsageAlreadyCommittedError guard must stop this from ever re-calling the DeepSeek vendor again.
+    const anthropicSpy = vi.fn(anthropicProvider.parseTransactionText);
+    deps.aiProvider = { parseTransactionText: anthropicSpy };
+    await dispatchInboundMessage(deps, job);
+
+    expect(deepSeekFetch).toHaveBeenCalledTimes(1); // not called again
+    expect(anthropicSpy).toHaveBeenCalledTimes(1); // fell back to Anthropic instead
+
+    const commitRows = await prisma.aiUsageLedger.findMany({
+      where: { businessId: merchant.businessId, provider: "DEEPSEEK", phase: "COMMIT" },
+    });
+    expect(commitRows).toHaveLength(1); // still exactly one COMMIT — no double charge
   });
 });

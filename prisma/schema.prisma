@@ -118,6 +118,7 @@ model Business {
   deletionRequests       DeletionRequest[]
   businessFeatureFlags   BusinessFeatureFlag[]
   paymentRequests        PaymentRequest[]
+  aiUsageLedgerEntries   AiUsageLedger[]
 
   @@index([countryCode])
 }
@@ -562,6 +563,70 @@ model AiParseLog {
   @@index([businessId, createdAt])
 }
 
+/// DeepSeek Integration Phase 3 (INTEGRATION_DESIGN.md §3): distinct from AiParseLog above —
+/// AiParseLog is the existing, single-provider parse-audit trail (Anthropic only, businessId
+/// optional since a parse can predate onboarding); AiUsageLedger is the new, provider-agnostic
+/// *cost* ledger backing Phase 3's budget governance, businessId required (see model doc below).
+enum AIProviderId {
+  ANTHROPIC
+  DEEPSEEK
+}
+
+/// RESERVE happens before a call is made (an estimated-cost hold); the same requestId then gets
+/// exactly one terminal row — COMMIT on success (actual cost known) or RELEASE on abort/timeout/
+/// error (no charge). See AiUsageLedger's own doc comment for why this is two-phase, append-only
+/// accounting rather than a single mutable-status row.
+enum AIUsagePhase {
+  RESERVE
+  COMMIT
+  RELEASE
+}
+
+/// Every row is an INSERT, never an UPDATE — this table is deliberately NOT added to
+/// src/db/tenantScope.ts's APPEND_ONLY_MODELS enforcement set, because unlike Transaction there
+/// is no update path to block in the first place: a reservation is one RESERVE row, and its
+/// outcome is always a *second*, separate row (COMMIT or RELEASE) sharing the same requestId,
+/// never a mutation of the first. This extends the same immutable-ledger precedent Transaction
+/// already established (src/db/tenantScope.ts's own APPEND_ONLY_MODELS doc comment) to a second
+/// table, by construction rather than by needing the same enforcement mechanism.
+///
+/// "Current open budget" for a business = SUM(estimatedCostMicroUsd WHERE phase=RESERVE AND
+/// requestId has no terminal COMMIT/RELEASE row) + SUM(actualCostMicroUsd WHERE phase=COMMIT AND
+/// createdAt within the current window) — see src/domain/aiUsageLedger.ts's
+/// getOpenBudgetMicroUsdForBusiness, which computes exactly this. A RESERVE row with no terminal
+/// row (a "leaked reservation" — e.g. the process crashed between the vendor call and recording
+/// its outcome) is directly queryable this way rather than needing a separate leak-tracking
+/// mechanism; src/domain/aiUsageLedger.ts's own tests assert this state can be constructed and
+/// observed.
+///
+/// businessId is required (unlike AiParseLog.businessId): every DeepSeek-eligible task class in
+/// this increment is a post-onboarding, business-scoped read (Phase 0's domain correction —
+/// DeepSeek never touches PII/ledger/pre-onboarding flows), so there is no legitimate
+/// business-less row for this table.
+model AiUsageLedger {
+  id                    String       @id @default(uuid())
+  requestId             String // groups a RESERVE row with its terminal COMMIT/RELEASE row
+  phase                 AIUsagePhase
+  businessId            String
+  feature               String // validated against the AIFeature TS union (src/ai/aiTypes.ts) at the app layer, not a DB enum, so adding a feature tag needs no migration
+  provider               AIProviderId
+  requestedModel        String
+  resolvedModel         String
+  estimatedCostMicroUsd BigInt? // set on RESERVE rows only — never a float, matches src/domain/money.ts
+  actualCostMicroUsd    BigInt? // set on COMMIT rows only — never a float
+  promptHash            String // sha256 hex of the prompt text; never the prompt itself (Constraint #5 — no raw prompt content persisted)
+  idempotencyKey        String // the same waMessageId already used for BullMQ-level dedupe (src/queue/inboundMessageQueue.ts:18) — no new concept
+  httpStatus            Int?
+  errorClass            String? // populated on RELEASE only: mirrors AIResult's own "kind" union (src/ai/aiTypes.ts)
+  createdAt              DateTime     @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt])
+  @@index([requestId])
+  @@index([idempotencyKey, provider])
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Billing (Phase 3, schema now)
 // ─────────────────────────────────────────────────────────────────────────
@@ -577,6 +642,13 @@ model Plan {
   // can create. null = uncapped. Mirrors entryCapPerMonth's null-is-uncapped
   // convention exactly; the OWNER is never counted against this cap.
   staffCapCount       Int?
+  // DeepSeek Integration Phase 3 (INTEGRATION_DESIGN.md §3): per-plan monthly
+  // spend cap for DeepSeek-routed AI calls, in integer micro-USD (never a
+  // float — matches src/domain/money.ts). null = uncapped, mirroring
+  // entryCapPerMonth's existing null-is-uncapped convention exactly.
+  // Consumed by src/domain/aiBudget.ts's graduated threshold evaluator, not
+  // enforced at all while AI_BUDGET_ENFORCEMENT_ENABLED=false (default).
+  aiDeepseekMonthlyBudgetMicroUsd BigInt?
   createdAt           DateTime @default(now()) @db.Timestamptz()
 
   currency      Currency       @relation(fields: [currencyCode], references: [code])

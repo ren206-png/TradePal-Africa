@@ -28,16 +28,17 @@ export interface AiParseResult {
 }
 
 /**
- * Runs raw model output through zod validation and confidence tiering. This
- * function never touches the database or the ledger — it only classifies —
- * so callers decide, per their own conversation-flow logic, whether to
- * auto-log, ask for confirmation, or ask the merchant to retype.
+ * Runs raw model output (already fetched from whichever provider) through
+ * zod validation and confidence tiering. Extracted from `parseTransactionText`
+ * below (Phase 8) so `src/messageDispatcher.ts`'s `parseWithProviderFallback`
+ * can reuse this exact validation/confidence logic for DeepSeek's
+ * `parseTransactionTextWithUsage` output too, instead of only for output
+ * fetched via the `AiProvider.parseTransactionText` interface method. Never
+ * touches the database or the ledger — it only classifies — so callers
+ * decide, per their own conversation-flow logic, whether to auto-log, ask
+ * for confirmation, or ask the merchant to retype.
  */
-export async function parseTransactionText(
-  provider: AiProvider,
-  request: AiParseRequest,
-): Promise<AiParseResult> {
-  const rawModelOutput = await provider.parseTransactionText(request);
+export function buildAiParseResult(rawModelOutput: unknown): AiParseResult {
   const result = ParsedIntentSchema.safeParse(rawModelOutput);
 
   if (!result.success) {
@@ -64,4 +65,12 @@ export async function parseTransactionText(
     confidenceTier,
     requiresClarification,
   };
+}
+
+export async function parseTransactionText(
+  provider: AiProvider,
+  request: AiParseRequest,
+): Promise<AiParseResult> {
+  const rawModelOutput = await provider.parseTransactionText(request);
+  return buildAiParseResult(rawModelOutput);
 }

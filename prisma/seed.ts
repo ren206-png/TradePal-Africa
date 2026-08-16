@@ -235,6 +235,25 @@ async function main(): Promise<void> {
       enabledByDefault: false,
     },
   });
+
+  // DeepSeek Integration Phase 8: the per-business live half of the two-gate
+  // topology gating DeepSeek as the primary transaction-parsing provider
+  // (src/worker.ts's AI_PROVIDER_DEEPSEEK_ENABLED is the boot-time half —
+  // see that file's own doc comment). Seeded off by default (Standard #7),
+  // same as every other flag in this file — enabling DeepSeek for any real
+  // business is a distinct, later operator action (flip this flag, or the
+  // global default, once AI_PROVIDER_DEEPSEEK_ENABLED/DEEPSEEK_API_KEY are
+  // also set on the worker), not something this seed script itself decides.
+  await prisma.featureFlag.upsert({
+    where: { key: "aiProviderDeepseek" },
+    update: {},
+    create: {
+      key: "aiProviderDeepseek",
+      description:
+        "Routes this business's free-text transaction parsing to DeepSeek first (cheaper), falling back to Anthropic automatically on DeepSeek failure/circuit-open/unavailability. Requires the worker's own AI_PROVIDER_DEEPSEEK_ENABLED + DEEPSEEK_API_KEY to also be set — this flag alone does not activate DeepSeek if the worker wasn't booted with it configured.",
+      enabledByDefault: false,
+    },
+  });
 }
 
 main()

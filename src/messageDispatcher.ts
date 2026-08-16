@@ -1,14 +1,23 @@
+import { createHash } from "node:crypto";
 import type { FinalAction, Merchant, PrismaClient } from "@prisma/client";
 import { applyLoggableIntent, type LoggableParsedIntent } from "./ai/applyParsedIntent.js";
 import { assertWithinQuotaIfEnabled, getEffectivePlan, QuotaExceededError } from "./domain/billing.js";
 import { isFeatureEnabled } from "./domain/featureFlags.js";
 import { recordAiParseLog } from "./ai/logParse.js";
-import { parseTransactionText, type AiParseResult } from "./ai/parse.js";
+import { buildAiParseResult, parseTransactionText, type AiParseResult } from "./ai/parse.js";
 import { isAiProviderConfigurationError, type AiProvider } from "./ai/provider.js";
+import type { DeepSeekAiProvider } from "./ai/deepseekProvider.js";
+import { estimateCostMicroUsd, resolveAiModel } from "./ai/modelRegistry.js";
 import type { ParsedIntent } from "./ai/schema.js";
 import { handleCommand } from "./commands/commandRouter.js";
 import { isBusinessSuspended } from "./domain/businessModeration.js";
-import { getTenantScopedClient } from "./db/tenantScope.js";
+import { getTenantScopedClient, type TenantScopedClient } from "./db/tenantScope.js";
+import {
+  AiUsageAlreadyCommittedError,
+  commitAiUsage,
+  releaseAiUsage,
+  reserveAiUsage,
+} from "./domain/aiUsageLedger.js";
 import {
   continueOnboarding,
   findMerchantByPhoneNumber,
@@ -65,6 +74,22 @@ export interface DispatcherDeps {
    * breaker behavior are unaffected.
    */
   aiCircuitBreaker?: CircuitBreaker | undefined;
+  /**
+   * DeepSeek Integration Phase 8: the primary transaction-parsing provider
+   * (Anthropic, above, is now the fallback — see `parseWithProviderFallback`
+   * below and PHASE_0_FINDINGS.md's "Phase 8" entry for the user-directed,
+   * cost-driven reversal of Phase 0's original posture). Concretely typed as
+   * `DeepSeekAiProvider`, not the narrower `AiProvider` interface, because
+   * `parseWithProviderFallback` needs `parseTransactionTextWithUsage` (real
+   * token usage for the cost ledger) and `modelKey` (for cost estimation),
+   * neither of which `AiProvider` exposes. Unset — mirrors every other
+   * optional credential dep in this file — means DeepSeek is never attempted
+   * and every message goes straight to the existing Anthropic path, exactly
+   * as before this phase.
+   */
+  deepseekProvider?: DeepSeekAiProvider | undefined;
+  /** Independent breaker instance from aiCircuitBreaker (above) — DeepSeek's own failure history must never trip, or be tripped by, the breaker guarding the Anthropic path. */
+  deepseekCircuitBreaker?: CircuitBreaker | undefined;
 }
 
 /** Off by default (Standard #7). See resolveVoiceNote's doc comment for the full gating story. */
@@ -78,6 +103,16 @@ export const VOICE_TRANSCRIPTION_FEATURE_FLAG_KEY = "voiceTranscription";
  * Phase 14 — enabling the flag is the only thing that changes.
  */
 export const STOCK_TRACKING_FEATURE_FLAG_KEY = "stockTracking";
+
+/**
+ * DeepSeek Integration Phase 8: the per-business live half of the two-gate
+ * flag topology (see src/worker.ts's own doc comment for the boot-time half,
+ * AI_PROVIDER_DEEPSEEK_ENABLED). Off by default (Standard #7) — see
+ * prisma/seed.ts. A business only gets DeepSeek as its primary parser once
+ * this flag is on AND the worker was booted with a configured
+ * `deps.deepseekProvider` — see `parseWithProviderFallback` below.
+ */
+export const AI_PROVIDER_DEEPSEEK_FEATURE_FLAG_KEY = "aiProviderDeepseek";
 
 /**
  * Phase 14: a soft-removed (`/removestaff`'d) Merchant row is kept around
@@ -292,6 +327,140 @@ async function parseWithCircuitBreaker(
   }
 }
 
+/**
+ * Rough, deliberately conservative pre-call token estimate for
+ * `reserveAiUsage`'s `estimatedCostMicroUsd` — refined to the real,
+ * vendor-reported token counts at `commitAiUsage` time once the call
+ * returns (F-3's whole point: the estimate only ever guards the RESERVE
+ * phase's budget hold, never what's actually billed). ~4 characters/token
+ * is a standard rough estimator for English-like text; the merchant's raw
+ * message is what's actually sent, so its length is what's estimated from —
+ * SYSTEM_PROMPT's own (much larger, fixed) token cost is deliberately not
+ * included here, since a rough per-message estimate only needs to be in the
+ * right ballpark for a budget hold, not exact.
+ */
+function estimateDeepSeekPromptTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+const ESTIMATED_DEEPSEEK_COMPLETION_TOKENS = 150;
+
+/**
+ * DeepSeek Integration Phase 8, F-2/F-3 closure — the first live caller of
+ * `src/domain/aiUsageLedger.ts`'s RESERVE -> COMMIT/RELEASE flow (that
+ * module was fully built and tested in isolation but never wired to any
+ * call path before this phase). Returns `undefined` whenever the caller
+ * (`parseWithProviderFallback`) should fall through to the existing
+ * Anthropic path instead — DeepSeek not being attempted at all (a gate
+ * closed) and DeepSeek being attempted-but-failing are both treated
+ * identically by the caller, so this function doesn't need to distinguish
+ * them in its return type.
+ */
+async function tryParseWithDeepSeek(
+  deps: DispatcherDeps,
+  scopedPrisma: TenantScopedClient,
+  business: { id: string },
+  text: string,
+  idempotencyKey: string,
+): Promise<{ result: AiParseResult; degraded: boolean } | undefined> {
+  const provider = deps.deepseekProvider;
+  if (!provider) return undefined;
+
+  const flagOn = await isFeatureEnabled(scopedPrisma, business.id, AI_PROVIDER_DEEPSEEK_FEATURE_FLAG_KEY);
+  if (!flagOn) return undefined;
+
+  const breaker = deps.deepseekCircuitBreaker;
+  if (breaker && !breaker.canAttempt()) return undefined;
+
+  const modelEntry = resolveAiModel(provider.modelKey);
+  if (!modelEntry) return undefined; // misconfigured registry key — fall back to Anthropic rather than throw mid-dispatch
+
+  const estimatedCostMicroUsd = estimateCostMicroUsd(
+    modelEntry,
+    estimateDeepSeekPromptTokens(text),
+    ESTIMATED_DEEPSEEK_COMPLETION_TOKENS,
+  );
+  const promptHash = createHash("sha256").update(text).digest("hex");
+
+  let requestId: string;
+  try {
+    ({ requestId } = await reserveAiUsage(scopedPrisma, {
+      businessId: business.id,
+      feature: "TRANSACTION_PARSE",
+      provider: "DEEPSEEK",
+      requestedModel: modelEntry.apiModelName,
+      resolvedModel: modelEntry.apiModelName,
+      estimatedCostMicroUsd,
+      promptHash,
+      idempotencyKey,
+    }));
+  } catch (error) {
+    if (error instanceof AiUsageAlreadyCommittedError) {
+      // Already billed for this exact idempotencyKey/provider pair — e.g. a BullMQ retry of a
+      // job that already completed. Never re-call the vendor for an already-committed message;
+      // fall back to Anthropic's own fresh attempt rather than risk a second charge.
+      return undefined;
+    }
+    // A ledger-write failure (DB blip) shouldn't strand the merchant behind a broken cost-
+    // tracking system — degrade to Anthropic exactly as if DeepSeek were simply unavailable.
+    await reportIncident(deps.alerts, {
+      service: SERVICE_NAME,
+      title: "AiUsageLedger reserveAiUsage failed for a DeepSeek attempt",
+      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    });
+    return undefined;
+  }
+
+  try {
+    const { data, usage } = await provider.parseTransactionTextWithUsage({ text });
+    const actualCostMicroUsd = estimateCostMicroUsd(modelEntry, usage.promptTokens, usage.completionTokens);
+    await commitAiUsage(scopedPrisma, requestId, { actualCostMicroUsd });
+    breaker?.recordSuccess();
+    return { result: buildAiParseResult(data), degraded: false };
+  } catch (error) {
+    breaker?.recordFailure();
+    await releaseAiUsage(scopedPrisma, requestId, {
+      errorClass: error instanceof Error ? error.constructor.name : "UNKNOWN",
+    }).catch((releaseError: unknown) => {
+      void reportIncident(deps.alerts, {
+        service: SERVICE_NAME,
+        title: "AiUsageLedger releaseAiUsage failed after a DeepSeek call failure",
+        detail: releaseError instanceof Error ? (releaseError.stack ?? releaseError.message) : String(releaseError),
+      });
+    });
+    await reportIncident(deps.alerts, {
+      service: SERVICE_NAME,
+      title: "DeepSeek transaction-parse call failed — falling back to Anthropic",
+      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    });
+    return undefined;
+  }
+}
+
+/**
+ * DeepSeek Integration Phase 8: tries DeepSeek first as the primary
+ * transaction-parsing provider (explicit, user-directed reversal of Phase
+ * 0's Anthropic-only posture — cost-driven; see PHASE_0_FINDINGS.md's
+ * "Phase 8" entry for the full record of that decision), falling back to
+ * the existing `parseWithCircuitBreaker` (Anthropic) path unchanged whenever
+ * DeepSeek is not attempted at all (any of `tryParseWithDeepSeek`'s three
+ * gates closed) or is attempted and fails. DeepSeek failing never itself
+ * produces a degraded reply to the merchant — only Anthropic also failing
+ * (or the Anthropic breaker also being open) does, exactly as before this
+ * phase for that path.
+ */
+async function parseWithProviderFallback(
+  deps: DispatcherDeps,
+  scopedPrisma: TenantScopedClient,
+  business: { id: string },
+  text: string,
+  idempotencyKey: string,
+): Promise<{ result: AiParseResult; degraded: boolean }> {
+  const deepseekOutcome = await tryParseWithDeepSeek(deps, scopedPrisma, business, text, idempotencyKey);
+  if (deepseekOutcome) return deepseekOutcome;
+
+  return parseWithCircuitBreaker(deps, text);
+}
+
 const LOGGABLE_INTENTS = new Set(["SALE", "PURCHASE", "EXPENSE", "PAYMENT_RECEIVED", "DEBT_NOTE", "STOCK_ADJUSTMENT"]);
 
 /** Narrows a validated, HIGH-confidence ParsedIntent down to the subset applyLoggableIntent understands. */
@@ -364,7 +533,7 @@ async function dispatchCommandOrParse(
     return;
   }
 
-  const { result, degraded } = await parseWithCircuitBreaker(deps, text);
+  const { result, degraded } = await parseWithProviderFallback(deps, scopedPrisma, business, text, whatsappMessageId);
   // Phase 15: also needed for a SALE/PURCHASE carrying itemized `items`, so
   // those can link to InventoryItem too — not just the STOCK_ADJUSTMENT
   // intent from Phase 14. Still skipped for every other parse (QUERY,
