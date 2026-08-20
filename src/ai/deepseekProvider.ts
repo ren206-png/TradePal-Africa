@@ -338,7 +338,24 @@ export class DeepSeekAiProvider implements AiProvider {
     const requestBody = JSON.stringify({
       model: apiModelName,
       messages,
-      max_tokens: 512,
+      // Confirmed live in production (2026-08-20): `deepseek-v4-flash` has
+      // "thinking"/reasoning mode ENABLED BY DEFAULT (api-docs.deepseek.com/
+      // guides/thinking_mode), and `max_tokens` caps the COMBINED reasoning +
+      // content token budget, not just the final answer, contra this file's
+      // original assumption. Observed failure: with thinking left at its
+      // default and max_tokens:512, a real request consumed all 512 tokens
+      // as `reasoning_content` (finish_reason:"length"), leaving `content`
+      // empty — the exact cause of the "Unterminated string in JSON at
+      // position 55" validation failures seen in worker logs. This provider
+      // needs a single structured-JSON answer, not a visible chain of
+      // thought, so thinking is explicitly disabled here (confirmed live:
+      // disabling it drops reasoning_content entirely and returns clean,
+      // valid JSON in ~65 completion tokens for a typical transaction
+      // message, well under budget). max_tokens raised from 512 to 1024 as
+      // a safety margin for messages with several line items, now that none
+      // of it is competing with reasoning tokens.
+      thinking: { type: "disabled" },
+      max_tokens: 1024,
       // UNVERIFIED VENDOR-API CLAIM, flagged rather than silently assumed (same anti-fabrication discipline as modelRegistry.ts's pricing disclosure): DeepSeek is documented as OpenAI-API-compatible, and OpenAI's own chat-completions API accepts response_format:{type:"json_object"} to constrain output to a bare JSON object — but that specific field's behavior on DeepSeek's actual endpoint is external vendor behavior this repo-only audit cannot verify (UNKNOWN — searched: this repo, for any prior DeepSeek API citation). It is sent as a best-effort hint only; SYSTEM_PROMPT's own "output ONLY a single JSON object" instruction is the real, load-bearing contract, and `validateDeepSeekContent`'s JSON.parse + schema check is the actual enforcement — an unsupported field being silently ignored by the vendor degrades to relying on the prompt alone, not a hard failure. Must be confirmed against DeepSeek's real API docs before any phase routes real traffic here.
       response_format: { type: "json_object" },
     });
