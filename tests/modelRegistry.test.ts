@@ -7,13 +7,21 @@ import {
 } from "../src/ai/modelRegistry.js";
 
 describe("modelRegistry", () => {
-  it("resolves the default DeepSeek registry key to a pinned snapshot entry, not a moving alias", () => {
+  it("resolves the default DeepSeek registry key to a dated-snapshot registry key with a vendor-accepted apiModelName", () => {
     const entry = resolveAiModel(DEFAULT_DEEPSEEK_MODEL_KEY);
     expect(entry).toBeDefined();
     expect(entry?.provider).toBe("DEEPSEEK");
-    // D-3: pin an exact dated snapshot, never a bare alias like "deepseek-v4-flash".
-    expect(entry?.apiModelName).toBe("deepseek-v4-flash-2026-06-snapshot");
-    expect(entry?.apiModelName).not.toBe("deepseek-v4-flash");
+    // D-3's intent survives at the registry-key level: AI_DEEPSEEK_MODEL selects
+    // this dated pseudo-snapshot key, not a raw vendor string, so an operator
+    // can't accidentally repoint it at a bare alias via the env var alone.
+    // But apiModelName — the literal string sent as `model` in the request
+    // body — must be a name DeepSeek's API actually accepts. Confirmed live in
+    // production (2026-08-20): "deepseek-v4-flash-2026-06-snapshot" as
+    // apiModelName was rejected with DeepSeek 400 "The supported API model
+    // names are deepseek-v4-pro or deepseek-v4-flash, ...". DeepSeek does not
+    // support dated snapshot pinning at all, so the bare alias is correct here.
+    expect(DEFAULT_DEEPSEEK_MODEL_KEY).toBe("deepseek-v4-flash-2026-06-snapshot");
+    expect(entry?.apiModelName).toBe("deepseek-v4-flash");
   });
 
   it("returns undefined (never throws) for an unknown key", () => {

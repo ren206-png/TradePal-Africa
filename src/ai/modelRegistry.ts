@@ -42,9 +42,20 @@ export interface AiModelRegistryEntry extends AiModelPricing {
 }
 
 export const AI_MODEL_REGISTRY = {
+  // Registry KEY is still a dated pseudo-snapshot name per D-3's intent (an
+  // operator can't accidentally repoint AI_DEEPSEEK_MODEL at a bare moving
+  // alias just by editing the env var). But apiModelName — the literal
+  // string sent as `model` in the request body — must be a name DeepSeek's
+  // API actually accepts. Confirmed live in production (2026-08-20): calls
+  // using "deepseek-v4-flash-2026-06-snapshot" as apiModelName failed with
+  // DeepSeek 400 "The supported API model names are deepseek-v4-pro or
+  // deepseek-v4-flash, but you passed deepseek-v4-flash-2026-06-snapshot."
+  // DeepSeek does not support dated snapshot pinning at all — "flash" is
+  // itself the moving alias D-3 warned about, there is no pinned variant to
+  // ask for. Falling back to the bare alias is the only option that works.
   "deepseek-v4-flash-2026-06-snapshot": {
     provider: "DEEPSEEK",
-    apiModelName: "deepseek-v4-flash-2026-06-snapshot",
+    apiModelName: "deepseek-v4-flash",
     // PLACEHOLDER — see file doc comment. Not yet confirmed against a live DeepSeek pricing page.
     inputCostMicroUsdPer1kTokens: 140n,
     outputCostMicroUsdPer1kTokens: 280n,

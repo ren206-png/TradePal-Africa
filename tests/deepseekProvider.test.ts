@@ -36,7 +36,7 @@ describe("DeepSeekAiProvider", () => {
     expect(init.headers).toMatchObject({ Authorization: "Bearer test-key", "Content-Type": "application/json" });
 
     const body = JSON.parse(init.body as string) as { model: string; messages: Array<{ role: string; content: string }> };
-    expect(body.model).toBe("deepseek-v4-flash-2026-06-snapshot"); // DEFAULT_DEEPSEEK_MODEL_KEY's pinned snapshot, not a bare alias
+    expect(body.model).toBe("deepseek-v4-flash"); // DEFAULT_DEEPSEEK_MODEL_KEY's apiModelName — DeepSeek doesn't accept dated snapshot names, see modelRegistry.ts
     expect(body.messages[0]?.role).toBe("system");
     expect(body.messages[1]).toEqual({
       role: "user",
@@ -68,7 +68,7 @@ describe("DeepSeekAiProvider", () => {
 
     const init = (fetchImpl.mock.calls[0] as [string, RequestInit])[1];
     const body = JSON.parse(init.body as string) as { model: string };
-    expect(body.model).toBe("deepseek-v4-flash-2026-06-snapshot");
+    expect(body.model).toBe("deepseek-v4-flash");
   });
 
   it("throws immediately on a non-retryable status (400) without retrying", async () => {
