@@ -179,3 +179,4 @@ console.log(`TradePal inbound-message worker listening on queue "${INBOUND_MESSA
 installGracefulShutdown(SERVICE_NAME, [
   { name: "bullmq-worker", close: () => worker.close() },
   { name: "prisma", close: () => prisma.$disconnect() },
+]);
