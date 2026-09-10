@@ -16,6 +16,7 @@ import {
 } from "./config/paymentsEnv.js";
 import { prisma } from "./db/client.js";
 import { createFlutterwaveWebhookPostHandler } from "./flutterwave/webhookRoute.js";
+import { installGracefulShutdown } from "./monitoring/processGuards.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { enqueueInboundMessage } from "./queue/inboundMessageQueue.js";
 import { RedisInboundMessageRateLimiter } from "./whatsapp/inboundRateLimiter.js";
@@ -162,6 +163,19 @@ app.use(
 );
 
 const port = Number(process.env["PORT"] ?? 3000);
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`TradePal webhook server listening on port ${port}`);
 });
+
+// See processGuards.ts's own doc comment: SIGTERM (sent by Railway on every
+// redeploy) previously had no listener here, so Node's default behavior —
+// terminate immediately — could cut off an in-flight webhook request rather
+// than letting server.close() stop accepting new connections while letting
+// existing ones finish.
+installGracefulShutdown("server", [
+  {
+    name: "http-server",
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),

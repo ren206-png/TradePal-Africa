@@ -2,6 +2,7 @@ import "dotenv/config";
 import { Worker } from "bullmq";
 import { prisma } from "./db/client.js";
 import { expireStalePaymentRequests } from "./domain/paymentRequestExpiry.js";
+import { installGracefulShutdown } from "./monitoring/processGuards.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import {
   PAYMENT_REQUEST_EXPIRY_QUEUE_NAME,
@@ -42,6 +43,15 @@ async function main() {
   console.log(
     `TradePal payment-request-expiry worker listening on queue "${PAYMENT_REQUEST_EXPIRY_QUEUE_NAME}" (hourly sweep).`,
   );
+
+  // See processGuards.ts's own doc comment: SIGTERM (sent by Railway on
+  // every redeploy) previously had no listener here, so Node's default
+  // behavior — terminate immediately — could cut off a sweep mid-run rather
+  // than letting BullMQ's own Worker.close() finish it.
+  installGracefulShutdown("payment-request-expiry-worker", [
+    { name: "bullmq-worker", close: () => worker.close() },
+    { name: "prisma", close: () => prisma.$disconnect() },
+  ]);
 }
 
 main().catch((error) => {

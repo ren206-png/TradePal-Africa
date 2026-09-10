@@ -3,6 +3,7 @@ import { Worker } from "bullmq";
 import { buildSubscriptionExpiryOutboundGatewayFromEnv } from "./config/outboundGatewayEnv.js";
 import { prisma } from "./db/client.js";
 import { expireLapsedSubscriptions } from "./domain/subscriptionExpiry.js";
+import { installGracefulShutdown } from "./monitoring/processGuards.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { SUBSCRIPTION_EXPIRY_QUEUE_NAME, scheduleSubscriptionExpirySweep } from "./queue/subscriptionExpiryQueue.js";
 
@@ -57,6 +58,15 @@ async function main() {
   console.log(
     `TradePal subscription-expiry worker listening on queue "${SUBSCRIPTION_EXPIRY_QUEUE_NAME}" (hourly sweep).`,
   );
+
+  // See processGuards.ts's own doc comment: SIGTERM (sent by Railway on
+  // every redeploy) previously had no listener here, so Node's default
+  // behavior — terminate immediately — could cut off a sweep mid-run rather
+  // than letting BullMQ's own Worker.close() finish it.
+  installGracefulShutdown("subscription-expiry-worker", [
+    { name: "bullmq-worker", close: () => worker.close() },
+    { name: "prisma", close: () => prisma.$disconnect() },
+  ]);
 }
 
 main().catch((error) => {

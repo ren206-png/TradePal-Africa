@@ -3,6 +3,7 @@ import { Worker } from "bullmq";
 import { buildBusinessDigestOutboundGatewayFromEnv } from "./config/outboundGatewayEnv.js";
 import { prisma } from "./db/client.js";
 import { sendWeeklyBusinessDigests } from "./domain/businessDigest.js";
+import { installGracefulShutdown } from "./monitoring/processGuards.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { WEEKLY_DIGEST_QUEUE_NAME, scheduleWeeklyDigestSweep } from "./queue/businessDigestQueue.js";
 
@@ -49,6 +50,15 @@ async function main() {
   });
 
   console.log(`TradePal business-digest worker listening on queue "${WEEKLY_DIGEST_QUEUE_NAME}" (hourly tick).`);
+
+  // See processGuards.ts's own doc comment: SIGTERM (sent by Railway on
+  // every redeploy) previously had no listener here, so Node's default
+  // behavior — terminate immediately — could cut off a digest sweep
+  // mid-send rather than letting BullMQ's own Worker.close() finish it.
+  installGracefulShutdown("business-digest-worker", [
+    { name: "bullmq-worker", close: () => worker.close() },
+    { name: "prisma", close: () => prisma.$disconnect() },
+  ]);
 }
 
 main().catch((error) => {

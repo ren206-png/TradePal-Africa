@@ -9,6 +9,7 @@ import { buildFlutterwaveDepsFromEnv, getFlutterwaveCheckoutRedirectUrl } from "
 import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
 import { reportIncident } from "./monitoring/alerts.js";
 import { CircuitBreaker } from "./monitoring/circuitBreaker.js";
+import { installGracefulShutdown } from "./monitoring/processGuards.js";
 import { WhisperSttProvider } from "./stt/provider.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { INBOUND_MESSAGE_QUEUE_NAME } from "./queue/inboundMessageQueue.js";
@@ -170,3 +171,11 @@ worker.on("failed", (job, error) => {
 });
 
 console.log(`TradePal inbound-message worker listening on queue "${INBOUND_MESSAGE_QUEUE_NAME}"`);
+
+// See processGuards.ts's own doc comment: SIGTERM (sent by Railway on every
+// redeploy) previously had no listener here, so Node's default behavior —
+// terminate immediately — could kill a job mid-flight rather than letting
+// BullMQ's own Worker.close() finish the one currently active job first.
+installGracefulShutdown(SERVICE_NAME, [
+  { name: "bullmq-worker", close: () => worker.close() },
+  { name: "prisma", close: () => prisma.$disconnect() },
