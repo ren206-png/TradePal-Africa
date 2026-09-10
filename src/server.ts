@@ -1,6 +1,6 @@
 import "dotenv/config";
 import cors from "cors";
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
@@ -16,6 +16,7 @@ import {
 } from "./config/paymentsEnv.js";
 import { prisma } from "./db/client.js";
 import { createFlutterwaveWebhookPostHandler } from "./flutterwave/webhookRoute.js";
+import { reportIncident } from "./monitoring/alerts.js";
 import { installGracefulShutdown } from "./monitoring/processGuards.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { enqueueInboundMessage } from "./queue/inboundMessageQueue.js";
@@ -162,6 +163,35 @@ app.use(
   }),
 );
 
+// Centralized error handler — MUST be registered last (after every route,
+// including the /admin mount above), per Express's own rule that a 4-arg
+// `(err, req, res, next)` middleware is only ever reached via `next(err)`.
+// Closes the gap admin/asyncHandler.ts's own doc comment describes: Express 4
+// doesn't catch a rejected Promise from an async handler on its own, so
+// without both this middleware AND every handler being wrapped in
+// asyncHandler, an error thrown by any admin route would previously become an
+// unhandled rejection and take down the entire process instead of just
+// failing the one request. This is the request-scoped counterpart to
+// installCrashReporting's process-scoped safety net: it reports the incident
+// the same way, but responds with a plain 500 and lets the process keep
+// serving every other in-flight and future request.
+//
+// `undefined` here (not an `alerts` variable) deliberately keeps this
+// self-contained: reportIncident always logs to console regardless, and only
+// attempts to email when alert-email deps are supplied — wiring those deps
+// through is a separate, already-in-flight change to this file.
+app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  reportIncident(undefined, { service: "server", title: "Unhandled request error", detail }).catch((reportError) => {
+    console.error("server: reportIncident threw while handling a request error:", reportError);
+  });
+
+  // Never leak a stack trace (or any error detail) to the client — the full
+  // detail already went to reportIncident/console above for operators.
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Internal server error." });
+});
+
 const port = Number(process.env["PORT"] ?? 3000);
 const server = app.listen(port, () => {
   console.log(`TradePal webhook server listening on port ${port}`);
@@ -179,3 +209,6 @@ installGracefulShutdown("server", [
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       }),
+  },
+  { name: "prisma", close: () => prisma.$disconnect() },
+]);

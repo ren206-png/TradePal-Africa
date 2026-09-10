@@ -1,5 +1,6 @@
 import type { AdminRole, PrismaClient } from "@prisma/client";
 import type { NextFunction, Request, Response } from "express";
+import { asyncHandler } from "./asyncHandler.js";
 import { verifyAdminJwt, type AdminJwtPayload } from "./auth.js";
 import { isAdminTokenRevoked } from "./tokenRevocation.js";
 
@@ -14,9 +15,16 @@ export interface AuthenticatedAdminRequest extends Request {
  * addition to the JWT secret) to check the revocation list populated by
  * `POST /admin/logout` — a signature-valid, unexpired token can still be
  * rejected here if it was explicitly logged out.
+ *
+ * Wrapped in `asyncHandler` (see its own doc comment, asyncHandler.ts): the
+ * `isAdminTokenRevoked` call below is an unguarded `await`, and this
+ * middleware sits in front of nearly every admin route via
+ * `router.use(requireAdminAuth(...))` — a transient error here (e.g. a
+ * dropped DB connection) must reach the centralized error handler and fail
+ * only the one request, not crash the whole process.
  */
 export function requireAdminAuth(prisma: PrismaClient, jwtSecret: string) {
-  return async (req: AuthenticatedAdminRequest, res: Response, next: NextFunction): Promise<void> => {
+  return asyncHandler(async (req: AuthenticatedAdminRequest, res: Response, next: NextFunction): Promise<void> => {
     const header = req.headers.authorization;
     const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
 
@@ -38,7 +46,7 @@ export function requireAdminAuth(prisma: PrismaClient, jwtSecret: string) {
 
     req.adminUser = payload;
     next();
-  };
+  });
 }
 
 /**
