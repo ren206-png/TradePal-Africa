@@ -1,6 +1,7 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
+import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
 import { RedisLoginRateLimiter } from "./admin/rateLimiter.js";
@@ -80,6 +81,12 @@ const inboundMessageRateLimiter = rateLimitRedisClient
   : undefined;
 
 const app = express();
+
+// Security-header defaults (helmet) — this API serves no HTML/browser
+// content itself (JSON responses only; the marketing site lives separately
+// in landing/), so helmet's default CSP/HSTS/X-Frame-Options/etc. have no
+// legitimate page to conflict with and are safe to apply as-is.
+app.use(helmet());
 
 app.use(
   express.json({
