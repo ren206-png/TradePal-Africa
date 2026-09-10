@@ -12,6 +12,7 @@ import {
 import type { InboundMessageJob } from "../src/whatsapp/webhookHandler.js";
 import type { AiParseRequest, AiProvider } from "../src/ai/provider.js";
 import { DeepSeekAiProvider } from "../src/ai/deepseekProvider.js";
+import type { AiModelRegistryKey } from "../src/ai/modelRegistry.js";
 import { CircuitBreaker } from "../src/monitoring/circuitBreaker.js";
 import type { SttProvider } from "../src/stt/provider.js";
 import { LANGUAGE_NAMES, SUPPORTED_COUNTRIES } from "../src/config/countries.js";
@@ -1169,6 +1170,39 @@ describe("dispatchInboundMessage", () => {
     const debtTransactions = await prisma.transaction.findMany({ where: { businessId: owner.businessId, type: "DEBT_NOTE" } });
     expect(debtTransactions).toHaveLength(1);
   });
+
+  it("replies with GREETING_REPLY for a post-onboarding free-text greeting, and logs it ANSWERED rather than AUTO_LOGGED", async () => {
+    const fromNumber = "2348011110020";
+    await onboardMerchant(fromNumber, "Greeting Reply Stores");
+
+    const { deps, fetchImpl } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.GREET.1", fromNumber, text: "hello there" }));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toMatch(/tell me about a sale, expense, or debt/i);
+
+    const parseLog = await prisma.aiParseLog.findFirst({ where: { whatsappMessageId: "wamid.GREET.1" } });
+    expect(parseLog?.finalAction).toBe("ANSWERED");
+  });
+
+  it("replies with QUERY_REPLY for a post-onboarding free-text query, and logs it ANSWERED rather than AUTO_LOGGED", async () => {
+    const fromNumber = "2348011110021";
+    await onboardMerchant(fromNumber, "Query Reply Stores");
+
+    const { deps, fetchImpl } = buildDeps(fakeProvider({ intent: "QUERY", confidence: 0.9 }));
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.QUERYREPLY.1", fromNumber, text: "how much do I have today" }),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toMatch(/\/today for today's summary/i);
+
+    const parseLog = await prisma.aiParseLog.findFirst({ where: { whatsappMessageId: "wamid.QUERYREPLY.1" } });
+    expect(parseLog?.finalAction).toBe("ANSWERED");
+  });
 });
 
 /**
@@ -1569,5 +1603,41 @@ describe("dispatchInboundMessage: parseWithProviderFallback (DeepSeek primary, A
       where: { businessId: merchant.businessId, provider: "DEEPSEEK", phase: "COMMIT" },
     });
     expect(commitRows).toHaveLength(1); // still exactly one COMMIT — no double charge
+  });
+
+  it("falls back to Anthropic without ever calling DeepSeek or touching the ledger when the provider's modelKey isn't in the registry (config drift)", async () => {
+    const fromNumber = "2348011119108";
+    const merchant = await onboardMerchant(fromNumber, "DeepSeek Bad Model Key Stores");
+    await enableDeepSeekProviderFlag(merchant.businessId);
+
+    const deepSeekFetch = vi.fn();
+    const anthropicProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 });
+
+    const { deps, fetchImpl } = buildDeps(anthropicProvider);
+    // A modelKey that resolveAiModel (modelRegistry.ts) doesn't recognize — e.g. a registry entry
+    // renamed/removed while AI_DEEPSEEK_MODEL (deepseekEnv.ts) still points at the old key.
+    // tryParseWithDeepSeek's own comment: "misconfigured registry key — fall back to Anthropic
+    // rather than throw mid-dispatch." The type system normally prevents this, so the cast below
+    // simulates the only realistic way it happens: config drift, not a typo a compiler would catch.
+    deps.deepseekProvider = new DeepSeekAiProvider({
+      apiKey: "test-deepseek-key",
+      fetchImpl: deepSeekFetch,
+      retryBudget: { maxAttempts: 2, perAttemptTimeoutMs: 200, totalBudgetMs: 1000, baseDelayMs: 1, maxDelayMs: 2 },
+      modelKey: "deepseek-vNONEXISTENT" as unknown as AiModelRegistryKey,
+    });
+    deps.deepseekCircuitBreaker = new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 60_000 });
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DSBADKEY.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(deepSeekFetch).not.toHaveBeenCalled(); // never even attempted the vendor call
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("20.00"); // Anthropic's successful reply
+
+    const ledgerRows = await prisma.aiUsageLedger.findMany({ where: { businessId: merchant.businessId } });
+    expect(ledgerRows).toHaveLength(0); // no RESERVE ever written — the gate closes before the ledger is touched
   });
 });
