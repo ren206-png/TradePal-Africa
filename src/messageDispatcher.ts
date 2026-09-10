@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { FinalAction, Merchant, PrismaClient } from "@prisma/client";
 import { applyLoggableIntent, type LoggableParsedIntent } from "./ai/applyParsedIntent.js";
 import { assertWithinQuotaIfEnabled, getEffectivePlan, QuotaExceededError } from "./domain/billing.js";
+import { evaluateAiBudget } from "./domain/aiBudget.js";
 import { isFeatureEnabled } from "./domain/featureFlags.js";
 import { recordAiParseLog } from "./ai/logParse.js";
 import { buildAiParseResult, parseTransactionText, type AiParseResult } from "./ai/parse.js";
@@ -461,6 +462,52 @@ async function parseWithProviderFallback(
   return parseWithCircuitBreaker(deps, text);
 }
 
+/**
+ * First live wiring of `src/domain/aiBudget.ts`'s graduated evaluator — that
+ * module was fully built and tested (Phase 3) but, per its own doc comment,
+ * never called from any live path before now. Deliberately RECORD-only:
+ * `enforcementEnabled` is hardcoded `false` here (not read from an env var
+ * yet), so this can only ever observe and alert, never block or downgrade a
+ * call — `isAiCallPermitted`/`isPremiumModelRestricted` are intentionally
+ * not invoked anywhere in this file. Flipping real enforcement on is a
+ * separate, later decision (needs the placeholder thresholds in
+ * aiBudget.ts replaced with real, business-approved numbers first).
+ *
+ * Awaited by the caller (same convention as this function's neighboring
+ * `assertWithinQuotaIfEnabled` check) so its ordering relative to the reply
+ * is deterministic and testable, but every error is caught here rather than
+ * propagated — a slow query or DB blip in this purely-observational check
+ * must never fail message dispatch or the merchant's reply. Runs once per
+ * free-text (AI-parsed) message rather than per-command, since it only has
+ * something to observe when an AI call was actually attempted, and
+ * piggybacking on that path keeps the extra DB reads proportionally small
+ * next to the LLM call itself.
+ */
+async function recordAiBudgetObservation(
+  deps: DispatcherDeps,
+  scopedPrisma: TenantScopedClient,
+  business: { id: string; timezone: string },
+): Promise<void> {
+  try {
+    const evaluation = await evaluateAiBudget(scopedPrisma, business.id, business.timezone, false);
+    if (evaluation.level === "RECORD") return;
+
+    await reportIncident(deps.alerts, {
+      service: SERVICE_NAME,
+      title: `AI budget ${evaluation.level} threshold reached`,
+      detail:
+        `businessId=${business.id} usedMicroUsd=${evaluation.usedMicroUsd} ` +
+        `budgetMicroUsd=${evaluation.budgetMicroUsd} fractionUsed=${evaluation.fractionUsed} ` +
+        "— record-only mode: nothing was blocked or downgraded.",
+    });
+  } catch (error) {
+    console.error(
+      "recordAiBudgetObservation failed (non-fatal, record-only):",
+      error instanceof Error ? (error.stack ?? error.message) : String(error),
+    );
+  }
+}
+
 const LOGGABLE_INTENTS = new Set(["SALE", "PURCHASE", "EXPENSE", "PAYMENT_RECEIVED", "DEBT_NOTE", "STOCK_ADJUSTMENT"]);
 
 /** Narrows a validated, HIGH-confidence ParsedIntent down to the subset applyLoggableIntent understands. */
@@ -534,6 +581,7 @@ async function dispatchCommandOrParse(
   }
 
   const { result, degraded } = await parseWithProviderFallback(deps, scopedPrisma, business, text, whatsappMessageId);
+  await recordAiBudgetObservation(deps, scopedPrisma, business);
   // Phase 15: also needed for a SALE/PURCHASE carrying itemized `items`, so
   // those can link to InventoryItem too — not just the STOCK_ADJUSTMENT
   // intent from Phase 14. Still skipped for every other parse (QUERY,

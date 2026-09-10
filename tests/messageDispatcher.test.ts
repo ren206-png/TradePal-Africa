@@ -1641,3 +1641,130 @@ describe("dispatchInboundMessage: parseWithProviderFallback (DeepSeek primary, A
     expect(ledgerRows).toHaveLength(0); // no RESERVE ever written — the gate closes before the ledger is touched
   });
 });
+
+describe("dispatchInboundMessage: AI budget observation (record-only wiring of domain/aiBudget.ts)", () => {
+  /** Gives one business a Plan with a real DeepSeek budget cap and an ACTIVE Subscription to it. */
+  async function giveBusinessCappedAiBudget(businessId: string, planCode: string, budgetMicroUsd: bigint): Promise<void> {
+    await prisma.plan.upsert({
+      where: { code: planCode },
+      update: { aiDeepseekMonthlyBudgetMicroUsd: budgetMicroUsd },
+      create: {
+        code: planCode,
+        name: planCode,
+        priceMinor: 0n,
+        currencyCode: "NGN",
+        entryCapPerMonth: 1000,
+        voiceEnabled: false,
+        aiDeepseekMonthlyBudgetMicroUsd: budgetMicroUsd,
+      },
+    });
+    const now = new Date();
+    await prisma.subscription.create({
+      data: {
+        businessId,
+        planCode,
+        status: "ACTIVE",
+        currentPeriodStart: now,
+        currentPeriodEnd: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+      },
+    });
+  }
+
+  /** Seeds a COMMIT row directly (bypassing reserve/commit) so a business starts already past a given fraction of its budget — same technique as tests/aiBudget.test.ts's own seedCommittedSpend. */
+  async function seedCommittedAiSpend(businessId: string, actualCostMicroUsd: bigint): Promise<void> {
+    const scopedPrisma = getTenantScopedClient(prisma, businessId);
+    await scopedPrisma.aiUsageLedger.create({
+      data: {
+        requestId: crypto.randomUUID(),
+        phase: "COMMIT",
+        businessId,
+        feature: "TRANSACTION_PARSE",
+        provider: "ANTHROPIC",
+        requestedModel: "claude-test",
+        resolvedModel: "claude-test",
+        actualCostMicroUsd,
+        promptHash: "seed-hash",
+        idempotencyKey: crypto.randomUUID(),
+      },
+    });
+  }
+
+  it("emails an incident once a business's AI spend crosses the WARN threshold, without blocking or altering the reply", async () => {
+    const fromNumber = "2348011119201";
+    const merchant = await onboardMerchant(fromNumber, "Budget Warn Stores");
+    await giveBusinessCappedAiBudget(merchant.businessId, "BUDGET-WARN-MD", 1_000_000n);
+    await seedCommittedAiSpend(merchant.businessId, 600_000n); // 60%, past the 50% default WARN threshold
+
+    const saleProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 });
+    const { deps, fetchImpl } = buildDeps(saleProvider);
+    const alertFetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "email-1" }), { status: 200 }));
+    deps.alerts = { apiKey: "key-1", from: "alerts@tradepal.africa", to: ["ren@example.com"], fetchImpl: alertFetchImpl };
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.BUDGETWARN.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    // The merchant's own message still processed completely normally — record-only mode never blocks.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("20.00");
+    const transactions = await prisma.transaction.findMany({ where: { businessId: merchant.businessId, type: "SALE" } });
+    expect(transactions).toHaveLength(1);
+
+    // But an operator-facing incident was raised for visibility.
+    expect(alertFetchImpl).toHaveBeenCalledTimes(1);
+    const [, alertInit] = alertFetchImpl.mock.calls[0] as [string, RequestInit];
+    const alertBody = JSON.parse(alertInit.body as string);
+    expect(alertBody.subject).toContain("AI budget WARN threshold reached");
+    expect(alertBody.text).toContain(merchant.businessId);
+    expect(alertBody.text).toContain("record-only mode: nothing was blocked or downgraded");
+  });
+
+  it("never emails a budget incident for a business still below every threshold", async () => {
+    const fromNumber = "2348011119202";
+    const merchant = await onboardMerchant(fromNumber, "Budget Below Warn Stores");
+    await giveBusinessCappedAiBudget(merchant.businessId, "BUDGET-BELOW-MD", 1_000_000n);
+    await seedCommittedAiSpend(merchant.businessId, 100_000n); // 10%, well below the 50% default WARN threshold
+
+    const saleProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 });
+    const { deps } = buildDeps(saleProvider);
+    const alertFetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "email-1" }), { status: 200 }));
+    deps.alerts = { apiKey: "key-1", from: "alerts@tradepal.africa", to: ["ren@example.com"], fetchImpl: alertFetchImpl };
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.BUDGETBELOW.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(alertFetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("still fully processes the message (never blocks or downgrades) even once a business is past BLOCK_OPTIONAL_AI — record-only mode has no enforcement path", async () => {
+    const fromNumber = "2348011119203";
+    const merchant = await onboardMerchant(fromNumber, "Budget Block Stores");
+    await giveBusinessCappedAiBudget(merchant.businessId, "BUDGET-BLOCK-MD", 1_000_000n);
+    await seedCommittedAiSpend(merchant.businessId, 1_500_000n); // 150%, past the 100% default BLOCK_OPTIONAL_AI threshold
+
+    const saleProvider = fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 });
+    const { deps, fetchImpl } = buildDeps(saleProvider);
+    const alertFetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "email-1" }), { status: 200 }));
+    deps.alerts = { apiKey: "key-1", from: "alerts@tradepal.africa", to: ["ren@example.com"], fetchImpl: alertFetchImpl };
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.BUDGETBLOCK.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("20.00"); // sale still logged normally, not blocked
+    const transactions = await prisma.transaction.findMany({ where: { businessId: merchant.businessId, type: "SALE" } });
+    expect(transactions).toHaveLength(1);
+
+    expect(alertFetchImpl).toHaveBeenCalledTimes(1);
+    const [, alertInit] = alertFetchImpl.mock.calls[0] as [string, RequestInit];
+    const alertBody = JSON.parse(alertInit.body as string);
+    expect(alertBody.subject).toContain("AI budget BLOCK_OPTIONAL_AI threshold reached");
+  });
+});
