@@ -6,10 +6,10 @@
 #   dist/src/businessDigestWorker.js       the weekly business-health digest
 #   dist/src/paymentRequestExpiryWorker.js the hourly payment-request-expiry sweep
 #
-# On Railway, the TradePal-Africa (server) service has a pre-deploy command, `npx prisma migrate deploy`
-# (service setting, not a file), so a pending migration is applied before the new version starts and a
-# failing migration keeps the previous deployment running. The workers don't need one: the server
-# deploys from the same commit and migrates first. Locally, docker-compose.yml's `migrate` service does it.
+# Migrations are NOT run by this image. Locally, docker-compose.yml's `migrate` service runs
+# `prisma migrate deploy`; on Railway, set it as the TradePal-Africa (server) service's Pre-deploy
+# Command in the dashboard (Settings -> Deploy), otherwise a new migration must be applied by hand
+# (`DATABASE_URL=<public url> npx prisma migrate deploy`) or it never reaches production.
 
 FROM node:20-slim AS builder
 WORKDIR /app
