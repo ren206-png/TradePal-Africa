@@ -99,6 +99,27 @@ describe("continueOnboarding", () => {
     expect(afterSkip.reply).toMatch(/no problem/i);
   });
 
+  it("finishes onboarding (without creating a customer) when a command is sent at the first-customer step", async () => {
+    const started = await startOnboarding(prisma, "254755556666");
+    const afterName = await continueOnboarding(prisma, started.merchant, "Command Traders");
+    const afterConsent = await continueOnboarding(prisma, afterName.merchant, "yes");
+    expect(afterConsent.merchant.onboardingStep).toBe("AWAITING_FIRST_CUSTOMER");
+
+    const afterCommand = await continueOnboarding(prisma, afterConsent.merchant, "/help");
+    expect(afterCommand.merchant.onboardingStep).toBe("COMPLETE");
+    expect(afterCommand.reply).toContain("send /help again");
+    expect(await prisma.customer.count({ where: { businessId: started.merchant.businessId } })).toBe(0);
+  });
+
+  it("does not save a command as the business name", async () => {
+    const started = await startOnboarding(prisma, "2347011223344");
+    const afterCommand = await continueOnboarding(prisma, started.merchant, "/help");
+
+    expect(afterCommand.merchant.onboardingStep).toBe("AWAITING_BUSINESS_NAME");
+    const business = await prisma.business.findUniqueOrThrow({ where: { id: started.merchant.businessId } });
+    expect(business.name).not.toContain("/help");
+  });
+
   it("re-prompts for a business name instead of accepting a blank reply", async () => {
     const started = await startOnboarding(prisma, "2347098765432");
     const afterBlank = await continueOnboarding(prisma, started.merchant, "   ");

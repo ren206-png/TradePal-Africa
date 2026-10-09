@@ -70,6 +70,14 @@ async function handleAwaitingBusinessName(
     return { merchant, reply: "Please reply with your business's name (e.g. \"Amina's Provisions\")." };
   }
 
+  // A slash command ("/help") is not a business name — don't save it as one. Ask again instead.
+  if (name.startsWith("/")) {
+    return {
+      merchant,
+      reply: `Let's finish setting up first. Please reply with your business's name (e.g. "Amina's Provisions").`,
+    };
+  }
+
   await prisma.business.update({ where: { id: merchant.businessId }, data: { name } });
 
   const scoped = getTenantScopedClient(prisma, merchant.businessId);
@@ -160,6 +168,20 @@ async function handleAwaitingFirstCustomer(
       data: { onboardingStep: "COMPLETE" },
     });
     return { merchant: updated, reply: `No problem — you can add customers anytime with /debt <name> <amount>. ${ONBOARDING_COMPLETE_REPLY}` };
+  }
+
+  // A slash command ("/help") is not a customer name — the merchant is clearly past setup and
+  // trying to use the bot. Finish onboarding (same as SKIP) and ask them to send it again, rather
+  // than saving the command text as a customer.
+  if (trimmed.startsWith("/")) {
+    const updated = await scoped.merchant.update({
+      where: { id: merchant.id },
+      data: { onboardingStep: "COMPLETE" },
+    });
+    return {
+      merchant: updated,
+      reply: `You're all set — I've skipped adding a first customer. Please send ${trimmed.split(/\s/)[0]} again. ${ONBOARDING_COMPLETE_REPLY}`,
+    };
   }
 
   const customer = await findOrCreateCustomerByName(scoped, merchant.businessId, trimmed);
