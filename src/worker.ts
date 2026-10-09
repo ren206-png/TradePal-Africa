@@ -13,7 +13,8 @@ import { CircuitBreaker } from "./monitoring/circuitBreaker.js";
 import { installCrashReporting, installGracefulShutdown } from "./monitoring/processGuards.js";
 import { WhisperSttProvider } from "./stt/provider.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
-import { INBOUND_MESSAGE_QUEUE_NAME } from "./queue/inboundMessageQueue.js";
+import { getInboundMessageQueue, INBOUND_MESSAGE_QUEUE_NAME } from "./queue/inboundMessageQueue.js";
+import { startWebhookRedriveSweep } from "./queue/webhookRedrive.js";
 import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
 
 const SERVICE_NAME = "worker";
@@ -238,11 +239,21 @@ worker.on("error", (error) => {
 
 console.log(`TradePal inbound-message worker listening on queue "${INBOUND_MESSAGE_QUEUE_NAME}"`);
 
+// Re-queues inbound messages that were stored but never processed (e.g. the enqueue failed while Redis
+// was briefly down) — see whatsapp/redrive.ts for why nothing else would ever pick them up.
+const webhookRedrive = startWebhookRedriveSweep({
+  prisma,
+  queue: getInboundMessageQueue(),
+  alerts,
+  serviceName: SERVICE_NAME,
+});
+
 // See processGuards.ts's own doc comment: SIGTERM (sent by Railway on every
 // redeploy) previously had no listener here, so Node's default behavior —
 // terminate immediately — could kill a job mid-flight rather than letting
 // BullMQ's own Worker.close() finish the one currently active job first.
 installGracefulShutdown(SERVICE_NAME, [
+  { name: "webhook-redrive", close: async () => webhookRedrive.stop() },
   { name: "bullmq-worker", close: () => worker.close() },
   { name: "prisma", close: () => prisma.$disconnect() },
 ]);
