@@ -5,6 +5,10 @@
 #   dist/src/subscriptionExpiryWorker.js   the hourly subscription-expiry sweep
 #   dist/src/businessDigestWorker.js       the weekly business-health digest
 #   dist/src/paymentRequestExpiryWorker.js the hourly payment-request-expiry sweep
+#
+# On Railway, railway.json runs `npx prisma migrate deploy` as a pre-deploy command, so a pending
+# migration is applied before the new version starts (and a failing migration keeps the previous
+# deployment running instead of shipping code that expects a schema that isn't there).
 
 FROM node:20-slim AS builder
 WORKDIR /app
