@@ -1,6 +1,7 @@
 ---
 import "../styles/global.css";
 import { SITE } from "../lib/site";
+import FloatingWhatsApp from "../components/FloatingWhatsApp.astro";
 
 interface Props {
   title: string;
@@ -61,5 +62,6 @@ const jsonLd = {
   </head>
   <body class="bg-white text-slate-900 antialiased">
     <slot />
+    <FloatingWhatsApp />
   </body>
 </html>
