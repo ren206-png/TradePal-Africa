@@ -32,8 +32,8 @@ const DEEPSEEK_API_BASE_URL = "https://api.deepseek.com";
  * `parseTransactionText` is now DeepSeek's **primary** transaction-parsing
  * path, validated against the full `ParsedIntentSchema` — the same schema
  * Anthropic's own output is validated against (`src/ai/parse.ts`) — not the
- * narrower `DeepSeekReadOnlyIntentSchema` Phase 4 introduced (still exported
- * from `schema.ts` as a legacy artifact, no longer used here). Anthropic
+ * narrower QUERY/GREETING/UNKNOWN-only union Phase 4 introduced (since removed
+ * from `schema.ts` as dead code). Anthropic
  * (`AnthropicAiProvider`, `src/ai/provider.ts`) remains wired as the
  * automatic fallback whenever DeepSeek is unavailable, its circuit breaker
  * is open, or its output fails validation twice — see
@@ -107,10 +107,10 @@ export class DeepSeekHttpError extends Error {
 }
 
 /**
- * Thrown when DeepSeek's output still fails `DeepSeekReadOnlyIntentSchema`
- * validation after the one bounded reformat retry `runChatCompletionAndValidate`
- * allows (Phase 4) — malformed JSON both times, or a disallowed/monetary
- * shape both times. Never silently returned as if it were valid data.
+ * Thrown when DeepSeek's output still fails `ParsedIntentSchema` validation
+ * after the one bounded reformat retry `runChatCompletionAndValidate` allows
+ * (Phase 4) — malformed JSON both times, or a schema-non-conforming shape
+ * both times. Never silently returned as if it were valid data.
  */
 export class DeepSeekOutputValidationError extends Error {}
 
@@ -179,13 +179,6 @@ interface DeepSeekChatMessage {
 }
 
 /**
- * Parses `content` as JSON (never throwing) and validates it against
- * `ParsedIntentSchema` (Phase 8 — the full 9-intent union, not the legacy
- * `DeepSeekReadOnlyIntentSchema`), returning one uniform success/failure
- * shape — so `runChatCompletionAndValidate` doesn't need a try/catch at each
- * of its two call sites (initial attempt, bounded reformat retry).
- */
-/**
  * DeepSeek Integration Phase 6 (adversarial self-review) finding: Phase 4's
  * `<merchant_message>` delimiting inserted `request.text` verbatim between
  * the tags. Because these are plain textual markers — not a real parser
@@ -194,13 +187,11 @@ interface DeepSeekChatMessage {
  * early close of the delimiter (and anything containing `<merchant_message>`
  * could attempt to forge a second, spoofed open), making the "structural"
  * defense no stronger than the prompt-wording ask alone for that message.
- * `DeepSeekReadOnlyIntentSchema`'s fail-closed validation (Phase 4) means a
- * successful breakout still cannot exfiltrate anything today — QUERY/
- * GREETING/UNKNOWN carry no free-text output field for attacker-controlled
- * content to ride back in — but that is an incidental property of today's
- * schema, not a designed invariant, and would stop protecting the moment a
- * future DeepSeek-eligible feature adds one (e.g. schema.ts's own note that
- * `CATALOG_SUMMARY_DRAFT` has no concrete output shape yet). Escaping every
+ * Zod validation of the model's output (`ParsedIntentSchema`) means a
+ * successful breakout cannot make the model emit an arbitrary shape, but
+ * since Phase 8 the schema does carry merchant-text-derived free-text fields
+ * (e.g. customer names and item names), so structural delimiting is a real
+ * defense and not just belt-and-braces. Escaping every
  * literal `<`/`>` in the merchant's text closes the gap generally — not just
  * for the two known delimiter strings — so no tag-like construct of any
  * shape can be assembled from merchant-controlled input. Angle brackets are
@@ -211,6 +202,12 @@ function escapeAngleBrackets(text: string): string {
   return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * Parses `content` as JSON (never throwing) and validates it against
+ * `ParsedIntentSchema` (Phase 8 — the full 9-intent union), returning one uniform success/failure
+ * shape — so `runChatCompletionAndValidate` doesn't need a try/catch at each
+ * of its two call sites (initial attempt, bounded reformat retry).
+ */
 function validateDeepSeekContent(
   content: string,
 ): { success: true; data: unknown } | { success: false; errorMessage: string } {

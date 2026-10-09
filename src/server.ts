@@ -1,6 +1,6 @@
 import "dotenv/config";
 import cors from "cors";
-import express, { type NextFunction, type Request, type Response } from "express";
+import express from "express";
 import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
@@ -16,8 +16,8 @@ import {
 } from "./config/paymentsEnv.js";
 import { prisma } from "./db/client.js";
 import { createFlutterwaveWebhookPostHandler } from "./flutterwave/webhookRoute.js";
-import { reportIncident } from "./monitoring/alerts.js";
 import { installGracefulShutdown } from "./monitoring/processGuards.js";
+import { createRequestErrorHandler } from "./monitoring/requestErrorHandler.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { enqueueInboundMessage } from "./queue/inboundMessageQueue.js";
 import { RedisInboundMessageRateLimiter } from "./whatsapp/inboundRateLimiter.js";
@@ -174,23 +174,14 @@ app.use(
 // failing the one request. This is the request-scoped counterpart to
 // installCrashReporting's process-scoped safety net: it reports the incident
 // the same way, but responds with a plain 500 and lets the process keep
-// serving every other in-flight and future request.
+// serving every other in-flight and future request. Client errors (e.g. malformed JSON) get
+// their 4xx and are NOT reported as incidents (see monitoring/requestErrorHandler.ts).
 //
 // `undefined` here (not an `alerts` variable) deliberately keeps this
 // self-contained: reportIncident always logs to console regardless, and only
 // attempts to email when alert-email deps are supplied — wiring those deps
 // through is a separate, already-in-flight change to this file.
-app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
-  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
-  reportIncident(undefined, { service: "server", title: "Unhandled request error", detail }).catch((reportError) => {
-    console.error("server: reportIncident threw while handling a request error:", reportError);
-  });
-
-  // Never leak a stack trace (or any error detail) to the client — the full
-  // detail already went to reportIncident/console above for operators.
-  if (res.headersSent) return;
-  res.status(500).json({ error: "Internal server error." });
-});
+app.use(createRequestErrorHandler(undefined, "server"));
 
 const port = Number(process.env["PORT"] ?? 3000);
 const server = app.listen(port, () => {

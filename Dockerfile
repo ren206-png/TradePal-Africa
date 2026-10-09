@@ -1,8 +1,10 @@
-# Single image, three run modes (`dist/src/server.js` for the webhook HTTP
-# server, `dist/src/worker.js` for the inbound-message BullMQ consumer,
-# `dist/src/subscriptionExpiryWorker.js` for the hourly subscription-expiry
-# sweep) — see docker-compose.yml for how the three services share this image
-# with different `command`s.
+# Single image, five run modes — docker-compose.yml shows how the services share
+# this image with different `command`s:
+#   dist/src/server.js                     the webhook/admin HTTP server
+#   dist/src/worker.js                     the inbound-message BullMQ consumer
+#   dist/src/subscriptionExpiryWorker.js   the hourly subscription-expiry sweep
+#   dist/src/businessDigestWorker.js       the weekly business-health digest
+#   dist/src/paymentRequestExpiryWorker.js the hourly payment-request-expiry sweep
 
 FROM node:20-slim AS builder
 WORKDIR /app
@@ -42,5 +44,4 @@ COPY package.json ./
 EXPOSE 3000
 
 # No default CMD: docker-compose.yml sets an explicit `command` per service
-# (server vs worker vs subscription-expiry-worker) since all three run from
-# this same image.
+# (see the list at the top) since all five run from this same image.

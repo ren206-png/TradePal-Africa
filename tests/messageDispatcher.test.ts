@@ -19,6 +19,14 @@ import { LANGUAGE_NAMES, SUPPORTED_COUNTRIES } from "../src/config/countries.js"
 import { getTenantScopedClient } from "../src/db/tenantScope.js";
 import { setFeatureFlagForBusiness } from "../src/domain/featureFlags.js";
 import { BILLING_QUOTA_FEATURE_FLAG_KEY } from "../src/domain/billing.js";
+import { commitAiUsage } from "../src/domain/aiUsageLedger.js";
+
+// Wraps (does not replace) the real commitAiUsage so one test can make it fail once, simulating a
+// ledger-write DB blip that happens AFTER a successful, billed DeepSeek call.
+vi.mock("../src/domain/aiUsageLedger.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/domain/aiUsageLedger.js")>();
+  return { ...actual, commitAiUsage: vi.fn(actual.commitAiUsage) };
+});
 
 let testDb: TestDb;
 let prisma: PrismaClient;
@@ -1486,6 +1494,43 @@ describe("dispatchInboundMessage: parseWithProviderFallback (DeepSeek primary, A
     expect(commitRows).toHaveLength(0);
 
     expect(breaker.getState()).toBe("closed"); // one recorded failure, threshold 5 — not yet tripped
+  });
+
+  it("keeps the DeepSeek result (no Anthropic fallback, breaker not tripped) when recording its cost in the ledger fails", async () => {
+    const fromNumber = "2348011119110";
+    const merchant = await onboardMerchant(fromNumber, "Ledger Blip Stores");
+    await enableDeepSeekProviderFlag(merchant.businessId);
+
+    const deepSeekFetch = vi
+      .fn()
+      .mockResolvedValue(
+        deepSeekCompletionResponse(
+          JSON.stringify({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 }),
+          { prompt_tokens: 50, completion_tokens: 20 },
+        ),
+      );
+    const anthropicSpy = vi.fn(async () => {
+      throw new Error("Anthropic must not be called: DeepSeek already parsed (and billed) this message");
+    });
+
+    const { deps, fetchImpl } = buildDeps({ parseTransactionText: anthropicSpy });
+    deps.deepseekProvider = fakeDeepSeekProvider(deepSeekFetch);
+    const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 60_000 });
+    deps.deepseekCircuitBreaker = breaker;
+
+    vi.mocked(commitAiUsage).mockRejectedValueOnce(new Error("simulated ledger-write failure"));
+
+    await dispatchInboundMessage(
+      deps,
+      await storeInboundTextMessage({ waMessageId: "wamid.DSLEDGER.1", fromNumber, text: "sold bread for 2000" }),
+    );
+
+    expect(deepSeekFetch).toHaveBeenCalledTimes(1);
+    expect(anthropicSpy).not.toHaveBeenCalled();
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.text.body).toContain("20.00");
+    expect(await prisma.transaction.count({ where: { businessId: merchant.businessId, type: "SALE" } })).toBe(1);
+    expect(breaker.getState()).toBe("closed"); // a ledger failure is not a DeepSeek failure (threshold is 1)
   });
 
   it("skips DeepSeek entirely (never calling its provider) when the DeepSeek circuit breaker is already open, and still succeeds via Anthropic", async () => {

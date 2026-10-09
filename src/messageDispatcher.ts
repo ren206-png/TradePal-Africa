@@ -411,12 +411,9 @@ async function tryParseWithDeepSeek(
     return undefined;
   }
 
+  let parsed: Awaited<ReturnType<DeepSeekAiProvider["parseTransactionTextWithUsage"]>>;
   try {
-    const { data, usage } = await provider.parseTransactionTextWithUsage({ text });
-    const actualCostMicroUsd = estimateCostMicroUsd(modelEntry, usage.promptTokens, usage.completionTokens);
-    await commitAiUsage(scopedPrisma, requestId, { actualCostMicroUsd });
-    breaker?.recordSuccess();
-    return { result: buildAiParseResult(data), degraded: false };
+    parsed = await provider.parseTransactionTextWithUsage({ text });
   } catch (error) {
     breaker?.recordFailure();
     await releaseAiUsage(scopedPrisma, requestId, {
@@ -435,6 +432,23 @@ async function tryParseWithDeepSeek(
     });
     return undefined;
   }
+
+  // The vendor call succeeded and was billed, so the parse result is good no matter what happens
+  // to the cost ledger below. A ledger-write failure (DB blip) must NOT discard it: falling back
+  // to Anthropic here would pay for a second parse and wrongly count a DeepSeek failure against
+  // its circuit breaker. Report it and carry on — the RESERVE row simply stays uncommitted.
+  breaker?.recordSuccess();
+  try {
+    const actualCostMicroUsd = estimateCostMicroUsd(modelEntry, parsed.usage.promptTokens, parsed.usage.completionTokens);
+    await commitAiUsage(scopedPrisma, requestId, { actualCostMicroUsd });
+  } catch (error) {
+    await reportIncident(deps.alerts, {
+      service: SERVICE_NAME,
+      title: "AiUsageLedger commitAiUsage failed after a successful DeepSeek call",
+      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    });
+  }
+  return { result: buildAiParseResult(parsed.data), degraded: false };
 }
 
 /**
