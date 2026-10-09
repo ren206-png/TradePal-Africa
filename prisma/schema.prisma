@@ -49,11 +49,11 @@ model Language {
 }
 
 model CountryConfig {
-  id                String  @id @default(uuid())
-  countryCode       String
-  defaultLanguage   String
-  voiceEnabled      Boolean @default(false) // Krio (Sierra Leone) launches text-first per Phase 0 KQ4 finding
-  asrProviderConfig Json? // per-country ASR provider selection, null when voiceEnabled is false
+  id                  String  @id @default(uuid())
+  countryCode         String
+  defaultLanguage     String
+  voiceEnabled        Boolean @default(false) // Krio (Sierra Leone) launches text-first per Phase 0 KQ4 finding
+  asrProviderConfig   Json? // per-country ASR provider selection, null when voiceEnabled is false
   waTemplateNamespace String?
 
   country  Country  @relation(fields: [countryCode], references: [code])
@@ -76,12 +76,12 @@ enum BusinessStatus {
 }
 
 model Business {
-  id           String   @id @default(uuid())
-  name         String
-  countryCode  String
-  currencyCode String
-  languageCode String
-  timezone     String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
+  id               String         @id @default(uuid())
+  name             String
+  countryCode      String
+  currencyCode     String
+  languageCode     String
+  timezone         String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
   // Phase 29: platform-moderation suspension (src/domain/businessModeration.ts),
   // distinct from Merchant.removedAt's per-staff soft-deactivation — this cuts
   // off every merchant on the business at once, for a platform-rules
@@ -91,8 +91,8 @@ model Business {
   status           BusinessStatus @default(ACTIVE)
   suspendedAt      DateTime?      @db.Timestamptz()
   suspensionReason String?
-  createdAt    DateTime @default(now()) @db.Timestamptz()
-  updatedAt    DateTime @updatedAt @db.Timestamptz()
+  createdAt        DateTime       @default(now()) @db.Timestamptz()
+  updatedAt        DateTime       @updatedAt @db.Timestamptz()
 
   country  Country  @relation(fields: [countryCode], references: [code])
   currency Currency @relation(fields: [currencyCode], references: [code])
@@ -100,25 +100,25 @@ model Business {
 
   merchants            Merchant[]
   users                User[]
-  transactions          Transaction[]
-  transactionItems       TransactionItem[]
-  customers             Customer[]
-  suppliers              Supplier[]
-  debts                  Debt[]
-  debtPayments           DebtPayment[]
-  inventoryItems         InventoryItem[]
-  inventoryMovements     InventoryMovement[]
-  reminders              Reminder[]
-  whatsappMessages       WhatsAppMessage[]
-  mobileMoneyAlerts      MobileMoneyAlert[]
-  aiParseLogs            AiParseLog[]
-  subscriptions          Subscription[]
-  auditLogs              AuditLog[]
-  consentLogs            ConsentLog[]
-  deletionRequests       DeletionRequest[]
-  businessFeatureFlags   BusinessFeatureFlag[]
-  paymentRequests        PaymentRequest[]
-  aiUsageLedgerEntries   AiUsageLedger[]
+  transactions         Transaction[]
+  transactionItems     TransactionItem[]
+  customers            Customer[]
+  suppliers            Supplier[]
+  debts                Debt[]
+  debtPayments         DebtPayment[]
+  inventoryItems       InventoryItem[]
+  inventoryMovements   InventoryMovement[]
+  reminders            Reminder[]
+  whatsappMessages     WhatsAppMessage[]
+  mobileMoneyAlerts    MobileMoneyAlert[]
+  aiParseLogs          AiParseLog[]
+  subscriptions        Subscription[]
+  auditLogs            AuditLog[]
+  consentLogs          ConsentLog[]
+  deletionRequests     DeletionRequest[]
+  businessFeatureFlags BusinessFeatureFlag[]
+  paymentRequests      PaymentRequest[]
+  aiUsageLedgerEntries AiUsageLedger[]
 
   @@index([countryCode])
 }
@@ -138,21 +138,21 @@ enum OnboardingStep {
 }
 
 model Merchant {
-  id              String          @id @default(uuid())
-  businessId      String
-  phoneNumber     String          @unique // WhatsApp number = merchant identity (KQ6)
-  role            MerchantRole    @default(OWNER)
-  onboardingStep  OnboardingStep  @default(AWAITING_COUNTRY)
+  id             String         @id @default(uuid())
+  businessId     String
+  phoneNumber    String         @unique // WhatsApp number = merchant identity (KQ6)
+  role           MerchantRole   @default(OWNER)
+  onboardingStep OnboardingStep @default(AWAITING_COUNTRY)
   // Phase 14: /removestaff soft-deactivates a STAFF merchant rather than
   // deleting the row (preserves AuditLog/ConsentLog history, and keeps
   // Merchant.phoneNumber's own row around so recordAuditLog's entityId FKs
   // never dangle). null = active. Never set for an OWNER (see removeStaffMerchant).
-  removedAt       DateTime?       @db.Timestamptz()
-  createdAt       DateTime        @default(now()) @db.Timestamptz()
-  updatedAt       DateTime        @updatedAt @db.Timestamptz()
+  removedAt      DateTime?      @db.Timestamptz()
+  createdAt      DateTime       @default(now()) @db.Timestamptz()
+  updatedAt      DateTime       @updatedAt @db.Timestamptz()
 
-  business     Business      @relation(fields: [businessId], references: [id])
-  consentLogs  ConsentLog[]
+  business    Business     @relation(fields: [businessId], references: [id])
+  consentLogs ConsentLog[]
 
   @@index([businessId])
 }
@@ -218,29 +218,29 @@ enum PaymentStatus {
 /// corrections happen exclusively via a new row with reversalOfTransactionId set. Enforced by
 /// TenantScopedClient (src/db/tenantScope.ts), which blocks `.update` and `.delete` for this model.
 model Transaction {
-  id                     String          @id @default(uuid())
-  businessId             String
-  type                   TransactionType
-  amountMinor            BigInt // integer minor units — never a float. See src/domain/money.ts.
-  currencyCode           String
-  paymentStatus          PaymentStatus
-  customerId             String?
-  supplierId             String?
-  description            String? // merchant-facing one-line summary
-  rawMerchantText        String? // the original message that produced this row, for audit/undo context
-  whatsappMessageId      String?
-  reversalOfTransactionId String?        @unique // set only on a reversal row; original rows leave this null
-  createdAt              DateTime        @default(now()) @db.Timestamptz()
+  id                      String          @id @default(uuid())
+  businessId              String
+  type                    TransactionType
+  amountMinor             BigInt // integer minor units — never a float. See src/domain/money.ts.
+  currencyCode            String
+  paymentStatus           PaymentStatus
+  customerId              String?
+  supplierId              String?
+  description             String? // merchant-facing one-line summary
+  rawMerchantText         String? // the original message that produced this row, for audit/undo context
+  whatsappMessageId       String?
+  reversalOfTransactionId String?         @unique // set only on a reversal row; original rows leave this null
+  createdAt               DateTime        @default(now()) @db.Timestamptz()
 
-  business  Business   @relation(fields: [businessId], references: [id])
-  currency  Currency   @relation(fields: [currencyCode], references: [code])
-  customer  Customer?  @relation(fields: [customerId], references: [id])
-  supplier  Supplier?  @relation(fields: [supplierId], references: [id])
+  business Business  @relation(fields: [businessId], references: [id])
+  currency Currency  @relation(fields: [currencyCode], references: [code])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
 
-  reversalOf   Transaction? @relation("Reversal", fields: [reversalOfTransactionId], references: [id])
-  reversedBy   Transaction? @relation("Reversal")
+  reversalOf Transaction? @relation("Reversal", fields: [reversalOfTransactionId], references: [id])
+  reversedBy Transaction? @relation("Reversal")
 
-  items             TransactionItem[]
+  items              TransactionItem[]
   debtsCreated       Debt[]              @relation("DebtOriginTransaction")
   debtPayments       DebtPayment[]
   inventoryMovements InventoryMovement[]
@@ -262,9 +262,9 @@ model TransactionItem {
   unitPriceMinor  BigInt
   lineTotalMinor  BigInt // must equal quantity * unitPriceMinor within rounding — validated in the AI parsing layer, not just here
 
-  business       Business       @relation(fields: [businessId], references: [id])
-  transaction    Transaction    @relation(fields: [transactionId], references: [id])
-  inventoryItem  InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+  business      Business       @relation(fields: [businessId], references: [id])
+  transaction   Transaction    @relation(fields: [transactionId], references: [id])
+  inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id])
 
   @@index([businessId])
   @@index([transactionId])
@@ -285,13 +285,13 @@ enum RiskLabel {
 /// WhatsApp/phone number for a merchant's customer, since that person has not consented to TradePal
 /// processing their data. Only the merchant-given label is stored.
 model Customer {
-  id          String    @id @default(uuid())
-  businessId  String
-  name        String // merchant-given label, e.g. "John the tailor" — anonymized to a placeholder on deletion request
-  riskLabel   RiskLabel @default(UNKNOWN) // derived only from payment history (src/domain/riskLabel.ts), never from AI inference
-  isAnonymized Boolean  @default(false)
-  createdAt   DateTime  @default(now()) @db.Timestamptz()
-  updatedAt   DateTime  @updatedAt @db.Timestamptz()
+  id           String    @id @default(uuid())
+  businessId   String
+  name         String // merchant-given label, e.g. "John the tailor" — anonymized to a placeholder on deletion request
+  riskLabel    RiskLabel @default(UNKNOWN) // derived only from payment history (src/domain/riskLabel.ts), never from AI inference
+  isAnonymized Boolean   @default(false)
+  createdAt    DateTime  @default(now()) @db.Timestamptz()
+  updatedAt    DateTime  @updatedAt @db.Timestamptz()
 
   business        Business         @relation(fields: [businessId], references: [id])
   transactions    Transaction[]
@@ -335,10 +335,10 @@ model Debt {
   createdAt              DateTime   @default(now()) @db.Timestamptz()
   updatedAt              DateTime   @updatedAt @db.Timestamptz()
 
-  business          Business     @relation(fields: [businessId], references: [id])
-  customer          Customer     @relation(fields: [customerId], references: [id])
-  originTransaction Transaction? @relation("DebtOriginTransaction", fields: [originTransactionId], references: [id])
-  currency          Currency     @relation(fields: [currencyCode], references: [code])
+  business          Business      @relation(fields: [businessId], references: [id])
+  customer          Customer      @relation(fields: [customerId], references: [id])
+  originTransaction Transaction?  @relation("DebtOriginTransaction", fields: [originTransactionId], references: [id])
+  currency          Currency      @relation(fields: [currencyCode], references: [code])
   payments          DebtPayment[]
   reminders         Reminder[]
 
@@ -367,7 +367,7 @@ model DebtPayment {
 // ─────────────────────────────────────────────────────────────────────────
 
 model InventoryItem {
-  id                String    @id @default(uuid())
+  id                String   @id @default(uuid())
   businessId        String
   name              String
   // Phase 17: lowercased/trimmed mirror of `name`, maintained by the application layer
@@ -380,12 +380,12 @@ model InventoryItem {
   // index, so the app computes this column itself on every write.
   normalizedName    String
   unit              String? // e.g. "bottle", "bag", "kg"
-  estimatedStockQty Int       @default(0) // an estimate; a sale is never blocked by this reaching zero
+  estimatedStockQty Int      @default(0) // an estimate; a sale is never blocked by this reaching zero
   lowStockThreshold Int?
   // Phase 24: set via /setprice. Nullable — most items still have no price, same as lowStockThreshold.
   priceMinor        BigInt?
-  createdAt         DateTime  @default(now()) @db.Timestamptz()
-  updatedAt         DateTime  @updatedAt @db.Timestamptz()
+  createdAt         DateTime @default(now()) @db.Timestamptz()
+  updatedAt         DateTime @updatedAt @db.Timestamptz()
 
   business  Business            @relation(fields: [businessId], references: [id])
   items     TransactionItem[]
@@ -411,9 +411,9 @@ model InventoryMovement {
   transactionId   String?
   createdAt       DateTime       @default(now()) @db.Timestamptz()
 
-  business      Business       @relation(fields: [businessId], references: [id])
-  inventoryItem InventoryItem  @relation(fields: [inventoryItemId], references: [id])
-  transaction   Transaction?   @relation(fields: [transactionId], references: [id])
+  business      Business      @relation(fields: [businessId], references: [id])
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  transaction   Transaction?  @relation(fields: [transactionId], references: [id])
 
   @@index([businessId, inventoryItemId])
 }
@@ -449,15 +449,15 @@ enum MessageDirection {
 }
 
 model WhatsAppMessage {
-  id             String            @id @default(uuid())
-  businessId     String? // nullable: inbound messages before onboarding resolves a business
-  waMessageId    String            @unique
-  direction      MessageDirection
-  fromNumber     String
-  toNumber       String
-  messageType    String // text, audio, template, etc.
-  rawPayload     Json
-  createdAt      DateTime          @default(now()) @db.Timestamptz()
+  id          String           @id @default(uuid())
+  businessId  String? // nullable: inbound messages before onboarding resolves a business
+  waMessageId String           @unique
+  direction   MessageDirection
+  fromNumber  String
+  toNumber    String
+  messageType String // text, audio, template, etc.
+  rawPayload  Json
+  createdAt   DateTime         @default(now()) @db.Timestamptz()
 
   business Business? @relation(fields: [businessId], references: [id])
 
@@ -543,21 +543,21 @@ enum FinalAction {
 /// Every parse — raw input, raw output, validation result, final action — is logged here.
 /// A validation failure must never result in a persisted transaction (see src/ai/parse.ts).
 model AiParseLog {
-  id                  String         @id @default(uuid())
-  businessId          String?
-  whatsappMessageId   String?
-  rawInput            String
-  rawModelOutput      Json
-  intent              IntentType
-  confidenceScore     Float
-  confidenceTier      ConfidenceTier
-  validationPassed    Boolean
-  validationErrors    Json?
-  finalAction         FinalAction
+  id                     String         @id @default(uuid())
+  businessId             String?
+  whatsappMessageId      String?
+  rawInput               String
+  rawModelOutput         Json
+  intent                 IntentType
+  confidenceScore        Float
+  confidenceTier         ConfidenceTier
+  validationPassed       Boolean
+  validationErrors       Json?
+  finalAction            FinalAction
   resultingTransactionId String?
-  createdAt           DateTime       @default(now()) @db.Timestamptz()
+  createdAt              DateTime       @default(now()) @db.Timestamptz()
 
-  business           Business?    @relation(fields: [businessId], references: [id])
+  business             Business?    @relation(fields: [businessId], references: [id])
   resultingTransaction Transaction? @relation(fields: [resultingTransactionId], references: [id])
 
   @@index([businessId, createdAt])
@@ -609,7 +609,7 @@ model AiUsageLedger {
   phase                 AIUsagePhase
   businessId            String
   feature               String // validated against the AIFeature TS union (src/ai/aiTypes.ts) at the app layer, not a DB enum, so adding a feature tag needs no migration
-  provider               AIProviderId
+  provider              AIProviderId
   requestedModel        String
   resolvedModel         String
   estimatedCostMicroUsd BigInt? // set on RESERVE rows only — never a float, matches src/domain/money.ts
@@ -618,7 +618,7 @@ model AiUsageLedger {
   idempotencyKey        String // the same waMessageId already used for BullMQ-level dedupe (src/queue/inboundMessageQueue.ts:18) — no new concept
   httpStatus            Int?
   errorClass            String? // populated on RELEASE only: mirrors AIResult's own "kind" union (src/ai/aiTypes.ts)
-  createdAt              DateTime     @default(now()) @db.Timestamptz()
+  createdAt             DateTime     @default(now()) @db.Timestamptz()
 
   business Business @relation(fields: [businessId], references: [id])
 
@@ -632,16 +632,16 @@ model AiUsageLedger {
 // ─────────────────────────────────────────────────────────────────────────
 
 model Plan {
-  code               String   @id // e.g. FREE, STARTER
-  name                String
-  priceMinor          BigInt
-  currencyCode        String
-  entryCapPerMonth    Int? // null = uncapped
-  voiceEnabled        Boolean  @default(false)
+  code                            String   @id // e.g. FREE, STARTER
+  name                            String
+  priceMinor                      BigInt
+  currencyCode                    String
+  entryCapPerMonth                Int? // null = uncapped
+  voiceEnabled                    Boolean  @default(false)
   // Phase 14: caps how many STAFF-role Merchant rows a business's /addstaff
   // can create. null = uncapped. Mirrors entryCapPerMonth's null-is-uncapped
   // convention exactly; the OWNER is never counted against this cap.
-  staffCapCount       Int?
+  staffCapCount                   Int?
   // DeepSeek Integration Phase 3 (INTEGRATION_DESIGN.md §3): per-plan monthly
   // spend cap for DeepSeek-routed AI calls, in integer micro-USD (never a
   // float — matches src/domain/money.ts). null = uncapped, mirroring
@@ -649,7 +649,7 @@ model Plan {
   // Consumed by src/domain/aiBudget.ts's graduated threshold evaluator, not
   // enforced at all while AI_BUDGET_ENFORCEMENT_ENABLED=false (default).
   aiDeepseekMonthlyBudgetMicroUsd BigInt?
-  createdAt           DateTime @default(now()) @db.Timestamptz()
+  createdAt                       DateTime @default(now()) @db.Timestamptz()
 
   currency      Currency       @relation(fields: [currencyCode], references: [code])
   subscriptions Subscription[]
@@ -676,22 +676,22 @@ model Subscription {
   currentPeriodEnd   DateTime           @db.Timestamptz()
   createdAt          DateTime           @default(now()) @db.Timestamptz()
 
-  business Business @relation(fields: [businessId], references: [id])
-  plan     Plan     @relation(fields: [planCode], references: [code])
+  business Business  @relation(fields: [businessId], references: [id])
+  plan     Plan      @relation(fields: [planCode], references: [code])
   invoices Invoice[]
 
   @@index([businessId])
 }
 
 model Invoice {
-  id             String    @id @default(uuid())
-  subscriptionId String
-  amountMinor    BigInt
-  currencyCode   String
-  status         String // PENDING, PAID, FAILED
-  dueDate        DateTime  @db.Timestamptz()
-  paidAt         DateTime? @db.Timestamptz()
-  createdAt      DateTime  @default(now()) @db.Timestamptz()
+  id                String    @id @default(uuid())
+  subscriptionId    String
+  amountMinor       BigInt
+  currencyCode      String
+  status            String // PENDING, PAID, FAILED
+  dueDate           DateTime  @db.Timestamptz()
+  paidAt            DateTime? @db.Timestamptz()
+  createdAt         DateTime  @default(now()) @db.Timestamptz()
   // Phase 22: reconciles a Flutterwave webhook back to this Invoice. tx_ref is
   // a string we generate at checkout-link creation time and pass to
   // Flutterwave; it comes back unchanged on both the webhook payload and the
@@ -702,10 +702,10 @@ model Invoice {
   // instead of creating a duplicate charge record. providerCode is nullable
   // because every Invoice created before Phase 22 has no provider at all.
   providerCode      String?
-  providerReference String? @unique
+  providerReference String?   @unique
 
-  subscription Subscription    @relation(fields: [subscriptionId], references: [id])
-  currency     Currency        @relation(fields: [currencyCode], references: [code])
+  subscription Subscription     @relation(fields: [subscriptionId], references: [id])
+  currency     Currency         @relation(fields: [currencyCode], references: [code])
   provider     PaymentProvider? @relation(fields: [providerCode], references: [code])
 
   @@index([subscriptionId])
@@ -728,30 +728,58 @@ model PaymentProvider {
 /// Flutterwave (`/paylink`), as opposed to Invoice which is TradePal's own subscription
 /// billing of the merchant. Tenant-scoped (direct businessId), unlike Invoice.
 model PaymentRequest {
-  id           String   @id @default(uuid())
-  businessId   String
-  customerId   String?
-  description  String
-  amountMinor  BigInt
-  currencyCode String
-  status       String // PENDING, PAID, FAILED, EXPIRED
+  id                String    @id @default(uuid())
+  businessId        String
+  customerId        String?
+  description       String
+  amountMinor       BigInt
+  currencyCode      String
+  status            String // PENDING, PAID, FAILED, EXPIRED
   // Phase 24: same reconciliation role as Invoice.providerReference (see comment there),
   // but prefixed "tpr_" (vs Invoice's "tp_") so the two txRef namespaces never collide even
   // though they live in different tables/unique constraints.
   providerCode      String?
-  providerReference String? @unique
+  providerReference String?   @unique
   checkoutUrl       String?
   // Set once confirmPaymentRequestPayment records the sale via recordTransaction.
-  transactionId String?
-  createdAt     DateTime  @default(now()) @db.Timestamptz()
-  paidAt        DateTime? @db.Timestamptz()
+  transactionId     String?
+  createdAt         DateTime  @default(now()) @db.Timestamptz()
+  paidAt            DateTime? @db.Timestamptz()
 
-  business Business        @relation(fields: [businessId], references: [id])
-  customer Customer?       @relation(fields: [customerId], references: [id])
-  currency Currency        @relation(fields: [currencyCode], references: [code])
-  provider PaymentProvider? @relation(fields: [providerCode], references: [code])
+  business       Business         @relation(fields: [businessId], references: [id])
+  customer       Customer?        @relation(fields: [customerId], references: [id])
+  currency       Currency         @relation(fields: [currencyCode], references: [code])
+  provider       PaymentProvider? @relation(fields: [providerCode], references: [code])
+  pawaPayDeposit PawaPayDeposit?
 
   @@index([businessId])
+}
+
+/// PawaPay mobile-money collection tied to exactly one PaymentRequest (one-to-one: a failed
+/// deposit means a new /collect, i.e. a new PaymentRequest). `id` IS the PawaPay depositId — a
+/// caller-generated UUIDv4 that's stored here BEFORE the API call, so a dropped connection can
+/// always be reconciled with checkDepositStatus. Standard #9: the payer's mobile-money number is
+/// needed once, at initiation, and is deliberately never stored — only its last 4 digits, so the
+/// merchant can recognise the payment.
+model PawaPayDeposit {
+  id                    String   @id // == PawaPay depositId (UUIDv4)
+  businessId            String
+  paymentRequestId      String   @unique
+  status                String // INITIATED, ACCEPTED, COMPLETED, FAILED, REJECTED
+  amountMinor           BigInt
+  currencyCode          String
+  provider              String // PawaPay provider code, e.g. AFRIMONEY_SLE
+  payerPhoneLast4       String
+  providerTransactionId String?
+  failureCode           String?
+  failureMessage        String?
+  createdAt             DateTime @default(now()) @db.Timestamptz()
+  updatedAt             DateTime @updatedAt @db.Timestamptz()
+
+  paymentRequest PaymentRequest @relation(fields: [paymentRequestId], references: [id])
+
+  @@index([businessId])
+  @@index([status, createdAt])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -782,10 +810,10 @@ model AuditLog {
 }
 
 model FeatureFlag {
-  key         String   @id
-  description String
-  enabledByDefault Boolean @default(false) // all flags default OFF in production per Non-Negotiable Standard #7
-  createdAt   DateTime @default(now()) @db.Timestamptz()
+  key              String   @id
+  description      String
+  enabledByDefault Boolean  @default(false) // all flags default OFF in production per Non-Negotiable Standard #7
+  createdAt        DateTime @default(now()) @db.Timestamptz()
 
   overrides BusinessFeatureFlag[]
 }
@@ -809,13 +837,13 @@ enum ConsentType {
 }
 
 model ConsentLog {
-  id           String      @id @default(uuid())
-  businessId   String
-  merchantId   String
-  consentType  ConsentType
-  textVersion  String // version identifier of the consent copy shown, for audit
-  channel      String // e.g. "whatsapp"
-  consentedAt  DateTime    @default(now()) @db.Timestamptz()
+  id          String      @id @default(uuid())
+  businessId  String
+  merchantId  String
+  consentType ConsentType
+  textVersion String // version identifier of the consent copy shown, for audit
+  channel     String // e.g. "whatsapp"
+  consentedAt DateTime    @default(now()) @db.Timestamptz()
 
   business Business @relation(fields: [businessId], references: [id])
   merchant Merchant @relation(fields: [merchantId], references: [id])

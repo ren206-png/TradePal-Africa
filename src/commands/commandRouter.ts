@@ -54,6 +54,8 @@ import {
 import { initiatePaymentRequest } from "../domain/paymentRequests.js";
 import { generateReminderForCustomer, NoOutstandingDebtError } from "../domain/reminders.js";
 import type { FlutterwaveDeps } from "../flutterwave/client.js";
+import type { PawaPayDeps } from "../pawapay/client.js";
+import { initiatePawaPayCollection, PawaPayCollectionError } from "../domain/pawapayCollection.js";
 
 const REMINDERS_FEATURE_FLAG_KEY = "reminders";
 const MOBILE_MONEY_FEATURE_FLAG_KEY = "mobileMoneyReconciliation";
@@ -103,6 +105,8 @@ export interface CommandContext {
    */
   flutterwave?: FlutterwaveDeps | undefined;
   paymentsCheckoutRedirectUrl?: string | undefined;
+  /** PawaPay credentials for /collect (mobile-money collection); omitted whenever PAWAPAY_API_TOKEN isn't configured (see config/paymentsEnv.ts). */
+  pawapay?: PawaPayDeps | undefined;
 }
 
 const HELP_TEXT = [
@@ -125,6 +129,7 @@ const HELP_TEXT = [
   "/upgrade <plan code> - get a payment link to subscribe to a paid plan (owner only, if enabled for your account)",
   "/setprice <item name> <amount> - set the sale price for an item (if enabled for your account)",
   "/paylink <customer name> <amount> - get a payment link to forward to a customer (if enabled for your account)",
+  "/collect <customer name> <amount> <customer mobile-money number> - ask a customer to pay by mobile money; they get a prompt on their phone (if enabled for your account)",
   "/catalog - list your priced items as text to forward to a customer (if enabled for your account)",
   "/help - show this message",
 ].join("\n");
@@ -729,6 +734,76 @@ async function handlePayLink(ctx: CommandContext, args: string): Promise<string>
   return `Send this link to ${customer.name} to collect ${formatMoney(amountMinor, ctx.minorUnitExp)}:\n${result.checkoutUrl}`;
 }
 
+/** A single token that looks like a phone number: optional +, then digits (dashes allowed). */
+const PAYER_PHONE_TOKEN = /^\+?\d[\d-]{6,19}$/;
+
+/**
+ * Collects payment from a merchant's own customer by mobile money through PawaPay — the
+ * mobile-money counterpart of /paylink, for countries (Sierra Leone, Liberia, Gambia) where
+ * customers pay from a mobile-money wallet rather than a card/bank checkout page. Instead of a link
+ * to forward, PawaPay pushes a PIN prompt to the customer's phone, so the merchant types the
+ * customer's mobile-money number as the last word of the command.
+ *
+ * Standard #9 still holds: the number goes straight to PawaPay and is not kept (only its last 4
+ * digits, see domain/pawapayCollection.ts), and the copy in the raw inbound-message log is
+ * redacted by the dispatcher once this command has run. TradePal never messages the customer. The
+ * payment is confirmed later, asynchronously, by PawaPay's callback; the merchant gets a WhatsApp
+ * message then (or if it fails).
+ */
+async function handleCollect(ctx: CommandContext, args: string): Promise<string> {
+  const enabled = await isFeatureEnabled(ctx.scopedPrisma, ctx.businessId, CUSTOMER_PAYMENT_LINKS_FEATURE_FLAG_KEY);
+  if (!enabled) {
+    return "Mobile-money collection isn't available for your account yet.";
+  }
+
+  const usage =
+    'Usage: /collect <customer name> <amount> <customer mobile-money number>\nExample: "/collect Aminata 50000 23276123456"';
+  const trimmed = args.trim();
+  const lastSpace = trimmed.lastIndexOf(" ");
+  if (lastSpace === -1) return usage;
+  const phoneText = trimmed.slice(lastSpace + 1);
+  const split = splitNameAndAmount(trimmed.slice(0, lastSpace));
+  if (!split || !PAYER_PHONE_TOKEN.test(phoneText)) return usage;
+
+  let amountMinor: bigint;
+  try {
+    amountMinor = parseAmountToMinorUnits(split.amountText, ctx.minorUnitExp);
+  } catch (error) {
+    if (error instanceof InvalidAmountError) return error.message;
+    throw error;
+  }
+
+  if (!ctx.pawapay) {
+    return "Mobile-money collection isn't configured for your account yet. Please contact support.";
+  }
+
+  const customer = await findOrCreateCustomerByName(ctx.scopedPrisma, ctx.businessId, split.name);
+  try {
+    const result = await initiatePawaPayCollection(
+      ctx.prisma,
+      {
+        businessId: ctx.businessId,
+        customerId: customer.id,
+        description: `Payment from ${customer.name}`,
+        amountMinor,
+        currencyCode: ctx.currencyCode,
+        initiatedByMerchantId: ctx.merchantId,
+        payerPhone: phoneText,
+      },
+      ctx.pawapay,
+    );
+    return (
+      `Payment request sent: ${customer.name} (${result.providerName}, number ending ${result.payerPhoneLast4}) ` +
+      `will get a prompt on their phone to pay ${formatMoney(amountMinor, ctx.minorUnitExp)}. ` +
+      "Ask them to approve it with their PIN. I'll message you when it's paid."
+    );
+  } catch (error) {
+    // These messages are written for the merchant; anything else is unexpected and propagates.
+    if (error instanceof PawaPayCollectionError) return error.message;
+    throw error;
+  }
+}
+
 /**
  * Phase 25: lists every item priced via /setprice as one block of
  * forwardable text — the natural complement to /paylink. Reuses
@@ -795,6 +870,8 @@ export async function handleCommand(ctx: CommandContext, rawText: string): Promi
       return handleSetPrice(ctx, args);
     case "/paylink":
       return handlePayLink(ctx, args);
+    case "/collect":
+      return handleCollect(ctx, args);
     case "/catalog":
       return handleCatalog(ctx);
     case "/help":

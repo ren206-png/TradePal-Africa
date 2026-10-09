@@ -27,6 +27,8 @@ import {
   UnsupportedCountryError,
 } from "./onboarding/onboardingFlow.js";
 import type { FlutterwaveDeps } from "./flutterwave/client.js";
+import type { PawaPayDeps } from "./pawapay/client.js";
+import { redactPayerNumberInStoredMessage } from "./whatsapp/redaction.js";
 import type { AlertEmailDeps } from "./monitoring/alerts.js";
 import { reportIncident } from "./monitoring/alerts.js";
 import type { CircuitBreaker } from "./monitoring/circuitBreaker.js";
@@ -57,6 +59,8 @@ export interface DispatcherDeps {
    * upgrades aren't configured yet rather than crashing dispatch.
    */
   flutterwave?: FlutterwaveDeps | undefined;
+  /** PawaPay mobile-money collection (`/collect`); omitted when PAWAPAY_API_TOKEN isn't set, in which case /collect reports itself unavailable. */
+  pawapay?: PawaPayDeps | undefined;
   paymentsCheckoutRedirectUrl?: string | undefined;
   /**
    * Optional: monitoring-system email alerting (monitoring/alerts.ts).
@@ -572,24 +576,34 @@ async function dispatchCommandOrParse(
   const scopedPrisma = getTenantScopedClient(deps.prisma, business.id);
 
   if (text.trim().startsWith("/")) {
-    const replyText = await handleCommand(
-      {
-        prisma: deps.prisma,
-        scopedPrisma,
-        businessId: business.id,
-        currencyCode: business.currencyCode,
-        minorUnitExp: business.currency.minorUnitExp,
-        timezone: business.timezone,
-        languageCode: business.languageCode,
-        merchantId: merchant.id,
-        merchantRole: merchant.role,
-        whatsappMessageId,
-        outboundGateway: deps.outboundGateway,
-        flutterwave: deps.flutterwave,
-        paymentsCheckoutRedirectUrl: deps.paymentsCheckoutRedirectUrl,
-      },
-      text,
-    );
+    let replyText: string;
+    try {
+      replyText = await handleCommand(
+        {
+          prisma: deps.prisma,
+          scopedPrisma,
+          businessId: business.id,
+          currencyCode: business.currencyCode,
+          minorUnitExp: business.currency.minorUnitExp,
+          timezone: business.timezone,
+          languageCode: business.languageCode,
+          merchantId: merchant.id,
+          merchantRole: merchant.role,
+          whatsappMessageId,
+          outboundGateway: deps.outboundGateway,
+          flutterwave: deps.flutterwave,
+          pawapay: deps.pawapay,
+          paymentsCheckoutRedirectUrl: deps.paymentsCheckoutRedirectUrl,
+        },
+        text,
+      );
+    } finally {
+      // /collect carries the customer's mobile-money number as its last word (Standard #9: don't keep it).
+      // In a finally so even a command that throws can't leave the number in the stored message.
+      if (/^\/collect(\s|$)/i.test(text.trim())) {
+        await redactPayerNumberInStoredMessage(deps.prisma, whatsappMessageId);
+      }
+    }
     await reply(deps, merchant.phoneNumber, replyText);
     return;
   }

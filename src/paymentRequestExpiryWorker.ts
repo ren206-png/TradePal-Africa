@@ -1,8 +1,10 @@
 import "dotenv/config";
 import { Worker } from "bullmq";
 import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
+import { buildPawaPayDepsFromEnv, buildPaymentRequestOutboundGatewayFromEnv } from "./config/paymentsEnv.js";
 import { prisma } from "./db/client.js";
 import { expireStalePaymentRequests } from "./domain/paymentRequestExpiry.js";
+import { reconcilePendingPawaPayDeposits } from "./domain/pawapayCollection.js";
 import { reportIncident } from "./monitoring/alerts.js";
 import { installCrashReporting, installGracefulShutdown } from "./monitoring/processGuards.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
@@ -25,6 +27,12 @@ if (!alerts) {
 }
 installCrashReporting(SERVICE_NAME, alerts);
 
+// Optional, like every other credential dep: without PAWAPAY_API_TOKEN there are no PawaPay deposits
+// to reconcile. The WhatsApp gateway is optional too — it only lets a payment settled by this sweep
+// (rather than by PawaPay's callback) still notify the merchant.
+const pawapay = buildPawaPayDepsFromEnv();
+const reconcileGateway = buildPaymentRequestOutboundGatewayFromEnv();
+
 /**
  * The scheduled counterpart to src/subscriptionExpiryWorker.ts, same shape:
  * registers (and then services) a BullMQ *repeatable* job that ticks once
@@ -43,6 +51,22 @@ async function main() {
   const worker = new Worker(
     PAYMENT_REQUEST_EXPIRY_QUEUE_NAME,
     async () => {
+      // Settle any PawaPay deposit whose callback never arrived BEFORE expiring stale requests, so a
+      // customer who paid just before the 24h mark isn't marked EXPIRED first. A reconcile failure
+      // must not stop the expiry sweep itself.
+      if (pawapay) {
+        try {
+          const reconciled = await reconcilePendingPawaPayDeposits(prisma, pawapay, reconcileGateway);
+          if (reconciled.checked > 0) {
+            console.log(
+              `PawaPay reconcile: checked ${reconciled.checked}, paid ${reconciled.paid}, failed ${reconciled.failed}, ` +
+                `still pending ${reconciled.pending}, errors ${reconciled.errors}.`,
+            );
+          }
+        } catch (error) {
+          console.error("PawaPay reconcile failed (non-fatal, expiry sweep continues):", error);
+        }
+      }
       const result = await expireStalePaymentRequests(prisma);
       if (result.expiredCount > 0) {
         console.log(`Payment request expiry sweep: expired ${result.expiredCount} payment request(s).`);

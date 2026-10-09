@@ -136,6 +136,72 @@ function buildPaymentReceivedMessage(description: string, amountMinor: bigint, m
 }
 
 /**
+ * Tells every active merchant on the business that a customer's payment landed. Shared by the
+ * Flutterwave confirmation above and the PawaPay settlement (domain/pawapayCollection.ts), which
+ * is why the audit actor is a parameter. A no-op without a configured outbound gateway; a send
+ * failure is audited per merchant and never thrown — the payment itself is already recorded.
+ */
+export async function notifyMerchantsOfPaymentReceived(
+  prisma: PrismaClient,
+  scoped: ReturnType<typeof getTenantScopedClient>,
+  paymentRequest: { id: string; businessId: string; description: string; amountMinor: bigint },
+  minorUnitExp: number,
+  actorId: string,
+  outboundGateway?: PaymentRequestOutboundGateway,
+): Promise<void> {
+  if (!outboundGateway) return;
+  const merchants = await scoped.merchant.findMany({
+    where: { businessId: paymentRequest.businessId, removedAt: null },
+  });
+  const gatewayDeps = { prisma, ...outboundGateway };
+  const template = outboundGateway.paymentReceivedTemplate;
+  const sendMethod = template ? "template" : "text";
+
+  for (const merchant of merchants) {
+    try {
+      const attempts = await sendPaymentRequestConfirmedWithRetry(() =>
+        template
+          ? sendWhatsAppTemplateMessage(gatewayDeps, {
+              toPhoneNumber: merchant.phoneNumber,
+              templateName: template.name,
+              templateLanguageCode: template.languageCode,
+              bodyParams: [paymentRequest.description],
+            })
+          : sendWhatsAppTextMessage(gatewayDeps, {
+              toPhoneNumber: merchant.phoneNumber,
+              body: buildPaymentReceivedMessage(paymentRequest.description, paymentRequest.amountMinor, minorUnitExp),
+            }),
+      );
+      await recordAuditLog(scoped, {
+        businessId: paymentRequest.businessId,
+        actorType: "SYSTEM",
+        actorId: actorId,
+        action: "PAYMENT_REQUEST_NOTIFICATION_SENT",
+        entityType: "Merchant",
+        entityId: merchant.id,
+        metadata: { paymentRequestId: paymentRequest.id, sendMethod, attempts },
+      });
+    } catch (error) {
+      const attempts = error instanceof PaymentRequestNotificationSendFailedError ? error.attempts : 1;
+      await recordAuditLog(scoped, {
+        businessId: paymentRequest.businessId,
+        actorType: "SYSTEM",
+        actorId: actorId,
+        action: "PAYMENT_REQUEST_NOTIFICATION_FAILED",
+        entityType: "Merchant",
+        entityId: merchant.id,
+        metadata: {
+          paymentRequestId: paymentRequest.id,
+          sendMethod,
+          attempts,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+}
+
+/**
  * Called from the Flutterwave webhook route, after confirmSubscriptionPayment
  * has already been tried and thrown InvoiceNotFoundError for this tx_ref —
  * see webhookRoute.ts. Same re-verification and idempotency shape as
@@ -222,57 +288,14 @@ export async function confirmPaymentRequestPayment(
     metadata: { txRef: input.txRef, transactionId: transaction.id },
   });
 
-  if (outboundGateway) {
-    const merchants = await scoped.merchant.findMany({
-      where: { businessId: paymentRequest.businessId, removedAt: null },
-    });
-    const gatewayDeps = { prisma, ...outboundGateway };
-    const template = outboundGateway.paymentReceivedTemplate;
-    const sendMethod = template ? "template" : "text";
-
-    for (const merchant of merchants) {
-      try {
-        const attempts = await sendPaymentRequestConfirmedWithRetry(() =>
-          template
-            ? sendWhatsAppTemplateMessage(gatewayDeps, {
-                toPhoneNumber: merchant.phoneNumber,
-                templateName: template.name,
-                templateLanguageCode: template.languageCode,
-                bodyParams: [paymentRequest.description],
-              })
-            : sendWhatsAppTextMessage(gatewayDeps, {
-                toPhoneNumber: merchant.phoneNumber,
-                body: buildPaymentReceivedMessage(paymentRequest.description, paymentRequest.amountMinor, currency.minorUnitExp),
-              }),
-        );
-        await recordAuditLog(scoped, {
-          businessId: paymentRequest.businessId,
-          actorType: "SYSTEM",
-          actorId: FLUTTERWAVE_WEBHOOK_ACTOR_ID,
-          action: "PAYMENT_REQUEST_NOTIFICATION_SENT",
-          entityType: "Merchant",
-          entityId: merchant.id,
-          metadata: { paymentRequestId: paymentRequest.id, sendMethod, attempts },
-        });
-      } catch (error) {
-        const attempts = error instanceof PaymentRequestNotificationSendFailedError ? error.attempts : 1;
-        await recordAuditLog(scoped, {
-          businessId: paymentRequest.businessId,
-          actorType: "SYSTEM",
-          actorId: FLUTTERWAVE_WEBHOOK_ACTOR_ID,
-          action: "PAYMENT_REQUEST_NOTIFICATION_FAILED",
-          entityType: "Merchant",
-          entityId: merchant.id,
-          metadata: {
-            paymentRequestId: paymentRequest.id,
-            sendMethod,
-            attempts,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
-      }
-    }
-  }
+  await notifyMerchantsOfPaymentReceived(
+    prisma,
+    scoped,
+    paymentRequest,
+    currency.minorUnitExp,
+    FLUTTERWAVE_WEBHOOK_ACTOR_ID,
+    outboundGateway,
+  );
 
   return { outcome: "recorded", transactionId: transaction.id };
 }

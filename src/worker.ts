@@ -5,7 +5,7 @@ import { dispatchInboundMessage } from "./messageDispatcher.js";
 import { AnthropicAiProvider } from "./ai/provider.js";
 import { DeepSeekAiProvider } from "./ai/deepseekProvider.js";
 import { buildDeepSeekDepsFromEnv } from "./config/deepseekEnv.js";
-import { buildFlutterwaveDepsFromEnv, getFlutterwaveCheckoutRedirectUrl } from "./config/paymentsEnv.js";
+import { buildFlutterwaveDepsFromEnv, buildPawaPayDepsFromEnv, getFlutterwaveCheckoutRedirectUrl } from "./config/paymentsEnv.js";
 import { parseTestRecipientTrunkPrefixCallingCodesFromEnv } from "./config/outboundGatewayEnv.js";
 import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
 import { reportIncident } from "./monitoring/alerts.js";
@@ -166,6 +166,8 @@ const staffAddedTemplate =
 // handleUpgrade) just tells the merchant plan upgrades aren't configured yet
 // when either half is missing, rather than this worker refusing to boot.
 const flutterwave = buildFlutterwaveDepsFromEnv();
+// Optional, like Flutterwave: unset means /collect (PawaPay mobile-money collection) reports itself unavailable.
+const pawapay = buildPawaPayDepsFromEnv();
 const paymentsCheckoutRedirectUrl = getFlutterwaveCheckoutRedirectUrl();
 
 // See OutboundGatewayDeps.testRecipientTrunkPrefixCallingCodes's doc comment
@@ -178,6 +180,7 @@ const deps = {
   aiProvider,
   sttProvider,
   flutterwave,
+  pawapay,
   paymentsCheckoutRedirectUrl,
   alerts,
   aiCircuitBreaker,

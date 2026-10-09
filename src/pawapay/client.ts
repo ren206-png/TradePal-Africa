@@ -14,8 +14,10 @@
 export interface PawaPayDeps {
   apiToken: string;
   fetchImpl?: typeof fetch;
-  /** Overridable for tests; defaults to the PawaPay *sandbox* endpoint. */
+  /** Defaults to the PawaPay *sandbox* endpoint; set PAWAPAY_API_BASE_URL (config/paymentsEnv.ts) for production. */
   apiBaseUrl?: string;
+  /** Per-request timeout; defaults to 20s. */
+  timeoutMs?: number;
 }
 
 export class PawaPayApiError extends Error {
@@ -156,6 +158,7 @@ export interface PawaPayDepositCallback {
 // ── Internal fetch helper ─────────────────────────────────────────────────────
 
 const SANDBOX_BASE_URL = "https://api.sandbox.pawapay.io/v2";
+const DEFAULT_TIMEOUT_MS = 20_000;
 
 async function pawaPayFetch(
   deps: PawaPayDeps,
@@ -165,6 +168,8 @@ async function pawaPayFetch(
   const fetchFn = deps.fetchImpl ?? fetch;
   const baseUrl = deps.apiBaseUrl ?? SANDBOX_BASE_URL;
   return fetchFn(`${baseUrl}${path}`, {
+    // A hung PawaPay connection must never hang a merchant's WhatsApp command or a webhook handler.
+    signal: AbortSignal.timeout(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     ...options,
     headers: {
       Authorization: `Bearer ${deps.apiToken}`,

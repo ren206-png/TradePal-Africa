@@ -165,7 +165,11 @@ if (flutterwave && flutterwaveWebhookSecretHash) {
 if (pawapay) {
   app.post(
     "/webhooks/pawapay",
-    createPawaPayWebhookPostHandler({ prisma, pawapay }),
+    createPawaPayWebhookPostHandler({
+      prisma,
+      pawapay,
+      ...(paymentRequestOutboundGateway ? { outboundGateway: paymentRequestOutboundGateway } : {}),
+    }),
   );
 } else {
   console.warn(

@@ -76,7 +76,10 @@ export function buildPaymentsOutboundGatewayFromEnv(): PaymentsOutboundGateway |
 export function buildPawaPayDepsFromEnv(): PawaPayDeps | undefined {
   const apiToken = process.env["PAWAPAY_API_TOKEN"];
   if (!apiToken) return undefined;
-  return { apiToken };
+  // Unset means PawaPay's *sandbox* — production needs PAWAPAY_API_BASE_URL=https://api.pawapay.io/v2
+  // alongside a production token (a sandbox URL with a production token, or vice versa, is rejected).
+  const apiBaseUrl = process.env["PAWAPAY_API_BASE_URL"];
+  return { apiToken, ...(apiBaseUrl ? { apiBaseUrl } : {}) };
 }
 
 /**
