@@ -6,10 +6,11 @@ import { AnthropicAiProvider } from "./ai/provider.js";
 import { DeepSeekAiProvider } from "./ai/deepseekProvider.js";
 import { buildDeepSeekDepsFromEnv } from "./config/deepseekEnv.js";
 import { buildFlutterwaveDepsFromEnv, getFlutterwaveCheckoutRedirectUrl } from "./config/paymentsEnv.js";
+import { parseTestRecipientTrunkPrefixCallingCodesFromEnv } from "./config/outboundGatewayEnv.js";
 import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
 import { reportIncident } from "./monitoring/alerts.js";
 import { CircuitBreaker } from "./monitoring/circuitBreaker.js";
-import { installGracefulShutdown } from "./monitoring/processGuards.js";
+import { installCrashReporting, installGracefulShutdown } from "./monitoring/processGuards.js";
 import { WhisperSttProvider } from "./stt/provider.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { INBOUND_MESSAGE_QUEUE_NAME } from "./queue/inboundMessageQueue.js";
@@ -17,18 +18,52 @@ import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
 
 const SERVICE_NAME = "worker";
 
-// Optional, same as every other credential dep below: a deployment that
+// Optional (mirrors every other credential dep below): a deployment that
 // hasn't signed up for an email-alerting provider yet still boots this
-// worker exactly as before — reportIncident's own unconditional
-// console.error is the fallback (see monitoring/alerts.ts). Built here
-// (rather than only inline where DeepSeek's breaker needs it) since it's
-// the same alerts bundle DeepSeek's circuit-breaker alerting below uses.
+// worker exactly as before this monitoring phase — reportIncident's own
+// unconditional console.error is the fallback (see monitoring/alerts.ts).
 const alerts = buildAlertEmailDepsFromEnv();
 if (!alerts) {
   console.warn(
-    "worker: ALERT_EMAIL_API_KEY/ALERT_EMAIL_FROM/ALERT_EMAIL_TO not set — DeepSeek circuit-breaker incident alerts will only be logged to console, not emailed.",
+    "worker: ALERT_EMAIL_API_KEY/ALERT_EMAIL_FROM/ALERT_EMAIL_TO not set — crash/incident alerts will only be logged to console, not emailed.",
   );
 }
+
+// Any uncaughtException/unhandledRejection escaping this process from here
+// on is reported, then the process exits so Railway's restart policy can
+// bring up a clean replacement — see processGuards.ts's own doc comment for
+// why "restart" (not an in-place patch) is this codebase's actual "fix it
+// automatically" step for a genuine crash.
+installCrashReporting(SERVICE_NAME, alerts);
+
+/**
+ * Guards the one call this worker makes to an external AI vendor
+ * (messageDispatcher.ts's parseWithCircuitBreaker) — see circuitBreaker.ts's
+ * own doc comment for the full state-machine reasoning. Thresholds are a
+ * first, deliberately simple guess (3 consecutive failures, 1-minute
+ * cooldown before probing again) rather than tuned against real incident
+ * data, since none exists yet for this codebase.
+ */
+const aiCircuitBreaker = new CircuitBreaker({
+  failureThreshold: 3,
+  resetTimeoutMs: 60_000,
+  onOpen: (consecutiveFailures) => {
+    void reportIncident(alerts, {
+      service: SERVICE_NAME,
+      title: "AI provider circuit breaker opened",
+      detail:
+        `Tripped open after ${consecutiveFailures} consecutive AI-parse failures — every inbound free-text ` +
+        "message will get a degraded reply until the breaker recovers (see messageDispatcher.ts).",
+    });
+  },
+  onClose: () => {
+    void reportIncident(alerts, {
+      service: SERVICE_NAME,
+      title: "AI provider circuit breaker closed",
+      detail: "AI-parse calls are succeeding again — back to normal, degraded replies have stopped.",
+    });
+  },
+});
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -81,14 +116,12 @@ const deepseekProvider = deepSeekDeps
   ? new DeepSeekAiProvider({ apiKey: deepSeekDeps.apiKey, modelKey: deepSeekDeps.modelKey })
   : undefined;
 /**
- * Guards the DeepSeek call in messageDispatcher.ts's parseWithProviderFallback
- * — see circuitBreaker.ts's own doc comment for the full state-machine
- * reasoning. Thresholds are a first, deliberately simple guess (3
- * consecutive failures, 1-minute cooldown before probing again) rather than
- * tuned against real incident data, since none exists yet for DeepSeek.
- * DeepSeek's own failure history must never trip, or be tripped by, any
- * breaker guarding the Anthropic fallback path — this is an entirely
- * independent instance.
+ * Second, independent breaker instance (mirrors aiCircuitBreaker above,
+ * lines 45-64, including its alerting pattern) — DeepSeek's own failure
+ * history must never trip, or be tripped by, the Anthropic breaker guarding
+ * the fallback path. onOpen/onClose alert titles are named explicitly for
+ * DeepSeek so an operator reading incident emails can immediately tell
+ * which provider's breaker fired without opening the detail field.
  */
 const deepseekCircuitBreaker = deepseekProvider
   ? new CircuitBreaker({
@@ -135,6 +168,11 @@ const staffAddedTemplate =
 const flutterwave = buildFlutterwaveDepsFromEnv();
 const paymentsCheckoutRedirectUrl = getFlutterwaveCheckoutRedirectUrl();
 
+// See OutboundGatewayDeps.testRecipientTrunkPrefixCallingCodes's doc comment
+// (whatsapp/outboundGateway.ts) — works around a Meta free/test-number
+// allowlist quirk; unset env var means no behavior change.
+const testRecipientTrunkPrefixCallingCodes = parseTestRecipientTrunkPrefixCallingCodesFromEnv();
+
 const deps = {
   prisma,
   aiProvider,
@@ -142,12 +180,14 @@ const deps = {
   flutterwave,
   paymentsCheckoutRedirectUrl,
   alerts,
+  aiCircuitBreaker,
   deepseekProvider,
   deepseekCircuitBreaker,
   outboundGateway: {
     accessToken: requireEnv("WHATSAPP_ACCESS_TOKEN"),
     phoneNumberId: requireEnv("WHATSAPP_PHONE_NUMBER_ID"),
     ...(staffAddedTemplate ? { staffAddedTemplate } : {}),
+    ...(testRecipientTrunkPrefixCallingCodes ? { testRecipientTrunkPrefixCallingCodes } : {}),
   },
 };
 
@@ -168,6 +208,29 @@ const worker = new Worker<InboundMessageJob>(
 
 worker.on("failed", (job, error) => {
   console.error(`Job ${job?.id ?? "(unknown)"} failed:`, error);
+  void reportIncident(alerts, {
+    service: SERVICE_NAME,
+    title: "Inbound-message job failed",
+    detail: `Job ${job?.id ?? "(unknown)"}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+  });
+});
+
+/**
+ * Monitoring-phase gap closure: BullMQ's Worker is an EventEmitter, and
+ * Node's own contract for EventEmitter is that an "error" event with no
+ * listener throws, crashing the process (see
+ * https://nodejs.org/api/events.html#error-events) — this worker had no
+ * such listener before this phase, for a queue-connection-level failure
+ * (e.g. Redis dropping) that BullMQ surfaces this way rather than through
+ * "failed" (which is per-job, not per-connection).
+ */
+worker.on("error", (error) => {
+  console.error("Inbound-message worker connection error:", error);
+  void reportIncident(alerts, {
+    service: SERVICE_NAME,
+    title: "Worker connection error",
+    detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+  });
 });
 
 console.log(`TradePal inbound-message worker listening on queue "${INBOUND_MESSAGE_QUEUE_NAME}"`);

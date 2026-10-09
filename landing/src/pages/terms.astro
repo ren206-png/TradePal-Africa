@@ -1,0 +1,85 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { SITE } from "../lib/site";
+
+const lastUpdated = "July 24, 2026";
+---
+
+<Layout
+  title={`Terms of Service — ${SITE.name}`}
+  description={`The terms that apply when you use ${SITE.name} on WhatsApp.`}
+  path="/terms"
+>
+  <Header />
+  <main class="mx-auto max-w-3xl px-6 py-16">
+    <h1 class="text-3xl font-bold tracking-tight text-slate-900">Terms of Service</h1>
+    <p class="mt-2 text-sm text-slate-500">Last updated: {lastUpdated}</p>
+
+    <div class="mt-10 space-y-8 text-slate-700">
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">The service</h2>
+        <p class="mt-2 leading-relaxed">
+          {SITE.name} provides bookkeeping, stock-tracking, and payment-collection tools for small shops, delivered
+          entirely through WhatsApp chat. TradePal is an early-stage product and features may change, be added, or
+          be removed as we improve the service.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Your responsibilities</h2>
+        <ul class="mt-2 list-disc space-y-2 pl-5 leading-relaxed">
+          <li>Provide accurate information about your business (name, location, transactions).</li>
+          <li>Use TradePal in compliance with the laws that apply to your business and location.</li>
+          <li>Keep the phone number linked to your account secure, since it's how we identify your business.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Pricing and plans</h2>
+        <p class="mt-2 leading-relaxed">
+          TradePal is offered on a Free plan and a paid Starter plan, as described on our pricing page. We'll always
+          let you know in advance before any change that affects what you're charged.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">No financial advice</h2>
+        <p class="mt-2 leading-relaxed">
+          TradePal helps you record and organize your business's transactions. It does not provide financial,
+          accounting, tax, or legal advice, and you're responsible for decisions you make based on the records it
+          keeps.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Service availability</h2>
+        <p class="mt-2 leading-relaxed">
+          We aim to keep TradePal available and reliable, but as with any software service we can't guarantee
+          uninterrupted access. We're not liable for losses arising from downtime, message delays, or errors in the
+          underlying WhatsApp platform, which is operated by Meta and outside our control.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Ending your use of TradePal</h2>
+        <p class="mt-2 leading-relaxed">
+          You can stop using TradePal at any time. We may also suspend or end an account that misuses the service or
+          violates these terms. See our <a href="/privacy" class="font-medium text-teal-700 underline underline-offset-2">Privacy Policy</a> for how we handle your data if you leave.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Contact us</h2>
+        <p class="mt-2 leading-relaxed">
+          Questions about these terms can be sent to{" "}
+          <a href="mailto:privacy@tradepalafrica.com" class="font-medium text-teal-700 underline underline-offset-2">
+            privacy@tradepalafrica.com
+          </a>.
+        </p>
+      </section>
+    </div>
+  </main>
+  <Footer />
+</Layout>

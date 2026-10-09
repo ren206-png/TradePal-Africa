@@ -1,4 +1,5 @@
 import type { FlutterwaveDeps } from "../flutterwave/client.js";
+import type { PawaPayDeps } from "../pawapay/client.js";
 import type { PaymentsOutboundGateway } from "../domain/payments.js";
 import type { PaymentRequestOutboundGateway } from "../domain/paymentRequests.js";
 
@@ -60,6 +61,22 @@ export function buildPaymentsOutboundGatewayFromEnv(): PaymentsOutboundGateway |
     phoneNumberId,
     ...(paymentConfirmedTemplate ? { paymentConfirmedTemplate } : {}),
   };
+}
+
+/**
+ * PawaPay mobile money aggregator — C2B collection for West Africa
+ * (Sierra Leone, Liberia, Gambia, Guinea). Optional, not requireEnv: a
+ * deployment that hasn't set up PawaPay yet still boots with the
+ * /webhooks/pawapay route unmounted, same as the Flutterwave route above.
+ *
+ * PAWAPAY_API_TOKEN is the Bearer token from your PawaPay dashboard.
+ * Sandbox tokens are available immediately after creating a sandbox account
+ * at dashboard.pawapay.io; production tokens require KYB approval.
+ */
+export function buildPawaPayDepsFromEnv(): PawaPayDeps | undefined {
+  const apiToken = process.env["PAWAPAY_API_TOKEN"];
+  if (!apiToken) return undefined;
+  return { apiToken };
 }
 
 /**

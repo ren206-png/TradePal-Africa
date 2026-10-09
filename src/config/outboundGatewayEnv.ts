@@ -3,6 +3,28 @@ import type { BusinessDigestOutboundGateway } from "../domain/businessDigest.js"
 import type { DeletionResolutionOutboundGateway } from "../domain/deletion.js";
 
 /**
+ * Shared by every builder in this file, and by src/worker.ts (which builds
+ * its base outboundGateway inline rather than through this file — see that
+ * file's own comment on why). See `OutboundGatewayDeps.
+ * testRecipientTrunkPrefixCallingCodes`'s doc comment in
+ * whatsapp/outboundGateway.ts for the underlying Meta test-number quirk this
+ * works around. `WHATSAPP_TEST_RECIPIENT_TRUNK_PREFIX_CALLING_CODES` is a
+ * comma-separated list of calling codes (e.g. "232" for Sierra Leone, or
+ * "232,234" for more than one); unset/empty means no calling codes are
+ * opted in, i.e. no behavior change from before this workaround existed.
+ */
+export function parseTestRecipientTrunkPrefixCallingCodesFromEnv(): Set<string> | undefined {
+  const raw = process.env["WHATSAPP_TEST_RECIPIENT_TRUNK_PREFIX_CALLING_CODES"];
+  if (!raw) return undefined;
+
+  const callingCodes = raw
+    .split(",")
+    .map((code) => code.trim())
+    .filter((code) => code.length > 0);
+  return callingCodes.length > 0 ? new Set(callingCodes) : undefined;
+}
+
+/**
  * Shared by src/server.ts and src/subscriptionExpiryWorker.ts — both need the
  * same optional WhatsApp send configuration for the Phase 7 subscription-
  * lapse notification, and duplicating this logic in each entrypoint (rather
@@ -28,10 +50,13 @@ export function buildSubscriptionExpiryOutboundGatewayFromEnv(): SubscriptionExp
   const lapseNotificationTemplate =
     templateName && templateLanguageCode ? { name: templateName, languageCode: templateLanguageCode } : undefined;
 
+  const testRecipientTrunkPrefixCallingCodes = parseTestRecipientTrunkPrefixCallingCodesFromEnv();
+
   return {
     accessToken,
     phoneNumberId,
     ...(lapseNotificationTemplate ? { lapseNotificationTemplate } : {}),
+    ...(testRecipientTrunkPrefixCallingCodes ? { testRecipientTrunkPrefixCallingCodes } : {}),
   };
 }
 
@@ -67,10 +92,13 @@ export function buildBusinessDigestOutboundGatewayFromEnv(): BusinessDigestOutbo
   const weeklyDigestTemplate =
     templateName && templateLanguageCode ? { name: templateName, languageCode: templateLanguageCode } : undefined;
 
+  const testRecipientTrunkPrefixCallingCodes = parseTestRecipientTrunkPrefixCallingCodesFromEnv();
+
   return {
     accessToken,
     phoneNumberId,
     ...(weeklyDigestTemplate ? { weeklyDigestTemplate } : {}),
+    ...(testRecipientTrunkPrefixCallingCodes ? { testRecipientTrunkPrefixCallingCodes } : {}),
   };
 }
 
@@ -114,9 +142,12 @@ export function buildDeletionResolutionOutboundGatewayFromEnv(): Omit<DeletionRe
   const resolutionTemplate =
     templateName && templateLanguageCode ? { name: templateName, languageCode: templateLanguageCode } : undefined;
 
+  const testRecipientTrunkPrefixCallingCodes = parseTestRecipientTrunkPrefixCallingCodesFromEnv();
+
   return {
     accessToken,
     phoneNumberId,
     ...(resolutionTemplate ? { resolutionTemplate } : {}),
+    ...(testRecipientTrunkPrefixCallingCodes ? { testRecipientTrunkPrefixCallingCodes } : {}),
   };
 }

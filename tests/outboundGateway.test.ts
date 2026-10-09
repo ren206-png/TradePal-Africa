@@ -10,6 +10,8 @@ import {
 let testDb: TestDb;
 let prisma: PrismaClient;
 let merchantPhoneNumber: string;
+let slMerchantPhoneNumber: string;
+let slMerchantLocalFormatPhoneNumber: string;
 
 beforeAll(async () => {
   testDb = await createTestDb();
@@ -27,6 +29,23 @@ beforeAll(async () => {
 
   merchantPhoneNumber = "2348012345678";
   await prisma.merchant.create({ data: { businessId: business.id, phoneNumber: merchantPhoneNumber } });
+
+  // Second merchant, Sierra Leone (calling code 232), for the
+  // testRecipientTrunkPrefixCallingCodes workaround tests below — see
+  // OutboundGatewayDeps's doc comment in ../src/whatsapp/outboundGateway.ts.
+  await prisma.currency.create({ data: { code: "SLE", name: "Sierra Leonean Leone", minorUnitExp: 2 } });
+  await prisma.country.create({
+    data: { code: "SL", name: "Sierra Leone", callingCode: "232", defaultCurrency: "SLE", defaultTimezone: "Africa/Freetown" },
+  });
+  const slBusiness = await prisma.business.create({
+    data: { name: "Shop B", countryCode: "SL", currencyCode: "SLE", languageCode: "en", timezone: "Africa/Freetown" },
+  });
+
+  slMerchantPhoneNumber = "23280462524"; // wa_id format — no trunk "0" after the calling code.
+  await prisma.merchant.create({ data: { businessId: slBusiness.id, phoneNumber: slMerchantPhoneNumber } });
+
+  slMerchantLocalFormatPhoneNumber = "232090462524"; // already local-format (has a trunk "0"), different merchant.
+  await prisma.merchant.create({ data: { businessId: slBusiness.id, phoneNumber: slMerchantLocalFormatPhoneNumber } });
 }, 60_000);
 
 afterAll(async () => {
@@ -145,5 +164,91 @@ describe("sendWhatsAppTemplateMessage", () => {
         { toPhoneNumber: merchantPhoneNumber, templateName: "generic_notice", templateLanguageCode: "en_US" },
       ),
     ).rejects.toThrow(/WhatsApp send failed \(400\)/);
+  });
+});
+
+describe("testRecipientTrunkPrefixCallingCodes workaround", () => {
+  it("leaves the Graph API `to` value untouched when unset (the default)", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.OUT" }] }), { status: 200 }));
+
+    await sendWhatsAppTextMessage(
+      { prisma, accessToken: "test-token", phoneNumberId: "pn-1", fetchImpl },
+      { toPhoneNumber: slMerchantPhoneNumber, body: "Welcome to TradePal!" },
+    );
+
+    const body = JSON.parse((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.to).toBe(slMerchantPhoneNumber);
+  });
+
+  it("inserts a trunk \"0\" after an opted-in calling code", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.OUT" }] }), { status: 200 }));
+
+    await sendWhatsAppTextMessage(
+      {
+        prisma,
+        accessToken: "test-token",
+        phoneNumberId: "pn-1",
+        fetchImpl,
+        testRecipientTrunkPrefixCallingCodes: new Set(["232"]),
+      },
+      { toPhoneNumber: slMerchantPhoneNumber, body: "Welcome to TradePal!" },
+    );
+
+    const body = JSON.parse((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.to).toBe("232080462524");
+  });
+
+  it("does not double-insert the trunk \"0\" for a number already in local format", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.OUT" }] }), { status: 200 }));
+
+    await sendWhatsAppTextMessage(
+      {
+        prisma,
+        accessToken: "test-token",
+        phoneNumberId: "pn-1",
+        fetchImpl,
+        testRecipientTrunkPrefixCallingCodes: new Set(["232"]),
+      },
+      { toPhoneNumber: slMerchantLocalFormatPhoneNumber, body: "Welcome to TradePal!" },
+    );
+
+    const body = JSON.parse((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.to).toBe(slMerchantLocalFormatPhoneNumber);
+  });
+
+  it("leaves a number untouched when its calling code isn't in the opt-in set", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.OUT" }] }), { status: 200 }));
+
+    await sendWhatsAppTextMessage(
+      {
+        prisma,
+        accessToken: "test-token",
+        phoneNumberId: "pn-1",
+        fetchImpl,
+        testRecipientTrunkPrefixCallingCodes: new Set(["234"]), // Nigeria only, not Sierra Leone.
+      },
+      { toPhoneNumber: slMerchantPhoneNumber, body: "Welcome to TradePal!" },
+    );
+
+    const body = JSON.parse((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.to).toBe(slMerchantPhoneNumber);
+  });
+
+  it("also applies to template sends", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.OUT" }] }), { status: 200 }));
+
+    await sendWhatsAppTemplateMessage(
+      {
+        prisma,
+        accessToken: "test-token",
+        phoneNumberId: "pn-1",
+        fetchImpl,
+        testRecipientTrunkPrefixCallingCodes: new Set(["232"]),
+      },
+      { toPhoneNumber: slMerchantPhoneNumber, templateName: "generic_notice", templateLanguageCode: "en_US" },
+    );
+
+    const body = JSON.parse((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.to).toBe("232080462524");
   });
 });

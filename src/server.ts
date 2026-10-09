@@ -9,14 +9,17 @@ import {
   buildDeletionResolutionOutboundGatewayFromEnv,
   buildSubscriptionExpiryOutboundGatewayFromEnv,
 } from "./config/outboundGatewayEnv.js";
+import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
 import {
   buildFlutterwaveDepsFromEnv,
+  buildPawaPayDepsFromEnv,
   buildPaymentRequestOutboundGatewayFromEnv,
   buildPaymentsOutboundGatewayFromEnv,
 } from "./config/paymentsEnv.js";
 import { prisma } from "./db/client.js";
 import { createFlutterwaveWebhookPostHandler } from "./flutterwave/webhookRoute.js";
-import { installGracefulShutdown } from "./monitoring/processGuards.js";
+import { createPawaPayWebhookPostHandler } from "./pawapay/webhookRoute.js";
+import { installCrashReporting, installGracefulShutdown } from "./monitoring/processGuards.js";
 import { createRequestErrorHandler } from "./monitoring/requestErrorHandler.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { enqueueInboundMessage } from "./queue/inboundMessageQueue.js";
@@ -32,6 +35,22 @@ function requireEnv(name: string): string {
 const appSecret = requireEnv("WHATSAPP_APP_SECRET");
 const verifyToken = requireEnv("WHATSAPP_VERIFY_TOKEN");
 const adminJwtSecret = requireEnv("ADMIN_JWT_SECRET");
+
+// Optional, same as every WhatsApp/payments credential below: a deployment
+// that hasn't signed up for an email-alerting provider yet still boots this
+// server exactly as before this monitoring phase — reportIncident's own
+// unconditional console.error is the fallback (see monitoring/alerts.ts).
+const alerts = buildAlertEmailDepsFromEnv();
+if (!alerts) {
+  console.warn(
+    "server: ALERT_EMAIL_API_KEY/ALERT_EMAIL_FROM/ALERT_EMAIL_TO not set — " +
+      "crash/incident alerts will only be logged to console, not emailed.",
+  );
+}
+// See processGuards.ts's own doc comment: an uncaughtException/
+// unhandledRejection escaping this Express process is reported, then the
+// process exits so Railway's restart policy brings up a clean replacement.
+installCrashReporting("server", alerts);
 
 // Optional (not requireEnv): the API server process doesn't otherwise need
 // WhatsApp send credentials (src/worker.ts is what normally sends messages),
@@ -61,6 +80,11 @@ const flutterwaveWebhookSecretHash = process.env["FLUTTERWAVE_WEBHOOK_SECRET_HAS
 const paymentsOutboundGateway = buildPaymentsOutboundGatewayFromEnv();
 // Phase 24 counterpart, for confirmPaymentRequestPayment's own merchant notification.
 const paymentRequestOutboundGateway = buildPaymentRequestOutboundGatewayFromEnv();
+
+// PawaPay mobile money aggregator — C2B collection for West Africa (SL, LR, GM, GN).
+// Optional, same as Flutterwave above: deployment boots without it, route simply unmounted.
+// Set PAWAPAY_API_TOKEN to your sandbox (or production) token from dashboard.pawapay.io.
+const pawapay = buildPawaPayDepsFromEnv();
 
 /**
  * Phase 20: opt-in Redis-backed rate limiting, closing the gap
@@ -138,6 +162,18 @@ if (flutterwave && flutterwaveWebhookSecretHash) {
   );
 }
 
+if (pawapay) {
+  app.post(
+    "/webhooks/pawapay",
+    createPawaPayWebhookPostHandler({ prisma, pawapay }),
+  );
+} else {
+  console.warn(
+    "PAWAPAY_API_TOKEN not set — the /webhooks/pawapay route is not mounted. " +
+      "Set PAWAPAY_API_TOKEN to your sandbox or production token from dashboard.pawapay.io.",
+  );
+}
+
 // The admin-frontend package (admin-frontend/) is a separate-origin browser
 // app in dev (e.g. http://localhost:5173) and would otherwise be blocked by
 // the browser's same-origin policy from calling this API. Scoped to only the
@@ -170,18 +206,13 @@ app.use(
 // doesn't catch a rejected Promise from an async handler on its own, so
 // without both this middleware AND every handler being wrapped in
 // asyncHandler, an error thrown by any admin route would previously become an
-// unhandled rejection and take down the entire process instead of just
-// failing the one request. This is the request-scoped counterpart to
-// installCrashReporting's process-scoped safety net: it reports the incident
-// the same way, but responds with a plain 500 and lets the process keep
-// serving every other in-flight and future request. Client errors (e.g. malformed JSON) get
-// their 4xx and are NOT reported as incidents (see monitoring/requestErrorHandler.ts).
-//
-// `undefined` here (not an `alerts` variable) deliberately keeps this
-// self-contained: reportIncident always logs to console regardless, and only
-// attempts to email when alert-email deps are supplied — wiring those deps
-// through is a separate, already-in-flight change to this file.
-app.use(createRequestErrorHandler(undefined, "server"));
+// unhandled rejection and — via installCrashReporting's own listener — take
+// down the entire process instead of just failing the one request. This is
+// the request-scoped counterpart to that process-scoped safety net: it
+// reports the incident the same way, but responds with a plain 500 and lets
+// the process keep serving every other in-flight and future request.
+// Client errors (e.g. malformed JSON) get their 4xx and are NOT reported as incidents.
+app.use(createRequestErrorHandler(alerts, "server"));
 
 const port = Number(process.env["PORT"] ?? 3000);
 const server = app.listen(port, () => {

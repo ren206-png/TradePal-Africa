@@ -1,0 +1,90 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { SITE } from "../lib/site";
+
+const lastUpdated = "July 24, 2026";
+---
+
+<Layout
+  title={`Privacy Policy — ${SITE.name}`}
+  description={`How ${SITE.name} collects, uses, and protects your business's data.`}
+  path="/privacy"
+>
+  <Header />
+  <main class="mx-auto max-w-3xl px-6 py-16">
+    <h1 class="text-3xl font-bold tracking-tight text-slate-900">Privacy Policy</h1>
+    <p class="mt-2 text-sm text-slate-500">Last updated: {lastUpdated}</p>
+
+    <div class="mt-10 space-y-8 text-slate-700">
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Who we are</h2>
+        <p class="mt-2 leading-relaxed">
+          {SITE.name} turns the WhatsApp you already use into a bookkeeping, stock, and payment-collection tool for
+          your shop. This policy explains what information we collect from you and your business when you use
+          TradePal on WhatsApp, and how we use it.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Information we collect</h2>
+        <ul class="mt-2 list-disc space-y-2 pl-5 leading-relaxed">
+          <li>Your WhatsApp phone number, used to identify your business's account.</li>
+          <li>Your business name, country, currency, and preferred language, set up during onboarding.</li>
+          <li>
+            The sales, expenses, debts, and customer names you report to TradePal in chat — this is the data that
+            powers your bookkeeping records.
+          </li>
+          <li>Basic message metadata (timestamps, message IDs) needed to process your requests reliably.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">How we use it</h2>
+        <p class="mt-2 leading-relaxed">
+          We use this information solely to provide TradePal's bookkeeping, stock tracking, payment-collection, and
+          reminder features for your own business. We do not use your data to advertise to you, and we do not sell
+          your data to third parties.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">When we share information</h2>
+        <p class="mt-2 leading-relaxed">
+          We only share business data with third parties when it's necessary to deliver a feature you explicitly
+          use — for example, with our payment processor (Flutterwave) when you generate a payment link or set up a
+          customer catalog for collecting payments. We do not share your data for advertising or marketing
+          purposes.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Data retention</h2>
+        <p class="mt-2 leading-relaxed">
+          We keep your business's records for as long as your account is active, so your bookkeeping history stays
+          available to you. You can request deletion of your account and data at any time by contacting us below.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Your choices</h2>
+        <p class="mt-2 leading-relaxed">
+          You can stop using TradePal at any time by simply no longer messaging our WhatsApp number. To request a
+          copy of your data or permanent deletion of your account, contact us using the details below.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-xl font-semibold text-slate-900">Contact us</h2>
+        <p class="mt-2 leading-relaxed">
+          Questions about this policy or requests regarding your data can be sent to{" "}
+          <a href="mailto:privacy@tradepalafrica.com" class="font-medium text-teal-700 underline underline-offset-2">
+            privacy@tradepalafrica.com
+          </a>.
+        </p>
+      </section>
+    </div>
+  </main>
+  <Footer />
+</Layout>

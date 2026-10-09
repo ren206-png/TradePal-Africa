@@ -1,13 +1,29 @@
 import "dotenv/config";
 import { Worker } from "bullmq";
+import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
 import { prisma } from "./db/client.js";
 import { expireStalePaymentRequests } from "./domain/paymentRequestExpiry.js";
-import { installGracefulShutdown } from "./monitoring/processGuards.js";
+import { reportIncident } from "./monitoring/alerts.js";
+import { installCrashReporting, installGracefulShutdown } from "./monitoring/processGuards.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import {
   PAYMENT_REQUEST_EXPIRY_QUEUE_NAME,
   schedulePaymentRequestExpirySweep,
 } from "./queue/paymentRequestExpiryQueue.js";
+
+const SERVICE_NAME = "payment-request-expiry-worker";
+
+// This worker has no WhatsApp send credentials to be optional about (see
+// this file's own top-of-file doc comment), but email alerting is still its
+// own independent optional dep, same treatment as every other worker.
+const alerts = buildAlertEmailDepsFromEnv();
+if (!alerts) {
+  console.warn(
+    "paymentRequestExpiryWorker: ALERT_EMAIL_API_KEY/ALERT_EMAIL_FROM/ALERT_EMAIL_TO not set — " +
+      "crash/incident alerts will only be logged to console, not emailed.",
+  );
+}
+installCrashReporting(SERVICE_NAME, alerts);
 
 /**
  * The scheduled counterpart to src/subscriptionExpiryWorker.ts, same shape:
@@ -38,6 +54,22 @@ async function main() {
 
   worker.on("failed", (job, error) => {
     console.error(`Job ${job?.id ?? "(unknown)"} failed:`, error);
+    void reportIncident(alerts, {
+      service: SERVICE_NAME,
+      title: "Payment-request-expiry sweep job failed",
+      detail: `Job ${job?.id ?? "(unknown)"}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    });
+  });
+
+  // See worker.ts's own doc comment on the identical listener for why this
+  // is required (Node's EventEmitter throws on an unhandled "error" event).
+  worker.on("error", (error) => {
+    console.error("Payment-request-expiry worker connection error:", error);
+    void reportIncident(alerts, {
+      service: SERVICE_NAME,
+      title: "Worker connection error",
+      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    });
   });
 
   console.log(
@@ -48,7 +80,7 @@ async function main() {
   // every redeploy) previously had no listener here, so Node's default
   // behavior — terminate immediately — could cut off a sweep mid-run rather
   // than letting BullMQ's own Worker.close() finish it.
-  installGracefulShutdown("payment-request-expiry-worker", [
+  installGracefulShutdown(SERVICE_NAME, [
     { name: "bullmq-worker", close: () => worker.close() },
     { name: "prisma", close: () => prisma.$disconnect() },
   ]);

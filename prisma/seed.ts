@@ -53,13 +53,23 @@ async function main(): Promise<void> {
 
   await prisma.plan.upsert({
     where: { code: "FREE" },
-    update: {},
+    // Unlike every other upsert in this function (reference/master data that's
+    // never meant to drift once seeded), entryCapPerMonth is deliberately kept
+    // in sync on every seed run: it's a pricing-page-visible number (see
+    // landing/src/components/Pricing.astro, FAQ.astro) that should always
+    // match what's actually enforced (billing.ts's assertWithinQuotaIfEnabled),
+    // not silently freeze at whatever value happened to exist when a given
+    // database was first seeded. An already-running deployment's existing
+    // FREE row is separately updated by migration
+    // 20260726000000_phase28_free_tier_cap_50, since this seed script only
+    // runs again on a fresh/reset database, not against production.
+    update: { entryCapPerMonth: 50 },
     create: {
       code: "FREE",
       name: "Free",
       priceMinor: 0n,
       currencyCode: "NGN",
-      entryCapPerMonth: 100,
+      entryCapPerMonth: 50,
       voiceEnabled: false,
     },
   });
