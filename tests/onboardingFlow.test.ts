@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
 import { getTenantScopedClient } from "../src/db/tenantScope.js";
@@ -6,6 +6,8 @@ import {
   continueOnboarding,
   findMerchantByPhoneNumber,
   isOnboardingComplete,
+  parseTestNumberCountryOverrides,
+  resolveOnboardingCountry,
   startOnboarding,
   UnsupportedCountryError,
 } from "../src/onboarding/onboardingFlow.js";
@@ -21,12 +23,14 @@ beforeAll(async () => {
     data: [
       { code: "NGN", name: "Nigerian Naira", minorUnitExp: 2 },
       { code: "KES", name: "Kenyan Shilling", minorUnitExp: 2 },
+      { code: "SLE", name: "Sierra Leonean Leone", minorUnitExp: 2 },
     ],
   });
   await prisma.country.createMany({
     data: [
       { code: "NG", name: "Nigeria", callingCode: "234", defaultCurrency: "NGN", defaultTimezone: "Africa/Lagos" },
       { code: "KE", name: "Kenya", callingCode: "254", defaultCurrency: "KES", defaultTimezone: "Africa/Nairobi" },
+      { code: "SL", name: "Sierra Leone", callingCode: "232", defaultCurrency: "SLE", defaultTimezone: "Africa/Freetown" },
     ],
   });
   await prisma.language.create({ data: { code: "en", name: "English" } });
@@ -51,6 +55,34 @@ describe("startOnboarding", () => {
 
   it("refuses to onboard a phone number from an unsupported country", async () => {
     await expect(startOnboarding(prisma, "19995551234")).rejects.toThrow(UnsupportedCountryError);
+  });
+
+  it("onboards an unsupported-country number under the country an operator test override names for that exact number", async () => {
+    vi.stubEnv("ONBOARDING_TEST_NUMBER_COUNTRIES", "19995557777=SL");
+    try {
+      const started = await startOnboarding(prisma, "19995557777");
+      const business = await prisma.business.findUniqueOrThrow({ where: { id: started.merchant.businessId } });
+      expect(business.countryCode).toBe("SL");
+      expect(business.currencyCode).toBe("SLE");
+      // A different +1 number is still unsupported: the override matches the whole number only.
+      await expect(startOnboarding(prisma, "19995557778")).rejects.toThrow(UnsupportedCountryError);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("parseTestNumberCountryOverrides", () => {
+  it("parses number=country pairs, ignoring malformed entries and unknown countries", () => {
+    const parsed = parseTestNumberCountryOverrides("+19995550001=sl, 2348012345678=NG ,abc=SL,19995550002=ZZ,19995550003,,12=GH");
+    expect([...parsed.keys()]).toEqual(["19995550001", "2348012345678"]);
+    expect(parsed.get("19995550001")?.code).toBe("SL");
+  });
+
+  it("is empty when unset, leaving every number on its own calling code", () => {
+    expect(parseTestNumberCountryOverrides(undefined).size).toBe(0);
+    expect(resolveOnboardingCountry("19995550001", undefined)).toBeUndefined();
+    expect(resolveOnboardingCountry("23277000111", undefined)?.code).toBe("SL");
   });
 });
 

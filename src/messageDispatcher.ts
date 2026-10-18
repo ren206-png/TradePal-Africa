@@ -36,6 +36,7 @@ import type { SttProvider } from "./stt/provider.js";
 import { downloadWhatsAppMedia } from "./whatsapp/mediaGateway.js";
 import { sendWhatsAppTextMessage, type OutboundGatewayDeps } from "./whatsapp/outboundGateway.js";
 import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
+import { maybeSendUnsupportedCountryNotice } from "./whatsapp/unsupportedCountryNotice.js";
 import { extractInboundMessages, parseWhatsAppWebhookPayload } from "./whatsapp/webhookPayload.js";
 
 /** Every reportIncident call in this file is tagged with this, since dispatchInboundMessage only ever runs inside worker.ts. */
@@ -738,8 +739,11 @@ export async function dispatchInboundMessage(deps: DispatcherDeps, job: InboundM
         }
       } catch (error) {
         if (!(error instanceof UnsupportedCountryError)) throw error;
-        // No Merchant row exists (or ever will, for this number) to send to — the outbound
-        // gateway would refuse it anyway (Non-Negotiable Standard #9), so there is nothing to do.
+        // No Merchant row exists (or ever will, for this number), and the normal outbound path
+        // refuses unregistered numbers (Non-Negotiable Standard #9). Rather than leave the person
+        // in silence, send the single fixed "not available in your country yet" notice through
+        // its own narrowly-scoped path (once per number per day; nothing stored).
+        await maybeSendUnsupportedCountryNotice({ prisma: deps.prisma, ...deps.outboundGateway }, job.fromNumber);
       }
     } else if (await isBusinessSuspended(deps.prisma, merchant.businessId)) {
       await reply(deps, job.fromNumber, BUSINESS_SUSPENDED_REPLY);

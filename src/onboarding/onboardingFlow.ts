@@ -1,5 +1,5 @@
 import type { Merchant, PrismaClient } from "@prisma/client";
-import { getCountryByPhoneNumber } from "../config/countries.js";
+import { getCountryByCode, getCountryByPhoneNumber, type CountryDefinition } from "../config/countries.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
 import { findOrCreateCustomerByName } from "../domain/debtBook.js";
 
@@ -26,6 +26,33 @@ export async function findMerchantByPhoneNumber(prisma: PrismaClient, phoneNumbe
 }
 
 /**
+ * Lets the operator test the real signup flow from a phone whose own calling code isn't one of the
+ * launch countries (e.g. a US/Canadian number), by naming that exact number and the country to
+ * treat it as: ONBOARDING_TEST_NUMBER_COUNTRIES="14125550123=SL,...". Unset (the default) changes
+ * nothing, so no real number is ever affected. Only whole numbers match — never a prefix — and an
+ * entry with a malformed number or an unknown country code is ignored rather than guessed at.
+ */
+export function parseTestNumberCountryOverrides(raw: string | undefined): Map<string, CountryDefinition> {
+  const overrides = new Map<string, CountryDefinition>();
+  for (const entry of (raw ?? "").split(",")) {
+    const [rawNumber, rawCode] = entry.split("=").map((part) => part?.trim() ?? "");
+    const number = (rawNumber ?? "").replace(/^\+/, "");
+    const country = rawCode ? getCountryByCode(rawCode.toUpperCase()) : undefined;
+    if (/^\d{8,15}$/.test(number) && country) overrides.set(number, country);
+  }
+  return overrides;
+}
+
+/** The country a phone number signs up under: an operator test override if one names this exact number, else its calling code. */
+export function resolveOnboardingCountry(
+  phoneNumber: string,
+  rawOverrides: string | undefined = process.env["ONBOARDING_TEST_NUMBER_COUNTRIES"],
+): CountryDefinition | undefined {
+  const digitsOnly = phoneNumber.replace(/\D/g, "");
+  return parseTestNumberCountryOverrides(rawOverrides).get(digitsOnly) ?? getCountryByPhoneNumber(phoneNumber);
+}
+
+/**
  * A merchant's WhatsApp number is their identity (KQ6) and its calling code
  * maps 1:1 to one of the supported launch countries (SUPPORTED_COUNTRIES), so
  * country is inferred rather than asked — skipping straight to the
@@ -35,7 +62,7 @@ export async function findMerchantByPhoneNumber(prisma: PrismaClient, phoneNumbe
  * on one).
  */
 export async function startOnboarding(prisma: PrismaClient, phoneNumber: string): Promise<OnboardingStepResult> {
-  const country = getCountryByPhoneNumber(phoneNumber);
+  const country = resolveOnboardingCountry(phoneNumber);
   if (!country) {
     throw new UnsupportedCountryError(`No supported country matches phone number ${phoneNumber}.`);
   }

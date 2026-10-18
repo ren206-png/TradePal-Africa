@@ -3,6 +3,8 @@ import type { PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
 import {
   OutboundSendRefusedError,
+  UNSUPPORTED_COUNTRY_NOTICE_BODY,
+  sendUnsupportedCountryNotice,
   sendWhatsAppTemplateMessage,
   sendWhatsAppTextMessage,
 } from "../src/whatsapp/outboundGateway.js";
@@ -250,5 +252,37 @@ describe("testRecipientTrunkPrefixCallingCodes workaround", () => {
 
     const body = JSON.parse((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body as string);
     expect(body.to).toBe("232080462524");
+  });
+});
+
+describe("sendUnsupportedCountryNotice", () => {
+  it("sends only the fixed notice, to a number outside the launch countries", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "x" }] }), { status: 200 }));
+    await sendUnsupportedCountryNotice({ prisma, accessToken: "t", phoneNumberId: "pn", fetchImpl }, "19995550100");
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body.to).toBe("19995550100");
+    expect(body.type).toBe("text");
+    expect(body.text.body).toBe(UNSUPPORTED_COUNTRY_NOTICE_BODY);
+  });
+
+  it("refuses a number in a supported country, so it can never reach another country's shops or customers", async () => {
+    const fetchImpl = vi.fn();
+    await expect(
+      sendUnsupportedCountryNotice({ prisma, accessToken: "t", phoneNumberId: "pn", fetchImpl }, "2348099999999"),
+    ).rejects.toThrow(OutboundSendRefusedError);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("refuses a number that is a registered merchant", async () => {
+    const fetchImpl = vi.fn();
+    await prisma.merchant.create({
+      data: { businessId: (await prisma.business.findFirstOrThrow()).id, phoneNumber: "19995550101", onboardingStep: "COMPLETE" },
+    });
+    await expect(
+      sendUnsupportedCountryNotice({ prisma, accessToken: "t", phoneNumberId: "pn", fetchImpl }, "19995550101"),
+    ).rejects.toThrow(OutboundSendRefusedError);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

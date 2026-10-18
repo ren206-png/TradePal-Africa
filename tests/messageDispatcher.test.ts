@@ -20,6 +20,8 @@ import { getTenantScopedClient } from "../src/db/tenantScope.js";
 import { setFeatureFlagForBusiness } from "../src/domain/featureFlags.js";
 import { BILLING_QUOTA_FEATURE_FLAG_KEY } from "../src/domain/billing.js";
 import { commitAiUsage } from "../src/domain/aiUsageLedger.js";
+import { UNSUPPORTED_COUNTRY_NOTICE_BODY } from "../src/whatsapp/outboundGateway.js";
+import { resetUnsupportedCountryNoticeLimiterForTests } from "../src/whatsapp/unsupportedCountryNotice.js";
 
 // Wraps (does not replace) the real commitAiUsage so one test can make it fail once, simulating a
 // ledger-write DB blip that happens AFTER a successful, billed DeepSeek call.
@@ -424,16 +426,48 @@ describe("dispatchInboundMessage", () => {
     expect(consentLogs).toHaveLength(2);
   });
 
-  it("silently drops the reply for an unsupported-country number, still marking the webhook processed", async () => {
+  it("answers an unsupported-country number once with the fixed notice, creating no merchant and storing no message, and still marks the webhook processed", async () => {
+    resetUnsupportedCountryNoticeLimiterForTests();
     const fromNumber = "19995550001"; // +1, not one of the six launch countries
     const job = await storeInboundTextMessage({ waMessageId: "wamid.UNSUPPORTED.1", fromNumber, text: "hi" });
     const { deps, fetchImpl } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
 
     await dispatchInboundMessage(deps, job);
 
-    expect(fetchImpl).not.toHaveBeenCalled();
-    const merchant = await prisma.merchant.findUnique({ where: { phoneNumber: fromNumber } });
-    expect(merchant).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(sent.text.body).toBe(UNSUPPORTED_COUNTRY_NOTICE_BODY);
+    expect(sent.text.body).toMatch(/isn't available in your country yet/);
+    expect(await prisma.merchant.findUnique({ where: { phoneNumber: fromNumber } })).toBeNull();
+    expect(await prisma.whatsAppMessage.count({ where: { OR: [{ fromNumber }, { toNumber: fromNumber }] } })).toBe(0);
+
+    const webhookEvent = await prisma.webhookEvent.findUniqueOrThrow({ where: { id: job.webhookEventId } });
+    expect(webhookEvent.status).toBe("PROCESSED");
+  });
+
+  it("does not repeat the unsupported-country notice to the same number within a day", async () => {
+    resetUnsupportedCountryNoticeLimiterForTests();
+    const fromNumber = "19995550002";
+    const { deps, fetchImpl } = buildDeps(fakeProvider({ intent: "GREETING", confidence: 0.9 }));
+
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.UNSUPPORTED.2a", fromNumber, text: "hi" }));
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: "wamid.UNSUPPORTED.2b", fromNumber, text: "hello?" }));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("still marks the webhook processed when the unsupported-country notice itself fails to send", async () => {
+    resetUnsupportedCountryNoticeLimiterForTests();
+    const fromNumber = "19995550003";
+    const job = await storeInboundTextMessage({ waMessageId: "wamid.UNSUPPORTED.3", fromNumber, text: "hi" });
+    const failingFetch = vi.fn().mockResolvedValue(new Response("boom", { status: 500 }));
+    const deps: DispatcherDeps = {
+      prisma,
+      aiProvider: fakeProvider({ intent: "GREETING", confidence: 0.9 }),
+      outboundGateway: { accessToken: "test-token", phoneNumberId: "pn-1", fetchImpl: failingFetch },
+    };
+
+    await dispatchInboundMessage(deps, job);
 
     const webhookEvent = await prisma.webhookEvent.findUniqueOrThrow({ where: { id: job.webhookEventId } });
     expect(webhookEvent.status).toBe("PROCESSED");

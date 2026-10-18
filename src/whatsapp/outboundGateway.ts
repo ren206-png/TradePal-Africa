@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { SUPPORTED_COUNTRIES, getCountryByPhoneNumber } from "../config/countries.js";
 
 export class OutboundSendRefusedError extends Error {}
 
@@ -167,5 +168,37 @@ export async function sendWhatsAppTemplateMessage(
       language: { code: message.templateLanguageCode },
       ...(components.length > 0 ? { components } : {}),
     },
+  });
+}
+
+/** The one fixed reply sent to someone outside the launch countries who messages TradePal first. */
+export const UNSUPPORTED_COUNTRY_NOTICE_BODY = `TradePal Africa isn't available in your country yet. We're currently open to shop owners in ${SUPPORTED_COUNTRIES.map((c) => c.name).join(", ")}. Thanks for your interest!`;
+
+/**
+ * The ONE deliberate exception to the registered-merchant guard above (Standard #9), narrowly
+ * scoped so it can't become a way to message anyone: it sends only the fixed
+ * UNSUPPORTED_COUNTRY_NOTICE_BODY (no caller-supplied text), only to a number that is NOT in a
+ * launch country (so it can never reach a merchant's customers in a country TradePal serves),
+ * and only as a free-form reply to someone who has just messaged us first (the 24-hour service
+ * window), so nothing is ever sent unprompted. Nothing is stored about the recipient.
+ */
+export async function sendUnsupportedCountryNotice(deps: OutboundGatewayDeps, toPhoneNumber: string): Promise<void> {
+  if (getCountryByPhoneNumber(toPhoneNumber)) {
+    throw new OutboundSendRefusedError(
+      `Refusing to send the unsupported-country notice to '${toPhoneNumber}': it is in a supported country.`,
+    );
+  }
+  const merchant = await deps.prisma.merchant.findUnique({ where: { phoneNumber: toPhoneNumber } });
+  if (merchant) {
+    throw new OutboundSendRefusedError(
+      `Refusing to send the unsupported-country notice to '${toPhoneNumber}': it is a registered merchant number.`,
+    );
+  }
+
+  await postToGraphApi(deps, {
+    messaging_product: "whatsapp",
+    to: toPhoneNumber,
+    type: "text",
+    text: { body: UNSUPPORTED_COUNTRY_NOTICE_BODY },
   });
 }
