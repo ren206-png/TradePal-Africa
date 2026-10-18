@@ -2,14 +2,17 @@
 import { SITE, whatsappCtaHref } from "../lib/site";
 import Logo from "./Logo.astro";
 
-// One entry per chat bubble; `from: "me"` is the shop owner, `"bot"` is TradePal.
+// One entry per chat bubble; `from: "me"` is the shop owner, `"bot"` is TradePal. The bot lines are
+// copied from its real replies (see tests/signupJourney.test.ts) so the demo never over-promises.
 const chat = [
   { from: "me", text: "sold 2 bags of rice for 12000", time: "9:41" },
-  { from: "bot", text: "Logged: Sale of ₦12,000.00. Nice one! 🎉", time: "9:41" },
+  { from: "bot", text: "Logged sale of 12000.00 NGN.", time: "9:41" },
   { from: "me", text: "/today", time: "9:42" },
-  { from: "bot", text: "Today (Africa/Lagos):\nSales: 12,000.00\nExpenses: 0.00\nNet: 12,000.00", time: "9:42" },
-  { from: "me", text: "/paylink Amina 5000", time: "9:43" },
-  { from: "bot", text: "Send this link to Amina to collect ₦5,000.00 👇", time: "9:43" },
+  {
+    from: "bot",
+    text: "Today (Africa/Lagos):\nTransactions: 1\nSales: 12000.00 NGN\nExpenses: 0.00 NGN\nPayments received: 0.00 NGN\nNet: 12000.00 NGN",
+    time: "9:42",
+  },
 ] as const;
 ---
 
@@ -102,7 +105,7 @@ const chat = [
           </div>
 
           <!-- messages -->
-          <div class="space-y-2.5 px-3 pb-14 pt-4" style="min-height: 27rem;">
+          <div class="space-y-2.5 px-3 pb-14 pt-4" style="min-height: 24rem;">
             {
               chat.map((m, i) => (
                 <div class:list={["bubble flex", m.from === "me" ? "justify-end" : "justify-start"]} style={`--i:${i}`}>

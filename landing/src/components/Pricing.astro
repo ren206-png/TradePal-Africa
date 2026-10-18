@@ -21,14 +21,14 @@ const plans = [
     name: "Starter",
     price: "₦5,000",
     period: "/month",
-    description: "For a shop that's outgrown the free plan and wants voice notes too.",
+    description: "For a shop that's outgrown the free plan. Paid plans open soon; everyone starts free today.",
     features: [
       "Up to 1,000 entries a month",
       "Everything in Free",
-      "Voice note logging (where supported)",
+      "Voice note logging (coming soon)",
       "Priority support",
     ],
-    cta: "Upgrade on WhatsApp",
+    cta: "Start free for now",
     highlighted: true,
   },
 ];
@@ -62,7 +62,7 @@ const plans = [
               <h3 class="font-mono text-sm font-semibold uppercase tracking-[0.22em]">{plan.name}</h3>
               {plan.highlighted && (
                 <span class="rounded-full bg-saffron px-3 py-1 text-[0.65rem] font-extrabold uppercase tracking-[0.14em] text-ink">
-                  For growing shops
+                  Coming soon
                 </span>
               )}
             </div>

@@ -1,5 +1,7 @@
 ---
 interface Feature {
+  /** Not switched on yet; shown with a "Coming soon" tag so the page never over-promises. */
+  soon?: boolean;
   command: string;
   title: string;
   description: string;
@@ -22,21 +24,25 @@ const features: Feature[] = [
     description: "Keep an estimated running count of what's on your shelf and get a heads-up before an item runs out.",
   },
   {
+    soon: true,
     command: "/paylink",
     title: "Payment links",
     description: "Generate a one-off checkout link for any customer and forward it yourself. They pay by card or mobile money.",
   },
   {
+    soon: true,
     command: "/catalog",
     title: "Shareable catalog",
     description: "List every priced item as one block of text you can forward to a customer, ready to shop from.",
   },
   {
+    soon: true,
     command: "/momo",
     title: "Mobile money reconciliation",
     description: "Forward the mobile money SMS alert and get it automatically matched to the right sale or payment.",
   },
   {
+    soon: true,
     command: "/addstaff, /removestaff",
     title: "Team access",
     description: "Add other WhatsApp numbers so staff can log sales themselves, and revoke access the moment they leave.",
@@ -73,7 +79,14 @@ const features: Feature[] = [
           <li class="group flex gap-5 border-b-2 border-dotted border-paper/20 py-8">
             <span class="pt-1 font-mono text-sm font-semibold text-saffron/80">{String(i + 1).padStart(2, "0")}</span>
             <div class="min-w-0">
-              <h3 class="display text-2xl font-semibold transition group-hover:text-saffron">{feature.title}</h3>
+              <h3 class="display text-2xl font-semibold transition group-hover:text-saffron">
+                {feature.title}
+                {feature.soon && (
+                  <span class="ml-2 inline-block -translate-y-0.5 rounded-full border border-paper/30 px-2.5 py-0.5 align-middle font-sans text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-paper/70">
+                    Coming soon
+                  </span>
+                )}
+              </h3>
               <p class="mt-2 text-[0.95rem] leading-relaxed text-paper/70">{feature.description}</p>
               <code class="mt-4 inline-block rounded-md border border-saffron/40 bg-saffron/10 px-2.5 py-1 font-mono text-xs font-semibold text-saffron">
                 {feature.command}
