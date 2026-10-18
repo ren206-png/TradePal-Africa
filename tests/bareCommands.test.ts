@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchBareCommand, withinOneEdit } from "../src/commands/bareCommands.js";
+import { isUndoTypo, matchBareCommand, withinOneEdit } from "../src/commands/bareCommands.js";
 
 describe("withinOneEdit", () => {
   it("accepts one substituted, missing, extra or swapped letter, and nothing further", () => {
@@ -73,6 +73,15 @@ describe("matchBareCommand", () => {
       "",
     ]) {
       expect(matchBareCommand(text), text).toBeNull();
+    }
+  });
+});
+
+describe("isUndoTypo", () => {
+  it("flags a one-letter slip of 'undo' so the bot can ask, but never the exact word or unrelated words", () => {
+    for (const typed of ["unto", "udno", "undoo", "udo", "und"]) expect(isUndoTypo(typed), typed).toBe(true);
+    for (const typed of ["undo", "Undo", "undo!", "hello", "today", "unread", "sold 2 bread", "ok"]) {
+      expect(isUndoTypo(typed), typed).toBe(false);
     }
   });
 });

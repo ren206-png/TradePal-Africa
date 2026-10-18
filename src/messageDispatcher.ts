@@ -7,7 +7,7 @@ import { isFeatureEnabled } from "./domain/featureFlags.js";
 import { DebtOverpaymentError } from "./domain/debtBook.js";
 import { formatMoney } from "./domain/money.js";
 import { parseListMessage, type ListSection, type ParsedList } from "./ai/listEntry.js";
-import { matchBareCommand } from "./commands/bareCommands.js";
+import { isUndoTypo, matchBareCommand, UNDO_CONFIRM_REPLY } from "./commands/bareCommands.js";
 import { recordAiParseLog } from "./ai/logParse.js";
 import { buildAiParseResult, parseTransactionText, type AiParseResult } from "./ai/parse.js";
 import { isAiProviderConfigurationError, type AiProvider } from "./ai/provider.js";
@@ -716,6 +716,11 @@ async function dispatchCommandOrParse(
   // See commands/bareCommands.ts for exactly what is (and deliberately isn't) matched.
   const bare = matchBareCommand(text);
   if (bare) text = bare;
+  else if (isUndoTypo(text)) {
+    // A near-miss of "undo" is never acted on (an undo can't itself be undone); ask for the exact word.
+    await reply(deps, merchant.phoneNumber, UNDO_CONFIRM_REPLY);
+    return;
+  }
 
   if (text.trim().startsWith("/")) {
     let replyText: string;

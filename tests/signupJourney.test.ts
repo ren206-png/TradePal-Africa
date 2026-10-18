@@ -316,4 +316,13 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
     expect(withOverdue).toContain("Who owes you: 1250.00 SLE across 3 customers");
     expect(withOverdue).toContain("Kamara: 500.00 SLE (overdue since 2020-01-01)");
   });
+
+  it("asks before undoing when 'undo' is mistyped, and takes nothing back until the exact word is sent", async () => {
+    await say("Temp expense: sold 1 bread for 100");
+    const before = await prisma.transaction.count();
+    expect(await say("unto")).toBe('Did you mean "undo"? To take back your last entry, send exactly: undo');
+    expect(await prisma.transaction.count()).toBe(before);
+    expect(await say("undo")).toMatch(/^Undone:/);
+    expect(await prisma.transaction.count()).toBe(before + 1); // the reversal row
+  });
 });

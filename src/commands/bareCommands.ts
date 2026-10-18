@@ -77,3 +77,15 @@ export function matchBareCommand(text: string): string | null {
 function sameLetters(a: string, b: string): boolean {
   return [...a].sort().join("") === [...b].sort().join("");
 }
+
+/**
+ * True for a single word one slipped letter away from "undo" ("udno", "undoo", "unto") but not "undo"
+ * itself. These never run the undo, which reverses an entry and can't itself be reversed; the dispatcher
+ * answers with UNDO_CONFIRM_REPLY so the owner can resend the exact word.
+ */
+export function isUndoTypo(text: string): boolean {
+  const message = text.trim().toLowerCase().replace(/[?!.]+$/, "").trim();
+  return /^[a-z]{3,5}$/.test(message) && message !== "undo" && withinOneEdit(message, "undo");
+}
+
+export const UNDO_CONFIRM_REPLY = 'Did you mean "undo"? To take back your last entry, send exactly: undo';
