@@ -220,4 +220,27 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
     expect(stock).not.toContain("-2");
     expect(stock).toContain('bought 10 bags of rice for 5000');
   });
+
+  it("puts the stock back when a sale is undone, so undoing doesn't leave the shelf count wrong", async () => {
+    // Previous test left rice at -2 ("2 sold"). Sell 2 more, then undo that sale.
+    activeParser = {
+      parseTransactionText: async () => ({
+        intent: "SALE",
+        amountMinor: 120_000,
+        paymentStatus: "PAID",
+        items: [{ itemName: "bags of rice", quantity: 2, unitPriceMinor: 60_000 }],
+        confidence: 0.95,
+      }),
+    };
+    try {
+      await say("sold 2 bags of rice for 1200");
+      expect(await say("stock")).toContain("(4 sold)");
+      expect(await say("undo")).toMatch(/^Undone: SALE/);
+    } finally {
+      activeParser = saleParser;
+    }
+    const stock = await say("stock");
+    expect(stock).toContain("bags of rice: no stock recorded yet (2 sold)");
+    expect(stock).not.toContain("(4 sold)");
+  });
 });

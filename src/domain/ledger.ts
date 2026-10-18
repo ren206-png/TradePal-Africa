@@ -1,5 +1,6 @@
 import type { PaymentStatus, Transaction, TransactionType } from "@prisma/client";
 import type { TenantScopedClient } from "../db/tenantScope.js";
+import { applyStockMovement } from "./inventory.js";
 
 export class TransactionAlreadyReversedError extends Error {}
 
@@ -86,7 +87,7 @@ export async function reverseTransaction(
     );
   }
 
-  return scopedPrisma.transaction.create({
+  const reversal = await scopedPrisma.transaction.create({
     data: {
       businessId: original.businessId,
       type: original.type,
@@ -99,4 +100,16 @@ export async function reverseTransaction(
       reversalOfTransactionId: original.id,
     },
   });
+
+  // Undoing a sale or purchase must also undo what it did to stock: put back (or take back) exactly the
+  // quantities the original moved, as new ADJUSTMENT movements tied to the reversal. Without this the
+  // money nets to zero but the stock count stays permanently wrong (seen live: undo of a 2-bag sale left
+  // the shelf count at -2).
+  const movements = await scopedPrisma.inventoryMovement.findMany({ where: { transactionId: original.id } });
+  for (const movement of movements) {
+    const item = await scopedPrisma.inventoryItem.findUniqueOrThrow({ where: { id: movement.inventoryItemId } });
+    await applyStockMovement(scopedPrisma, original.businessId, item, -movement.quantityDelta, "ADJUSTMENT", reversal.id);
+  }
+
+  return reversal;
 }
