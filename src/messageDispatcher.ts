@@ -7,6 +7,7 @@ import { isFeatureEnabled } from "./domain/featureFlags.js";
 import { DebtOverpaymentError } from "./domain/debtBook.js";
 import { formatMoney } from "./domain/money.js";
 import { parseListMessage, type ListSection, type ParsedList } from "./ai/listEntry.js";
+import { matchBareCommand } from "./commands/bareCommands.js";
 import { recordAiParseLog } from "./ai/logParse.js";
 import { buildAiParseResult, parseTransactionText, type AiParseResult } from "./ai/parse.js";
 import { isAiProviderConfigurationError, type AiProvider } from "./ai/provider.js";
@@ -588,15 +589,6 @@ function replyForParseResult(result: AiParseResult, stockTrackingEnabled: boolea
   return { replyText: CLARIFICATION_REPLY, finalAction: "REJECTED" };
 }
 
-/** Argument-free commands that also work typed without the leading slash. */
-const BARE_COMMAND_WORDS: ReadonlySet<string> = new Set(["today", "stock", "lowstock", "help", "undo", "debts"]);
-/**
- * Other things a shop owner types to mean "show me who owes me" (a real owner typed just "Debt" while
- * testing). A lone "debt" can't be a new entry — that needs a name and amount — so the overview is
- * the helpful answer, not the /debt usage message.
- */
-const DEBTS_OVERVIEW_PHRASES: ReadonlySet<string> = new Set(["debt", "owing", "who owes me", "who owes me?", "who owes", "debtors"]);
-
 /**
  * Applies a list message (see ai/listEntry.ts) through the same applyLoggableIntent path single
  * entries use: all Sale lines become ONE sale with line items, and each Debt / Expense / Payment line
@@ -719,13 +711,11 @@ async function dispatchCommandOrParse(
   });
   const scopedPrisma = getTenantScopedClient(deps.prisma, business.id);
 
-  // Shop owners on a phone often type just the word ("Today", "Stock", "help") — treat those few
-  // unambiguous, argument-free command words as the slash command rather than sending them to the AI parser.
-  const bareCommand = text.trim().toLowerCase();
-  if (BARE_COMMAND_WORDS.has(bareCommand)) text = `/${bareCommand}`;
-  else if (DEBTS_OVERVIEW_PHRASES.has(bareCommand)) text = "/debts";
-  // "remind Amina" is likewise unambiguous: the verb "remind" plus a name can't be a sale or expense.
-  else if (/^remind\s+\S/i.test(text.trim())) text = `/${text.trim()}`;
+  // Shop owners on a phone often type just the word, with a slip of the finger ("Today", "stok", "debst",
+  // "remnd Amina"): a few unambiguous read-only commands work without the slash and with one wrong letter.
+  // See commands/bareCommands.ts for exactly what is (and deliberately isn't) matched.
+  const bare = matchBareCommand(text);
+  if (bare) text = bare;
 
   if (text.trim().startsWith("/")) {
     let replyText: string;

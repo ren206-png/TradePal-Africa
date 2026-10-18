@@ -300,7 +300,8 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
 
   it("shows everyone who owes the shop with /debts (or just 'debts'), biggest first, and flags an overdue one", async () => {
     // The list test above left Manager 650.00 and Terror 100.00 outstanding.
-    // A real owner typed just "Debt" while testing; that and similar phrases mean the same overview.
+    // A real owner typed just "Debt" while testing; that, similar phrases and a slipped letter mean the same overview.
+    expect(await say("debst")).toContain("Who owes you: 750.00 SLE across 2 customers");
     expect(await say("Debt")).toContain("Who owes you: 750.00 SLE across 2 customers");
     expect(await say("who owes me?")).toContain("Who owes you: 750.00 SLE across 2 customers");
     const overview = await say("Debts");
