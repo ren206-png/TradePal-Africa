@@ -70,6 +70,7 @@ const saleParser: AiProvider = {
   }),
 };
 
+let activeParser: AiProvider = saleParser;
 let messageCounter = 0;
 
 /** Sends one inbound WhatsApp text and returns the text TradePal replied with. */
@@ -105,7 +106,7 @@ async function say(text: string): Promise<string> {
   const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.OUT" }] }), { status: 200 }));
   const deps: DispatcherDeps = {
     prisma,
-    aiProvider: saleParser,
+    aiProvider: activeParser,
     outboundGateway: { accessToken: "test-token", phoneNumberId: "pn-1", fetchImpl },
   };
   await dispatchInboundMessage(deps, job);
@@ -174,11 +175,49 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
     expect(await say("/remind Amina")).toMatch(/isn't available/i);
   });
 
+  it("lists in /help only the commands that are actually switched on for the shop", async () => {
+    const help = await say("/help");
+    for (const on of ["/debt", "/paid", "/customer", "/today", "/undo", "/help"]) expect(help).toContain(on);
+    for (const off of ["/stock", "/remind", "/momo", "/addstaff", "/upgrade", "/paylink", "/collect", "/catalog", "/setprice", "/usage"]) {
+      expect(help).not.toContain(off);
+    }
+    expect(help).not.toMatch(/if enabled for your account/);
+    expect(help).toContain("in plain language");
+  });
+
   it("offers stock tracking and reminders to every shop once their global default is on", async () => {
     await setFeatureFlagGlobalDefault(prisma, "stockTracking", true);
     await setFeatureFlagGlobalDefault(prisma, "reminders", true);
 
     expect(await say("/stock")).not.toMatch(/isn't available/i);
     expect(await say("/remind Amina")).not.toMatch(/isn't available/i);
+  });
+
+  it("adds stock and reminders to /help once they are switched on", async () => {
+    const help = await say("/help");
+    expect(help).toContain("/stock");
+    expect(help).toContain("/remind");
+    expect(help).not.toContain("/paylink");
+  });
+
+  it("shows an item that was sold but never stocked as 'no stock recorded yet', not a negative number", async () => {
+    activeParser = {
+      parseTransactionText: async () => ({
+        intent: "SALE",
+        amountMinor: 120_000,
+        paymentStatus: "PAID",
+        items: [{ itemName: "bags of rice", quantity: 2, unitPriceMinor: 60_000 }],
+        confidence: 0.95,
+      }),
+    };
+    try {
+      await say("sold 2 bags of rice for 1200");
+    } finally {
+      activeParser = saleParser;
+    }
+    const stock = await say("stock");
+    expect(stock).toContain("bags of rice: no stock recorded yet (2 sold)");
+    expect(stock).not.toContain("-2");
+    expect(stock).toContain('bought 10 bags of rice for 5000');
   });
 });

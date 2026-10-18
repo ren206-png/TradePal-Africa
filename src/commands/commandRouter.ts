@@ -109,30 +109,49 @@ export interface CommandContext {
   pawapay?: PawaPayDeps | undefined;
 }
 
-const HELP_TEXT = [
-  "Available commands:",
-  "/debt <name> <amount> [due YYYY-MM-DD] - record a customer's debt",
-  "/paid <name> <amount> - record a payment against a customer's open debts",
-  "/customer <name> - show what a customer currently owes",
-  "/remind <name> - get reminder text to forward to a customer with open debt (if enabled for your account)",
-  "/momo <forwarded SMS text> - log a mobile money alert and try to match it to a payment (if enabled for your account)",
-  "/confirmmomo <id> - confirm a suggested mobile money match",
-  "/rejectmomo <id> - reject a suggested mobile money match",
-  "/usage - show how many entries you've logged this month and your plan's monthly limit (if enabled for your account)",
-  "/today - show today's sales, expenses, and payments",
-  "/undo - reverse the most recent transaction",
-  "/addstaff <phone> - let another WhatsApp number log entries for your business too (owner only, if enabled for your account)",
-  "/removestaff <phone> - revoke a staff number's access (owner only, if enabled for your account)",
-  "/stock - show current estimated stock levels (if enabled for your account)",
-  "/lowstock <item name> <threshold|off> - set (or clear with \"off\") a low-stock alert threshold for an item (if enabled for your account)",
-  "/forgetcustomer <name> - submit a customer's data-deletion request for review (if enabled for your account)",
-  "/upgrade <plan code> - get a payment link to subscribe to a paid plan (owner only, if enabled for your account)",
-  "/setprice <item name> <amount> - set the sale price for an item (if enabled for your account)",
-  "/paylink <customer name> <amount> - get a payment link to forward to a customer (if enabled for your account)",
-  "/collect <customer name> <amount> <customer mobile-money number> - ask a customer to pay by mobile money; they get a prompt on their phone (if enabled for your account)",
-  "/catalog - list your priced items as text to forward to a customer (if enabled for your account)",
-  "/help - show this message",
-].join("\n");
+/**
+ * One entry per command. `flag` is the feature flag that switches it on for a business; entries without
+ * one are always available. /help only lists what is actually on for the asking business, so it stays
+ * short and never advertises a command that would just answer "isn't available for your account yet".
+ */
+const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
+  { line: "/debt <name> <amount> [due YYYY-MM-DD] - record a customer's debt" },
+  { line: "/paid <name> <amount> - record a payment against a customer's open debts" },
+  { line: "/customer <name> - show what a customer currently owes" },
+  { flag: REMINDERS_FEATURE_FLAG_KEY, line: "/remind <name> - get reminder text to forward to a customer with open debt" },
+  { flag: MOBILE_MONEY_FEATURE_FLAG_KEY, line: "/momo <forwarded SMS text> - log a mobile money alert and try to match it to a payment" },
+  { flag: MOBILE_MONEY_FEATURE_FLAG_KEY, line: "/confirmmomo <id> - confirm a suggested mobile money match" },
+  { flag: MOBILE_MONEY_FEATURE_FLAG_KEY, line: "/rejectmomo <id> - reject a suggested mobile money match" },
+  { flag: BILLING_QUOTA_FEATURE_FLAG_KEY, line: "/usage - show how many entries you've logged this month and your plan's monthly limit" },
+  { line: "/today - show today's sales, expenses, and payments" },
+  { line: "/undo - reverse the most recent transaction" },
+  { flag: STAFF_ACCOUNTS_FEATURE_FLAG_KEY, line: "/addstaff <phone> - let another WhatsApp number log entries for your business too (owner only)" },
+  { flag: STAFF_ACCOUNTS_FEATURE_FLAG_KEY, line: "/removestaff <phone> - revoke a staff number's access (owner only)" },
+  { flag: STOCK_TRACKING_FEATURE_FLAG_KEY, line: "/stock - show current estimated stock levels" },
+  { flag: STOCK_TRACKING_FEATURE_FLAG_KEY, line: '/lowstock <item name> <threshold|off> - set (or clear with "off") a low-stock alert threshold for an item' },
+  { flag: CUSTOMER_DELETION_REQUESTS_FEATURE_FLAG_KEY, line: "/forgetcustomer <name> - submit a customer's data-deletion request for review" },
+  { flag: PAYMENT_COLLECTION_FEATURE_FLAG_KEY, line: "/upgrade <plan code> - get a payment link to subscribe to a paid plan (owner only)" },
+  { flag: CUSTOMER_PAYMENT_LINKS_FEATURE_FLAG_KEY, line: "/setprice <item name> <amount> - set the sale price for an item" },
+  { flag: CUSTOMER_PAYMENT_LINKS_FEATURE_FLAG_KEY, line: "/paylink <customer name> <amount> - get a payment link to forward to a customer" },
+  {
+    flag: CUSTOMER_PAYMENT_LINKS_FEATURE_FLAG_KEY,
+    line: "/collect <customer name> <amount> <customer mobile-money number> - ask a customer to pay by mobile money; they get a prompt on their phone",
+  },
+  { flag: CUSTOMER_PAYMENT_LINKS_FEATURE_FLAG_KEY, line: "/catalog - list your priced items as text to forward to a customer" },
+  { line: "/help - show this message" },
+];
+
+const HELP_PLAIN_LANGUAGE_TIP = 'You can also just tell me about a sale, expense or debt in plain language, e.g. "sold 2 bread for 500".';
+
+async function buildHelpText(ctx: CommandContext): Promise<string> {
+  const flags = new Set(HELP_ENTRIES.flatMap((entry) => (entry.flag ? [entry.flag] : [])));
+  const enabledFlags = new Set<string>();
+  for (const flag of flags) {
+    if (await isFeatureEnabled(ctx.scopedPrisma, ctx.businessId, flag)) enabledFlags.add(flag);
+  }
+  const lines = HELP_ENTRIES.filter((entry) => !entry.flag || enabledFlags.has(entry.flag)).map((entry) => entry.line);
+  return ["Available commands:", ...lines, "", HELP_PLAIN_LANGUAGE_TIP].join("\n");
+}
 
 /**
  * Splits "<name...> <amount>" command bodies where the name may itself
@@ -526,11 +545,16 @@ async function handleStock(ctx: CommandContext): Promise<string> {
 
   const lines = items.map((item) => {
     const unitSuffix = item.unit ? ` ${item.unit}` : "";
+    // Selling an item that was never stocked drives the running count below zero; show what really
+    // happened instead of a confusing negative number.
+    if (item.estimatedStockQty < 0) return `${item.name}: no stock recorded yet (${-item.estimatedStockQty}${unitSuffix} sold)`;
     const lowStockSuffix = item.isLowStock ? " (LOW STOCK)" : "";
     return `${item.name}: ${item.estimatedStockQty}${unitSuffix}${lowStockSuffix}`;
   });
 
-  return ["Estimated stock levels:", ...lines].join("\n");
+  const hasUnstocked = items.some((item) => item.estimatedStockQty < 0);
+  const tip = hasUnstocked ? ['', 'To add stock, tell me what you bought, e.g. "bought 10 bags of rice for 5000".'] : [];
+  return ["Estimated stock levels:", ...lines, ...tip].join("\n");
 }
 
 /**
@@ -875,8 +899,8 @@ export async function handleCommand(ctx: CommandContext, rawText: string): Promi
     case "/catalog":
       return handleCatalog(ctx);
     case "/help":
-      return HELP_TEXT;
+      return buildHelpText(ctx);
     default:
-      return `Unrecognized command "${command}". ${HELP_TEXT}`;
+      return `Unrecognized command "${command}". ${await buildHelpText(ctx)}`;
   }
 }
