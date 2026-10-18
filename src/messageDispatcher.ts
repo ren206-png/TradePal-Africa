@@ -4,6 +4,9 @@ import { applyLoggableIntent, type LoggableParsedIntent } from "./ai/applyParsed
 import { assertWithinQuotaIfEnabled, getEffectivePlan, QuotaExceededError } from "./domain/billing.js";
 import { evaluateAiBudget } from "./domain/aiBudget.js";
 import { isFeatureEnabled } from "./domain/featureFlags.js";
+import { DebtOverpaymentError } from "./domain/debtBook.js";
+import { formatMoney } from "./domain/money.js";
+import { parseListMessage, type ListSection, type ParsedList } from "./ai/listEntry.js";
 import { recordAiParseLog } from "./ai/logParse.js";
 import { buildAiParseResult, parseTransactionText, type AiParseResult } from "./ai/parse.js";
 import { isAiProviderConfigurationError, type AiProvider } from "./ai/provider.js";
@@ -150,7 +153,28 @@ const STOCK_ADJUSTMENT_UNSUPPORTED_REPLY =
 const GREETING_REPLY = "Hello! Tell me about a sale, expense, or debt in plain language, or type /help to see commands.";
 const QUERY_REPLY = "Try /today for today's summary or /customer <name> to see what someone owes.";
 const CLARIFICATION_REPLY =
-  'I couldn\'t confidently understand that. Try rephrasing, e.g. "sold 2 bread for 500" or "paid 3000 to supplier".';
+  'I couldn\'t confidently understand that. Try rephrasing, e.g. "sold 2 bread for 500" or "spent 3000 on transport".';
+/**
+ * Shown instead of CLARIFICATION_REPLY when a multi-line message could not be read as a list (see
+ * ai/listEntry.ts): a real shop owner sent a whole day's sales and debts in one message and only got
+ * the generic reply, with no hint how to send it.
+ */
+const MULTILINE_CLARIFICATION_REPLY = [
+  "I couldn't read that list. To send several entries at once, start with a heading line (Sale, Debt, Expense or Payment) and put each entry on its own line, ending with the amount:",
+  "",
+  "Sale",
+  "Sneakers 2 pair =1200",
+  "Bread 3 =300",
+  "Debt",
+  "Manager =650",
+  "",
+  'Or send one entry per message, e.g. "sold 2 sneakers 1200".',
+].join("\n");
+const LIST_ALREADY_RECORDED_REPLY = "I've already recorded that list, so I haven't added it again.";
+
+function countNonEmptyLines(text: string): number {
+  return text.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+}
 /**
  * Shown instead of CLARIFICATION_REPLY specifically when the AI provider
  * call was skipped or failed (see parseWithCircuitBreaker below) — a
@@ -567,6 +591,116 @@ function replyForParseResult(result: AiParseResult, stockTrackingEnabled: boolea
 /** Argument-free commands that also work typed without the leading slash. */
 const BARE_COMMAND_WORDS: ReadonlySet<string> = new Set(["today", "stock", "lowstock", "help", "undo"]);
 
+/**
+ * Applies a list message (see ai/listEntry.ts) through the same applyLoggableIntent path single
+ * entries use: all Sale lines become ONE sale with line items, and each Debt / Expense / Payment line
+ * its own entry. Replies with a summary of what was saved and which lines were skipped. A message
+ * that already produced entries (a re-driven webhook) is never applied twice.
+ */
+async function handleListMessage(
+  deps: DispatcherDeps,
+  merchant: Merchant,
+  business: { id: string; name: string; currencyCode: string; timezone: string; currency: { minorUnitExp: number } },
+  scopedPrisma: TenantScopedClient,
+  list: ParsedList,
+  whatsappMessageId: string,
+): Promise<void> {
+  if ((await scopedPrisma.transaction.count({ where: { whatsappMessageId } })) > 0) {
+    await reply(deps, merchant.phoneNumber, LIST_ALREADY_RECORDED_REPLY);
+    return;
+  }
+
+  const exp = business.currency.minorUnitExp;
+  const money = (amountMinor: bigint): string => `${formatMoney(amountMinor, exp)} ${business.currencyCode}`;
+  const stockTrackingEnabled = list.entries.some((e) => e.section === "SALE")
+    ? await isFeatureEnabled(scopedPrisma, business.id, STOCK_TRACKING_FEATURE_FLAG_KEY)
+    : false;
+  const ctx = {
+    scopedPrisma,
+    businessId: business.id,
+    currencyCode: business.currencyCode,
+    minorUnitExp: exp,
+    whatsappMessageId,
+    stockTrackingEnabled,
+    businessName: business.name,
+  };
+
+  const summary: string[] = [];
+  const skipped = [...list.unreadable];
+  let stoppedBy: string | null = null;
+
+  const apply = async (intent: LoggableParsedIntent, skippedLabel: string): Promise<boolean> => {
+    if (stoppedBy) {
+      skipped.push(skippedLabel);
+      return false;
+    }
+    try {
+      await assertWithinQuotaIfEnabled(scopedPrisma, business.id, business.timezone);
+      await applyLoggableIntent(ctx, intent);
+      return true;
+    } catch (error) {
+      if (error instanceof QuotaExceededError) {
+        stoppedBy = error.message;
+        skipped.push(skippedLabel);
+        return false;
+      }
+      if (error instanceof DebtOverpaymentError) {
+        skipped.push(`${skippedLabel} (more than they owe, or no open debt)`);
+        return false;
+      }
+      throw error;
+    }
+  };
+
+  const sales = list.entries.filter((e) => e.section === "SALE");
+  if (sales.length > 0) {
+    const total = sales.reduce((sum, e) => sum + e.amountMinor, 0n);
+    const done = await apply(
+      {
+        intent: "SALE",
+        confidence: 1,
+        amountMinor: Number(total),
+        paymentStatus: "PAID",
+        items: sales.map((e) => ({ itemName: e.name, quantity: e.quantity, unitPriceMinor: Number(e.unitPriceMinor) })),
+      },
+      `Sale of ${sales.length} item${sales.length === 1 ? "" : "s"}`,
+    );
+    if (done) summary.push(`Sales: ${sales.length} item${sales.length === 1 ? "" : "s"}, ${money(total)}`);
+  }
+
+  const groups: Array<[ListSection, string]> = [
+    ["DEBT", "Debts"],
+    ["PAYMENT", "Payments received"],
+    ["EXPENSE", "Expenses"],
+  ];
+  for (const [section, label] of groups) {
+    const saved: string[] = [];
+    for (const entry of list.entries.filter((e) => e.section === section)) {
+      const amount = Number(entry.amountMinor);
+      const intent: LoggableParsedIntent =
+        section === "DEBT"
+          ? { intent: "DEBT_NOTE", confidence: 1, amountMinor: amount, customerName: entry.name }
+          : section === "PAYMENT"
+            ? { intent: "PAYMENT_RECEIVED", confidence: 1, amountMinor: amount, customerName: entry.name }
+            : { intent: "EXPENSE", confidence: 1, amountMinor: amount, description: entry.name };
+      if (await apply(intent, `${entry.name} ${money(entry.amountMinor)}`)) saved.push(`${entry.name} ${formatMoney(entry.amountMinor, exp)}`);
+    }
+    if (saved.length > 0) summary.push(`${label} (${saved.length}): ${saved.join(", ")} ${business.currencyCode}`);
+  }
+
+  const lines: string[] = [summary.length > 0 ? "Done! Here's what I saved:" : "I couldn't save anything from that list."];
+  for (const line of summary) lines.push(`- ${line}`);
+  if (skipped.length > 0) {
+    lines.push("", "I skipped these lines (send them one at a time, e.g. \"sold 2 sneakers 1200\"):");
+    for (const line of skipped) lines.push(`- ${line}`);
+  }
+  if (stoppedBy) lines.push("", stoppedBy);
+  if (list.headingDate) lines.push("", `Your list says ${list.headingDate}. TradePal saves entries with today's date.`);
+  if (summary.length > 0) lines.push("", 'To take back the last entry, send "undo" (each undo removes one entry).');
+
+  await reply(deps, merchant.phoneNumber, lines.join("\n"));
+}
+
 async function dispatchCommandOrParse(
   deps: DispatcherDeps,
   merchant: Merchant,
@@ -619,6 +753,13 @@ async function dispatchCommandOrParse(
     return;
   }
 
+  // A whole day written as a list (heading + one entry per line) is read with plain rules, not the AI.
+  const list = parseListMessage(text, { currencyCode: business.currencyCode, minorUnitExp: business.currency.minorUnitExp });
+  if (list) {
+    await handleListMessage(deps, merchant, business, scopedPrisma, list, whatsappMessageId);
+    return;
+  }
+
   const { result, degraded } = await parseWithProviderFallback(deps, scopedPrisma, business, text, whatsappMessageId);
   await recordAiBudgetObservation(deps, scopedPrisma, business);
   // Phase 15: also needed for a SALE/PURCHASE carrying itemized `items`, so
@@ -664,7 +805,10 @@ async function dispatchCommandOrParse(
       finalAction = "REJECTED";
     }
   } else {
-    replyText = outcome.replyText;
+    replyText =
+      outcome.replyText === CLARIFICATION_REPLY && countNonEmptyLines(text) >= 2
+        ? MULTILINE_CLARIFICATION_REPLY
+        : outcome.replyText;
   }
 
   await recordAiParseLog(deps.prisma, {

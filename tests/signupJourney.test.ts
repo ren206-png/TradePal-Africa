@@ -72,6 +72,7 @@ const saleParser: AiProvider = {
 
 let activeParser: AiProvider = saleParser;
 let messageCounter = 0;
+let lastJob: InboundMessageJob | undefined;
 
 /** Sends one inbound WhatsApp text and returns the text TradePal replied with. */
 async function say(text: string): Promise<string> {
@@ -109,6 +110,7 @@ async function say(text: string): Promise<string> {
     aiProvider: activeParser,
     outboundGateway: { accessToken: "test-token", phoneNumberId: "pn-1", fetchImpl },
   };
+  lastJob = job;
   await dispatchInboundMessage(deps, job);
 
   expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -242,5 +244,57 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
     const stock = await say("stock");
     expect(stock).toContain("bags of rice: no stock recorded yet (2 sold)");
     expect(stock).not.toContain("(4 sold)");
+  });
+
+  it("logs a whole day written as a list: one sale with items plus each debt, and never logs the same message twice", async () => {
+    const list = [
+      "Sale on 17/10/26",
+      "Sneakers 2 pair =1200Sle",
+      "T shirt 2 =500Sle",
+      "Debt",
+      "Manager =650Sle",
+      "Terror=100Sle",
+    ].join("\n");
+
+    const reply = await say(list);
+    expect(reply).toContain("Done! Here's what I saved:");
+    expect(reply).toContain("- Sales: 2 items, 1700.00 SLE");
+    expect(reply).toContain("- Debts (2): Manager 650.00, Terror 100.00 SLE");
+    expect(reply).toContain("Your list says 17/10/26. TradePal saves entries with today's date.");
+    expect(reply).toContain('send "undo"');
+
+    const waMessageId = lastJob!.waMessageId;
+    const saved = await prisma.transaction.findMany({ where: { whatsappMessageId: waMessageId }, orderBy: { createdAt: "asc" } });
+    expect(saved.map((t) => [t.type, t.amountMinor])).toEqual([
+      ["SALE", 170000n],
+      ["DEBT_NOTE", 65000n],
+      ["DEBT_NOTE", 10000n],
+    ]);
+    expect(await prisma.transactionItem.count({ where: { transaction: { whatsappMessageId: waMessageId } } })).toBe(2);
+
+    // A re-driven webhook for the same message must not write the list a second time.
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "x" }] }), { status: 200 }));
+    await dispatchInboundMessage({ prisma, aiProvider: activeParser, outboundGateway: { accessToken: "t", phoneNumberId: "pn-1", fetchImpl } }, lastJob!);
+    expect(JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string).text.body).toMatch(/already recorded/);
+    expect(await prisma.transaction.count({ where: { whatsappMessageId: waMessageId } })).toBe(3);
+  });
+
+  it("lists skipped lines it could not read, and explains the list format when a multi-line message isn't a list", async () => {
+    const partial = await say("Sale\nRice 2 =500Sle\nBread =300Sle\nsome words with no amount");
+    expect(partial).toContain("- Sales: 2 items, 800.00 SLE");
+    expect(partial).toContain("I skipped these lines");
+    expect(partial).toContain("- some words with no amount");
+
+    // Not a list (no amounts) and not understood by the AI: the multi-line help, not the generic reply.
+    const unknownProvider: AiProvider = { parseTransactionText: async () => ({ intent: "UNKNOWN", confidence: 0.1 }) };
+    activeParser = unknownProvider;
+    try {
+      const reply = await say("good morning\nhow was your day\nhope you are well");
+      expect(reply).toContain("I couldn't read that list.");
+      expect(reply).toContain("Sneakers 2 pair =1200");
+      expect(await say("what")).toMatch(/spent 3000 on transport/);
+    } finally {
+      activeParser = saleParser;
+    }
   });
 });
