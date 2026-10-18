@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AiParseRequest, AiProvider } from "../src/ai/provider.js";
-import { classifyConfidence, parseTransactionText } from "../src/ai/parse.js";
+import { buildAiParseResult, classifyConfidence, parseTransactionText } from "../src/ai/parse.js";
+import { extractJsonObjectText } from "../src/ai/provider.js";
 
 function fakeProvider(response: unknown): AiProvider {
   return {
@@ -80,5 +81,33 @@ describe("parseTransactionText", () => {
     });
 
     expect(result.requiresClarification).toBe(true);
+  });
+});
+
+describe("auto-log confidence bar", () => {
+  const sale = (confidence: number) => ({ intent: "SALE", amountMinor: 50000, paymentStatus: "PAID", confidence });
+
+  it("logs a transaction at or above 0.7 without asking again, even though that is only MEDIUM tier", () => {
+    const result = buildAiParseResult(sale(0.7));
+    expect(result.confidenceTier).toBe("MEDIUM");
+    expect(result.requiresClarification).toBe(false);
+  });
+
+  it("still asks again just below 0.7", () => {
+    expect(buildAiParseResult(sale(0.69)).requiresClarification).toBe(true);
+    expect(buildAiParseResult(sale(0.6)).requiresClarification).toBe(true);
+  });
+});
+
+describe("extractJsonObjectText", () => {
+  it("unwraps a ```json fence or surrounding prose so a correct parse isn't thrown away", () => {
+    const json = '{"intent":"SALE","amountMinor":50000,"confidence":0.9}';
+    expect(JSON.parse(extractJsonObjectText("```json\n" + json + "\n```"))).toEqual(JSON.parse(json));
+    expect(JSON.parse(extractJsonObjectText("Here you go: " + json + " Hope that helps!"))).toEqual(JSON.parse(json));
+    expect(extractJsonObjectText(json)).toBe(json);
+  });
+
+  it("leaves text with no object in it unchanged, so unusable output still fails loudly", () => {
+    expect(extractJsonObjectText("sorry, I can't do that")).toBe("sorry, I can't do that");
   });
 });

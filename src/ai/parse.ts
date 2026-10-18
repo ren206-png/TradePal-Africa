@@ -4,6 +4,16 @@ import { ParsedIntentSchema, TRANSACTION_INTENTS, type ParsedIntent } from "./sc
 
 const HIGH_CONFIDENCE_THRESHOLD = 0.85;
 const MEDIUM_CONFIDENCE_THRESHOLD = 0.5;
+/**
+ * The lowest self-reported confidence at which a transaction is logged without asking again. Measured
+ * against the production model (2026-10-18, 14 typical shop messages x3): clear messages score
+ * 0.85-0.95, but short natural ones ("sold bread 500", "I sell fish 15000 today") score 0.6-0.75 even
+ * though a person reads them as obvious, while a genuine misread ("paid 3000 to supplier" taken as
+ * money received) scored 0.6. Requiring the full HIGH bar (0.85) turned correct sales into "I couldn't
+ * understand that"; 0.7 keeps the 0.6 misread out. The reply always states exactly what was logged and
+ * /undo reverses it. The confidence TIER (HIGH/MEDIUM/LOW, used for logging) is unchanged.
+ */
+export const AUTO_LOG_MIN_CONFIDENCE = 0.7;
 
 export function classifyConfidence(score: number): ConfidenceTier {
   if (score >= HIGH_CONFIDENCE_THRESHOLD) return "HIGH";
@@ -56,7 +66,7 @@ export function buildAiParseResult(rawModelOutput: unknown): AiParseResult {
   const isTransactionIntent = TRANSACTION_INTENTS.has(parsed.intent);
 
   const requiresClarification =
-    parsed.intent === "UNKNOWN" || (isTransactionIntent && confidenceTier !== "HIGH");
+    parsed.intent === "UNKNOWN" || (isTransactionIntent && parsed.confidence < AUTO_LOG_MIN_CONFIDENCE);
 
   return {
     rawModelOutput,

@@ -66,6 +66,19 @@ const SYSTEM_PROMPT = `You are a structured-data extractor for an informal-retai
 
 Amounts are always integers in the currency's minor unit (e.g. kobo, cents) — never a decimal. "confidence" reflects your own certainty that the extraction is correct, not the message's clarity in general. If the message is ambiguous, incomplete, or you are not confident, prefer "UNKNOWN" with a low confidence rather than guessing at a transaction shape.`;
 
+/**
+ * The model is told to answer with a bare JSON object, but sometimes wraps it in a ```json fence or
+ * adds a sentence around it (seen live: every reply came back fenced whenever a language hint was
+ * present). Take the outermost {...} so a harmless wrapper doesn't turn a correct parse into a
+ * thrown error and a "couldn't understand" reply. Text with no object in it is returned unchanged
+ * so JSON.parse still fails loudly on genuinely unusable output.
+ */
+export function extractJsonObjectText(text: string): string {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  return start !== -1 && end > start ? text.slice(start, end + 1) : text;
+}
+
 export class AnthropicAiProvider implements AiProvider {
   private readonly client: Anthropic;
   private readonly model: string;
@@ -92,6 +105,6 @@ export class AnthropicAiProvider implements AiProvider {
 
     const block = response.content[0];
     const text = block && block.type === "text" ? block.text : "";
-    return JSON.parse(text);
+    return JSON.parse(extractJsonObjectText(text));
   }
 }
