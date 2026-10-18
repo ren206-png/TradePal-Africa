@@ -583,6 +583,8 @@ async function dispatchCommandOrParse(
   // unambiguous, argument-free command words as the slash command rather than sending them to the AI parser.
   const bareCommand = text.trim().toLowerCase();
   if (BARE_COMMAND_WORDS.has(bareCommand)) text = `/${bareCommand}`;
+  // "remind Amina" is likewise unambiguous: the verb "remind" plus a name can't be a sale or expense.
+  else if (/^remind\s+\S/i.test(text.trim())) text = `/${text.trim()}`;
 
   if (text.trim().startsWith("/")) {
     let replyText: string;

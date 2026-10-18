@@ -163,6 +163,12 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
     expect(await say("undo")).toBe("Undone: SALE of 12000.00 SLE.");
   });
 
+  it("understands \"remind Amina\" typed without a slash once reminders are on", async () => {
+    await setFeatureFlagGlobalDefault(prisma, "reminders", true);
+    expect(await say("remind Amina")).not.toMatch(/isn't available|couldn't confidently/i);
+    await setFeatureFlagGlobalDefault(prisma, "reminders", false);
+  });
+
   it("keeps stock tracking and reminders switched off until the rollout flips them on", async () => {
     expect(await say("/stock")).toMatch(/isn't available/i);
     expect(await say("/remind Amina")).toMatch(/isn't available/i);
