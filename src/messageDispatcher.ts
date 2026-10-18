@@ -151,7 +151,7 @@ const VOICE_TRANSCRIPTION_FAILED_REPLY =
 const STOCK_ADJUSTMENT_UNSUPPORTED_REPLY =
   "Stock tracking isn't available yet — I can still log sales, expenses, payments, and debts.";
 const GREETING_REPLY = "Hello! Tell me about a sale, expense, or debt in plain language, or type /help to see commands.";
-const QUERY_REPLY = "Try /today for today's summary or /customer <name> to see what someone owes.";
+const QUERY_REPLY = "Try /today for today's summary, /debts to see everyone who owes you, or /customer <name> for one person.";
 const CLARIFICATION_REPLY =
   'I couldn\'t confidently understand that. Try rephrasing, e.g. "sold 2 bread for 500" or "spent 3000 on transport".';
 /**
@@ -589,7 +589,7 @@ function replyForParseResult(result: AiParseResult, stockTrackingEnabled: boolea
 }
 
 /** Argument-free commands that also work typed without the leading slash. */
-const BARE_COMMAND_WORDS: ReadonlySet<string> = new Set(["today", "stock", "lowstock", "help", "undo"]);
+const BARE_COMMAND_WORDS: ReadonlySet<string> = new Set(["today", "stock", "lowstock", "help", "undo", "debts"]);
 
 /**
  * Applies a list message (see ai/listEntry.ts) through the same applyLoggableIntent path single

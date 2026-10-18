@@ -6,6 +6,7 @@ import {
   createDebt,
   DebtOverpaymentError,
   findOrCreateCustomerByName,
+  listOpenDebtsByCustomer,
   listOpenDebtsForCustomer,
   recordPaymentForCustomer,
 } from "../src/domain/debtBook.js";
@@ -92,5 +93,30 @@ describe("recordPaymentForCustomer", () => {
 
     const openDebts = await listOpenDebtsForCustomer(scoped, customer.id);
     expect(openDebts[0]?.outstandingAmountMinor).toBe(1000n);
+  });
+
+  it("summarises everyone who owes money, one row per customer, biggest balance first, ignoring settled debts", async () => {
+    const business = await prisma.business.create({
+      data: { name: "Shop Debts", countryCode: "NG", currencyCode: "NGN", languageCode: "en", timezone: "Africa/Lagos" },
+    });
+    const sc = getTenantScopedClient(prisma, business.id);
+    expect(await listOpenDebtsByCustomer(sc)).toEqual([]);
+
+    const small = await findOrCreateCustomerByName(sc, business.id, "Small Payer");
+    const big = await findOrCreateCustomerByName(sc, business.id, "Big Payer");
+    const settled = await findOrCreateCustomerByName(sc, business.id, "Settled");
+    await createDebt(sc, { businessId: business.id, customerId: small.id, amountMinor: 10000n, currencyCode: "NGN" });
+    await createDebt(sc, { businessId: business.id, customerId: big.id, amountMinor: 50000n, currencyCode: "NGN" });
+    await createDebt(sc, { businessId: business.id, customerId: big.id, amountMinor: 20000n, currencyCode: "NGN", dueDate: new Date("2026-01-01T00:00:00Z") });
+    await createDebt(sc, { businessId: business.id, customerId: settled.id, amountMinor: 30000n, currencyCode: "NGN" });
+    await recordPaymentForCustomer(sc, { businessId: business.id, customerId: settled.id, amountMinor: 30000n });
+
+    const rows = await listOpenDebtsByCustomer(sc);
+    expect(rows.map((r) => [r.customerName, r.totalOutstandingMinor, r.openDebtCount])).toEqual([
+      ["Big Payer", 70000n, 2],
+      ["Small Payer", 10000n, 1],
+    ]);
+    expect(rows[0]?.earliestDueDate?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    expect(rows[1]?.earliestDueDate).toBeNull();
   });
 });

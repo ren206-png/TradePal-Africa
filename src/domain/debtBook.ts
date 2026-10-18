@@ -35,6 +35,7 @@ export interface RecordDebtNoteInput {
   amountMinor: bigint;
   currencyCode: string;
   whatsappMessageId?: string;
+  dueDate?: Date;
 }
 
 /**
@@ -60,6 +61,7 @@ export async function recordDebtNote(scopedPrisma: TenantScopedClient, input: Re
     amountMinor: input.amountMinor,
     currencyCode: input.currencyCode,
     originTransactionId: originTransaction.id,
+    ...(input.dueDate ? { dueDate: input.dueDate } : {}),
   });
 }
 
@@ -182,4 +184,56 @@ export async function listOpenDebtsForCustomer(scopedPrisma: TenantScopedClient,
     where: { customerId, status: { in: ["OPEN", "PARTIALLY_PAID"] } },
     orderBy: { createdAt: "asc" },
   });
+}
+
+export interface CustomerDebtSummary {
+  customerId: string;
+  customerName: string;
+  totalOutstandingMinor: bigint;
+  openDebtCount: number;
+  oldestDebtCreatedAt: Date;
+  /** The earliest due date among this customer's open debts that has one, if any. */
+  earliestDueDate: Date | null;
+}
+
+/**
+ * Everyone who currently owes the business money, biggest balance first: one row per customer with
+ * the total still outstanding across their open and part-paid debts. This is the shop-wide view that
+ * /customer <name> (one person at a time) can't give.
+ */
+export async function listOpenDebtsByCustomer(scopedPrisma: TenantScopedClient): Promise<CustomerDebtSummary[]> {
+  const debts = await scopedPrisma.debt.findMany({
+    where: { status: { in: ["OPEN", "PARTIALLY_PAID"] }, outstandingAmountMinor: { gt: 0n } },
+    include: { customer: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const byCustomer = new Map<string, CustomerDebtSummary>();
+  for (const debt of debts) {
+    const existing = byCustomer.get(debt.customerId);
+    if (!existing) {
+      byCustomer.set(debt.customerId, {
+        customerId: debt.customerId,
+        customerName: debt.customer.name,
+        totalOutstandingMinor: debt.outstandingAmountMinor,
+        openDebtCount: 1,
+        oldestDebtCreatedAt: debt.createdAt,
+        earliestDueDate: debt.dueDate,
+      });
+      continue;
+    }
+    existing.totalOutstandingMinor += debt.outstandingAmountMinor;
+    existing.openDebtCount += 1;
+    if (debt.dueDate && (!existing.earliestDueDate || debt.dueDate < existing.earliestDueDate)) {
+      existing.earliestDueDate = debt.dueDate;
+    }
+  }
+
+  return [...byCustomer.values()].sort((a, b) =>
+    a.totalOutstandingMinor === b.totalOutstandingMinor
+      ? a.customerName.localeCompare(b.customerName)
+      : a.totalOutstandingMinor > b.totalOutstandingMinor
+        ? -1
+        : 1,
+  );
 }

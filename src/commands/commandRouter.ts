@@ -6,14 +6,7 @@ import {
   getQuotaStatus,
   QuotaExceededError,
 } from "../domain/billing.js";
-import {
-  DebtOverpaymentError,
-  findCustomerByName,
-  findOrCreateCustomerByName,
-  listOpenDebtsForCustomer,
-  recordDebtNote,
-  recordPaymentForCustomer,
-} from "../domain/debtBook.js";
+import { DebtOverpaymentError, findCustomerByName, findOrCreateCustomerByName, listOpenDebtsForCustomer, recordDebtNote, recordPaymentForCustomer, listOpenDebtsByCustomer } from "../domain/debtBook.js";
 import { getDailySummary } from "../domain/dailySummary.js";
 import { createDeletionRequest } from "../domain/deletion.js";
 import { isFeatureEnabled } from "../domain/featureFlags.js";
@@ -118,6 +111,7 @@ const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
   { line: "/debt <name> <amount> [due YYYY-MM-DD] - record a customer's debt" },
   { line: "/paid <name> <amount> - record a payment against a customer's open debts" },
   { line: "/customer <name> - show what a customer currently owes" },
+  { line: "/debts - list everyone who owes you, biggest first" },
   { flag: REMINDERS_FEATURE_FLAG_KEY, line: "/remind <name> - get reminder text to forward to a customer with open debt" },
   { flag: MOBILE_MONEY_FEATURE_FLAG_KEY, line: "/momo <forwarded SMS text> - log a mobile money alert and try to match it to a payment" },
   { flag: MOBILE_MONEY_FEATURE_FLAG_KEY, line: "/confirmmomo <id> - confirm a suggested mobile money match" },
@@ -170,9 +164,26 @@ function splitNameAndAmount(args: string): { name: string; amountText: string } 
   return { name, amountText };
 }
 
+/**
+ * Splits an optional trailing "due YYYY-MM-DD" off a /debt command body, as /help has always advertised
+ * ("/debt <name> <amount> [due YYYY-MM-DD]") but the handler never read: "/debt Amina 500 due 2026-11-01"
+ * used to fail with "2026-11-01 is not a valid amount". Returns null for the date if the text is not a
+ * real calendar date, so the caller can say so instead of saving a debt with a wrong due date.
+ */
+function splitDueDate(args: string): { rest: string; dueDate: Date | null; invalidDate: boolean } {
+  const match = /^(.*\S)\s+due\s+(\d{4}-\d{2}-\d{2})\s*$/i.exec(args.trim());
+  if (!match) return { rest: args, dueDate: null, invalidDate: false };
+  const iso = match[2] as string;
+  const date = new Date(`${iso}T00:00:00Z`);
+  const valid = !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === iso;
+  return { rest: match[1] as string, dueDate: valid ? date : null, invalidDate: !valid };
+}
+
 async function handleDebt(ctx: CommandContext, args: string): Promise<string> {
-  const split = splitNameAndAmount(args);
-  if (!split) return 'Usage: /debt <name> <amount>\nExample: "/debt John the tailor 500"';
+  const { rest, dueDate, invalidDate } = splitDueDate(args);
+  if (invalidDate) return 'That due date isn\'t a real date. Use YYYY-MM-DD, e.g. "/debt John the tailor 500 due 2026-11-30".';
+  const split = splitNameAndAmount(rest);
+  if (!split) return 'Usage: /debt <name> <amount> [due YYYY-MM-DD]\nExample: "/debt John the tailor 500"';
 
   let amountMinor: bigint;
   try {
@@ -198,9 +209,11 @@ async function handleDebt(ctx: CommandContext, args: string): Promise<string> {
     amountMinor,
     currencyCode: ctx.currencyCode,
     ...(ctx.whatsappMessageId ? { whatsappMessageId: ctx.whatsappMessageId } : {}),
+    ...(dueDate ? { dueDate } : {}),
   });
 
-  return `Recorded: ${customer.name} owes ${formatMoney(debt.outstandingAmountMinor, ctx.minorUnitExp)} ${ctx.currencyCode}.`;
+  const dueNote = dueDate ? ` Due ${dueDate.toISOString().slice(0, 10)}.` : "";
+  return `Recorded: ${customer.name} owes ${formatMoney(debt.outstandingAmountMinor, ctx.minorUnitExp)} ${ctx.currencyCode}.${dueNote}`;
 }
 
 async function handlePaid(ctx: CommandContext, args: string): Promise<string> {
@@ -257,6 +270,45 @@ async function handleCustomer(ctx: CommandContext, args: string): Promise<string
 
   const totalOwed = sumMoney(openDebts.map((d) => d.outstandingAmountMinor));
   return `${customer.name} owes ${formatMoney(totalOwed, ctx.minorUnitExp)} ${ctx.currencyCode} across ${openDebts.length} debt(s).`;
+}
+
+/** How long a debt with no due date can sit before /debts flags it as old. */
+const OLD_DEBT_DAYS = 14;
+const MAX_DEBTS_LISTED = 20;
+
+/**
+ * Shop-wide "who owes me": every customer with money outstanding, biggest first, with their total,
+ * flagging debts past their due date and debts with no due date that are more than two weeks old.
+ * Read-only; never messages anyone (Standard #9) — /remind <name> hands over text to forward.
+ */
+async function handleDebts(ctx: CommandContext): Promise<string> {
+  const rows = await listOpenDebtsByCustomer(ctx.scopedPrisma);
+  if (rows.length === 0) return "Nobody owes you anything right now. Record a debt with /debt <name> <amount>.";
+
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const money = (m: bigint): string => `${formatMoney(m, ctx.minorUnitExp)} ${ctx.currencyCode}`;
+  const total = sumMoney(rows.map((r) => r.totalOutstandingMinor));
+
+  const lines = rows.slice(0, MAX_DEBTS_LISTED).map((row) => {
+    let flag = "";
+    if (row.earliestDueDate && row.earliestDueDate.getTime() < now) {
+      flag = ` (overdue since ${row.earliestDueDate.toISOString().slice(0, 10)})`;
+    } else if (!row.earliestDueDate) {
+      const ageDays = Math.floor((now - row.oldestDebtCreatedAt.getTime()) / day);
+      if (ageDays >= OLD_DEBT_DAYS) flag = ` (owed for ${ageDays} days)`;
+    }
+    return `${row.customerName}: ${money(row.totalOutstandingMinor)}${flag}`;
+  });
+  const more = rows.length > MAX_DEBTS_LISTED ? [`...and ${rows.length - MAX_DEBTS_LISTED} more.`] : [];
+
+  return [
+    `Who owes you: ${money(total)} across ${rows.length} customer${rows.length === 1 ? "" : "s"}`,
+    ...lines,
+    ...more,
+    "",
+    "Use /remind <name> to get a reminder text to forward.",
+  ].join("\n");
 }
 
 /**
@@ -864,6 +916,8 @@ export async function handleCommand(ctx: CommandContext, rawText: string): Promi
       return handlePaid(ctx, args);
     case "/customer":
       return handleCustomer(ctx, args);
+    case "/debts":
+      return handleDebts(ctx);
     case "/remind":
       return handleRemind(ctx, args);
     case "/momo":

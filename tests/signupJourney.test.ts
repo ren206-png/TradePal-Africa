@@ -179,7 +179,7 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
 
   it("lists in /help only the commands that are actually switched on for the shop", async () => {
     const help = await say("/help");
-    for (const on of ["/debt", "/paid", "/customer", "/today", "/undo", "/help"]) expect(help).toContain(on);
+    for (const on of ["/debt", "/paid", "/customer", "/debts", "/today", "/undo", "/help"]) expect(help).toContain(on);
     for (const off of ["/stock", "/remind", "/momo", "/addstaff", "/upgrade", "/paylink", "/collect", "/catalog", "/setprice", "/usage"]) {
       expect(help).not.toContain(off);
     }
@@ -296,5 +296,20 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
     } finally {
       activeParser = saleParser;
     }
+  });
+
+  it("shows everyone who owes the shop with /debts (or just 'debts'), biggest first, and flags an overdue one", async () => {
+    // The list test above left Manager 650.00 and Terror 100.00 outstanding.
+    const overview = await say("Debts");
+    expect(overview).toContain("Who owes you: 750.00 SLE across 2 customers");
+    expect(overview.indexOf("Manager: 650.00 SLE")).toBeGreaterThan(-1);
+    expect(overview.indexOf("Manager: 650.00 SLE")).toBeLessThan(overview.indexOf("Terror: 100.00 SLE"));
+    expect(overview).toContain("/remind <name>");
+
+    expect(await say("/debt Kamara 500 due 2020-01-01")).toBe("Recorded: Kamara owes 500.00 SLE. Due 2020-01-01.");
+    expect(await say("/debt Sesay 50 due 2026-02-31")).toMatch(/isn't a real date/);
+    const withOverdue = await say("/debts");
+    expect(withOverdue).toContain("Who owes you: 1250.00 SLE across 3 customers");
+    expect(withOverdue).toContain("Kamara: 500.00 SLE (overdue since 2020-01-01)");
   });
 });
