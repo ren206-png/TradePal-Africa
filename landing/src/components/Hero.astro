@@ -1,69 +1,173 @@
 ---
 import { SITE, whatsappCtaHref } from "../lib/site";
+import Logo from "./Logo.astro";
+
+// One entry per chat bubble; `from: "me"` is the shop owner, `"bot"` is TradePal.
+const chat = [
+  { from: "me", text: "sold 2 bags of rice for 12000", time: "9:41" },
+  { from: "bot", text: "Logged: Sale of ₦12,000.00. Nice one! 🎉", time: "9:41" },
+  { from: "me", text: "/today", time: "9:42" },
+  { from: "bot", text: "Today (Africa/Lagos):\nSales: 12,000.00\nExpenses: 0.00\nNet: 12,000.00", time: "9:42" },
+  { from: "me", text: "/paylink Amina 5000", time: "9:43" },
+  { from: "bot", text: "Send this link to Amina to collect ₦5,000.00 👇", time: "9:43" },
+] as const;
 ---
 
-<section class="relative overflow-hidden bg-gradient-to-b from-teal-50 to-white">
-  <div class="mx-auto grid max-w-6xl items-center gap-12 px-6 py-20 md:grid-cols-2 md:py-28">
+<section class="grain ruled relative overflow-hidden">
+  <!-- warm sun glow behind the phone -->
+  <div
+    class="pointer-events-none absolute -right-40 top-10 h-[34rem] w-[34rem] rounded-full bg-saffron/25 blur-3xl"
+    aria-hidden="true"
+  >
+  </div>
+
+  <div class="relative mx-auto grid max-w-6xl items-center gap-14 px-6 pb-20 pt-14 lg:grid-cols-[1.08fr_0.92fr] lg:gap-8 lg:pb-28 lg:pt-20">
     <div>
-      <p class="mb-4 inline-flex items-center rounded-full bg-teal-100 px-3 py-1 text-sm font-semibold text-teal-800">
-        WhatsApp-native business tracking
-      </p>
-      <h1 class="text-4xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-5xl">
-        Run your shop's books right inside WhatsApp
-      </h1>
-      <p class="mt-6 text-lg leading-relaxed text-slate-600">
-        {SITE.name} turns the WhatsApp you already use every day into a bookkeeping, stock, and payment-collection
-        tool for your business — no app to download, no training required. Just chat like you always do.
+      <p class="inline-flex items-center gap-3 text-[0.72rem] font-bold uppercase tracking-[0.22em] text-clay">
+        <span class="inline-block h-[2px] w-8 bg-clay"></span>
+        WhatsApp-native bookkeeping
       </p>
 
-      <div class="mt-8 flex flex-wrap items-center gap-4">
+      <h1 class="display mt-6 text-[clamp(2.7rem,6.4vw,5rem)] font-semibold text-ink">
+        Run your shop's books
+        <span class="relative z-0 block italic font-medium text-ink-3">
+          inside <span class="scribble">WhatsApp</span>.
+        </span>
+      </h1>
+
+      <p class="mt-7 max-w-xl text-lg leading-relaxed text-ink/75">
+        {SITE.name} turns the WhatsApp you already use every day into a bookkeeping, stock, and payment-collection
+        tool for your business. No app to download, no training required. Just chat like you always do.
+      </p>
+
+      <div class="mt-9 flex flex-wrap items-center gap-4">
         <a
           href={whatsappCtaHref()}
-          class="inline-flex items-center gap-2 rounded-full bg-teal-600 px-6 py-3 text-base font-semibold text-white shadow-md transition hover:bg-teal-700"
+          class="group inline-flex items-center gap-2.5 rounded-full bg-ink px-7 py-4 text-base font-bold text-paper shadow-[0_4px_0_0_#e9a21b] transition hover:-translate-y-0.5 hover:bg-ink-2 hover:shadow-[0_6px_0_0_#e9a21b] active:translate-y-0.5 active:shadow-[0_1px_0_0_#e9a21b]"
         >
+          <svg viewBox="0 0 24 24" class="h-5 w-5 fill-[#25D366]" aria-hidden="true"
+            ><path
+              d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"
+            ></path></svg
+          >
           Start free on WhatsApp
         </a>
         <a
           href="#how-it-works"
-          class="inline-flex items-center gap-2 rounded-full border border-slate-300 px-6 py-3 text-base font-semibold text-slate-700 transition hover:border-slate-400"
+          class="inline-flex items-center gap-2 rounded-full border-2 border-ink/20 px-6 py-3.5 text-base font-bold text-ink transition hover:border-ink hover:bg-paper-2"
         >
           See how it works
         </a>
       </div>
 
-      <p class="mt-6 text-sm text-slate-500">
-        Built for shop owners in {SITE.supportedCountries.join(", ")} — free to start, no card required.
-      </p>
+      <ul class="mt-9 flex flex-wrap gap-x-7 gap-y-2 text-sm font-semibold text-ink/70">
+        {
+          ["Free to start", "No card required", "No app to install"].map((item) => (
+            <li class="flex items-center gap-2">
+              <svg viewBox="0 0 16 16" class="h-4 w-4 text-leaf" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m3 8.5 3.2 3L13 4.5" />
+              </svg>
+              {item}
+            </li>
+          ))
+        }
+      </ul>
+
+      <div class="mt-10 border-t border-dashed border-ink/25 pt-6">
+        <p class="text-[0.7rem] font-bold uppercase tracking-[0.2em] text-ink/50">Built for shop owners in</p>
+        <ul class="mt-3 flex flex-wrap gap-2">
+          {
+            SITE.supportedCountries.map((country) => (
+              <li class="rounded-full border border-ink/15 bg-paper-2/70 px-3.5 py-1 text-sm font-semibold text-ink/80">
+                {country}
+              </li>
+            ))
+          }
+        </ul>
+      </div>
     </div>
 
-    <div class="relative mx-auto w-full max-w-sm">
-      <div class="rounded-3xl border border-slate-200 bg-white p-4 shadow-xl">
-        <div class="flex items-center gap-2 border-b border-slate-100 pb-3">
-          <span class="h-3 w-3 rounded-full bg-teal-500"></span>
-          <span class="text-sm font-semibold text-slate-700">{SITE.name}</span>
-        </div>
+    <!-- Phone + receipt tape -->
+    <div class="phone relative mx-auto mb-20 w-full max-w-[21rem] lg:mr-0 lg:max-w-[22rem]">
+      <div class="relative rounded-[2.6rem] border-[9px] border-ink bg-ink shadow-[0_30px_60px_-20px_rgba(15,42,34,0.55)]">
+        <div class="absolute left-1/2 top-0 z-10 h-5 w-24 -translate-x-1/2 rounded-b-2xl bg-ink" aria-hidden="true"></div>
+        <div class="overflow-hidden rounded-[2rem] bg-wa-bg">
+          <!-- chat header -->
+          <div class="flex items-center gap-3 bg-ink-2 px-4 pb-3 pt-7 text-paper">
+            <Logo class="h-9 w-9 shrink-0 rounded-full" />
+            <div class="min-w-0 leading-tight">
+              <p class="truncate text-[0.95rem] font-bold">{SITE.name}</p>
+              <p class="text-xs text-paper/65">online</p>
+            </div>
+          </div>
 
-        <div class="mt-4 space-y-3">
-          <div class="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-teal-600 px-4 py-2 text-sm text-white">
-            sold 2 bags of rice for 12000
+          <!-- messages -->
+          <div class="space-y-2.5 px-3 pb-14 pt-4" style="min-height: 27rem;">
+            {
+              chat.map((m, i) => (
+                <div class:list={["bubble flex", m.from === "me" ? "justify-end" : "justify-start"]} style={`--i:${i}`}>
+                  <div
+                    class:list={[
+                      "max-w-[84%] whitespace-pre-line rounded-2xl px-3.5 py-2 text-[0.84rem] leading-snug text-ink shadow-[0_1px_0_rgba(15,42,34,0.12)]",
+                      m.from === "me" ? "rounded-tr-sm bg-wa-out" : "rounded-tl-sm bg-white",
+                    ]}
+                  >
+                    {m.text}
+                    <span class="ml-2 inline-block translate-y-1 text-[0.62rem] font-semibold text-ink/45">
+                      {m.time}
+                      {m.from === "me" ? " ✓✓" : ""}
+                    </span>
+                  </div>
+                </div>
+              ))
+            }
           </div>
-          <div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2 text-sm text-slate-800">
-            Logged: Sale of ₦12,000.00. Nice one! 🎉
+
+          <!-- fake composer -->
+          <div class="flex items-center gap-2 bg-paper-2 px-3 py-2.5" aria-hidden="true">
+            <div class="flex-1 rounded-full bg-white px-4 py-2 text-xs text-ink/40">Message</div>
+            <div class="flex h-8 w-8 items-center justify-center rounded-full bg-leaf text-paper">
+              <svg viewBox="0 0 16 16" class="h-4 w-4" fill="currentColor"><path d="M2 14 14 8 2 2v4.5L9 8l-7 1.5z" /></svg>
+            </div>
           </div>
-          <div class="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-teal-600 px-4 py-2 text-sm text-white">
-            /today
+        </div>
+      </div>
+
+      <!-- receipt tape -->
+      <div class="tape absolute -bottom-16 -right-2 z-20 w-48 sm:-right-10 sm:w-52" style="filter: drop-shadow(0 12px 14px rgba(15,42,34,0.28));" aria-hidden="true">
+        <div class="receipt bg-white px-4 pb-6 pt-5 text-ink">
+          <p class="text-center font-mono text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-ink/55">Today · Lagos</p>
+          <div class="mt-3 space-y-1.5 font-mono text-[0.72rem] font-semibold">
+            <p class="leader"><span>Sales</span><span>12,000.00</span></p>
+            <p class="leader"><span>Expenses</span><span>0.00</span></p>
+            <p class="leader mt-2 border-t-2 border-ink pt-2 text-[0.8rem] text-clay"><span>Net</span><span>12,000.00</span></p>
           </div>
-          <div class="max-w-[85%] whitespace-pre-line rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2 text-sm text-slate-800">
-            {"Today (Africa/Lagos):\nSales: 12,000.00\nExpenses: 0.00\nNet: 12,000.00"}
-          </div>
-          <div class="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-teal-600 px-4 py-2 text-sm text-white">
-            /paylink Amina 5000
-          </div>
-          <div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2 text-sm text-slate-800">
-            Send this link to Amina to collect ₦5,000.00 👇
-          </div>
+          <p class="mt-3 text-center font-mono text-[0.55rem] uppercase tracking-[0.18em] text-ink/40">kept by TradePal ✓</p>
         </div>
       </div>
     </div>
   </div>
+
+  <div class="weave" aria-hidden="true"></div>
 </section>
+
+<script>
+  // Start the chat animation when the phone scrolls into view (CSS in global.css handles the rest).
+  const phone = document.querySelector(".phone");
+  if (phone) {
+    if (!("IntersectionObserver" in window)) {
+      phone.classList.add("play");
+    } else {
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) {
+            phone.classList.add("play");
+            io.disconnect();
+          }
+        },
+        { threshold: 0.35 },
+      );
+      io.observe(phone);
+    }
+  }
+</script>

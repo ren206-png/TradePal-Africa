@@ -1,15 +1,41 @@
 ---
 import { SITE } from "../lib/site";
+import Logo from "./Logo.astro";
 
 const year = new Date().getFullYear();
 ---
 
-<footer class="border-t border-slate-100 pb-24 pt-10 sm:pb-10">
-  <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-sm text-slate-500 sm:flex-row">
-    <p>&copy; {year} {SITE.name}. All rights reserved.</p>
-    <div class="flex items-center gap-6">
-      <a href="/privacy" class="transition hover:text-slate-700">Privacy</a>
-      <a href="/terms" class="transition hover:text-slate-700">Terms</a>
+<footer class="bg-ink pb-24 text-paper sm:pb-0">
+  <div class="weave-thin" aria-hidden="true"></div>
+  <div class="mx-auto grid max-w-6xl gap-10 px-6 py-14 md:grid-cols-[1.4fr_1fr_1fr]">
+    <div>
+      <a href="/" class="inline-flex items-center gap-2.5" aria-label={`${SITE.name} home`}>
+        <Logo class="h-10 w-10" />
+        <span class="display text-2xl font-semibold leading-none">
+          TradePal<span class="ml-1.5 font-sans text-[0.62rem] font-bold uppercase tracking-[0.22em] text-saffron">Africa</span>
+        </span>
+      </a>
+      <p class="mt-5 max-w-sm text-sm leading-relaxed text-paper/65">
+        Your shop's books, kept in the WhatsApp you already use. Built for shop owners across Africa.
+      </p>
     </div>
+
+    <div>
+      <p class="text-[0.7rem] font-bold uppercase tracking-[0.2em] text-saffron">We serve</p>
+      <ul class="mt-4 space-y-2 text-sm text-paper/75">
+        {SITE.supportedCountries.map((country) => <li>{country}</li>)}
+      </ul>
+    </div>
+
+    <div>
+      <p class="text-[0.7rem] font-bold uppercase tracking-[0.2em] text-saffron">Legal</p>
+      <ul class="mt-4 space-y-2 text-sm text-paper/75">
+        <li><a href="/privacy" class="transition hover:text-saffron">Privacy</a></li>
+        <li><a href="/terms" class="transition hover:text-saffron">Terms</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="border-t border-paper/10">
+    <p class="mx-auto max-w-6xl px-6 py-5 text-xs text-paper/50">&copy; {year} {SITE.name}. All rights reserved.</p>
   </div>
 </footer>

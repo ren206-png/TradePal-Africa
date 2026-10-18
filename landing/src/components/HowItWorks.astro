@@ -5,17 +5,17 @@ const steps = [
   {
     number: "1",
     title: "Message us on WhatsApp",
-    description: `Send a message to set up your shop. We detect your country and currency automatically — built for ${SITE.supportedCountries.join(", ")}.`,
+    description: `Send a message to set up your shop. We detect your country and currency automatically. Built for ${SITE.supportedCountries.join(", ")}.`,
   },
   {
     number: "2",
     title: "Log sales and expenses like you'd text a friend",
-    description: '"sold 2 bags of rice for 12000" is all it takes — no forms, no menus to navigate.',
+    description: '"sold 2 bags of rice for 12000" is all it takes. No forms, no menus to navigate.',
   },
   {
     number: "3",
     title: "Use a command whenever you need a number",
-    description: "/today for the day's totals, /stock for what's left, /paylink to get paid — all in the same chat.",
+    description: "/today for the day's totals, /stock for what's left, /paylink to get paid, all in the same chat.",
   },
   {
     number: "4",
@@ -25,31 +25,43 @@ const steps = [
 ];
 ---
 
-<section id="how-it-works" class="bg-slate-50 py-24">
+<section id="how-it-works" class="grain bg-paper-2 py-24 lg:py-28">
   <div class="mx-auto max-w-6xl px-6">
     <div class="mx-auto max-w-2xl text-center">
-      <h2 class="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">How it works</h2>
-      <p class="mt-4 text-lg text-slate-600">From first message to your first payment link, in minutes.</p>
+      <p class="inline-flex items-center gap-3 text-[0.72rem] font-bold uppercase tracking-[0.22em] text-clay">
+        <span class="inline-block h-[2px] w-8 bg-clay"></span>
+        Four steps
+        <span class="inline-block h-[2px] w-8 bg-clay"></span>
+      </p>
+      <h2 class="display mt-5 text-4xl font-semibold sm:text-5xl">How it works</h2>
+      <p class="mt-4 text-lg text-ink/70">From first message to your first payment link, in minutes.</p>
     </div>
 
-    <ol class="mt-16 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+    <ol class="mt-16 grid gap-12 sm:grid-cols-2 lg:grid-cols-4 lg:gap-8">
       {
-        steps.map((step) => (
-          <li class="relative rounded-2xl bg-white p-6 shadow-sm">
-            <span class="flex h-10 w-10 items-center justify-center rounded-full bg-teal-600 text-lg font-bold text-white">
-              {step.number}
-            </span>
-            <h3 class="mt-4 text-lg font-bold text-slate-900">{step.title}</h3>
-            <p class="mt-2 text-sm leading-relaxed text-slate-600">{step.description}</p>
+        steps.map((step, i) => (
+          <li class="relative">
+            <div class="flex items-center gap-4" aria-hidden="true">
+              <span class="display text-[5.5rem] font-bold leading-none text-transparent [-webkit-text-stroke:2px_#b5441f]">
+                {step.number}
+              </span>
+              {i < steps.length - 1 && (
+                <span class="-mr-6 hidden flex-1 border-t-2 border-dotted border-ink/30 lg:block"></span>
+              )}
+            </div>
+            <h3 class="display mt-3 text-[1.35rem] font-semibold leading-snug">
+              <span class="sr-only">Step {step.number}: </span>{step.title}
+            </h3>
+            <p class="mt-3 text-[0.95rem] leading-relaxed text-ink/70">{step.description}</p>
           </li>
         ))
       }
     </ol>
 
-    <div class="mt-14 text-center">
+    <div class="mt-16 text-center">
       <a
         href={whatsappCtaHref()}
-        class="inline-flex items-center gap-2 rounded-full bg-teal-600 px-6 py-3 text-base font-semibold text-white shadow-md transition hover:bg-teal-700"
+        class="inline-flex items-center gap-2 rounded-full bg-ink px-7 py-4 text-base font-bold text-paper shadow-[0_4px_0_0_#e9a21b] transition hover:-translate-y-0.5 hover:bg-ink-2 hover:shadow-[0_6px_0_0_#e9a21b]"
       >
         Start free on WhatsApp
       </a>

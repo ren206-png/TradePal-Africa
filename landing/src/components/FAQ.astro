@@ -43,22 +43,34 @@ const jsonLd = {
 };
 ---
 
-<section id="faq" class="bg-slate-50 py-24">
-  <div class="mx-auto max-w-3xl px-6">
-    <h2 class="text-center text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
-      Frequently asked questions
-    </h2>
+<section id="faq" class="grain bg-paper-2 py-24 lg:py-28">
+  <div class="mx-auto grid max-w-6xl gap-12 px-6 lg:grid-cols-[0.8fr_1.2fr] lg:gap-20">
+    <div class="lg:sticky lg:top-28 lg:self-start">
+      <p class="inline-flex items-center gap-3 text-[0.72rem] font-bold uppercase tracking-[0.22em] text-clay">
+        <span class="inline-block h-[2px] w-8 bg-clay"></span>
+        Good to know
+      </p>
+      <h2 class="display mt-5 text-4xl font-semibold sm:text-5xl">Frequently asked questions</h2>
+      <p class="mt-4 max-w-sm text-lg text-ink/70">
+        Anything else? Start a chat and type /help to see everything TradePal can do.
+      </p>
+    </div>
 
-    <dl class="mt-12 space-y-6">
+    <div class="divide-y-2 divide-dotted divide-ink/25 border-y-2 border-dotted border-ink/25">
       {
         faqs.map((faq) => (
-          <div class="rounded-2xl bg-white p-6 shadow-sm">
-            <dt class="text-base font-bold text-slate-900">{faq.question}</dt>
-            <dd class="mt-2 text-sm leading-relaxed text-slate-600">{faq.answer}</dd>
-          </div>
+          <details class="faq group py-6">
+            <summary class="flex items-center justify-between gap-6 text-left">
+              <span class="display text-xl font-semibold leading-snug sm:text-[1.4rem]">{faq.question}</span>
+              <span class="faq-plus flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-ink/25 text-ink transition duration-300 group-open:border-ink group-open:bg-saffron" aria-hidden="true">
+                <svg viewBox="0 0 16 16" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10" /></svg>
+              </span>
+            </summary>
+            <p class="mt-4 max-w-2xl pr-12 text-[0.98rem] leading-relaxed text-ink/75">{faq.answer}</p>
+          </details>
         ))
       }
-    </dl>
+    </div>
   </div>
 
   <script type="application/ld+json" is:inline set:html={JSON.stringify(jsonLd)} />

@@ -40,9 +40,16 @@ const jsonLd = {
     <link rel="canonical" href={canonicalURL} />
     <meta name="generator" content={Astro.generator} />
 
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..700&family=IBM+Plex+Mono:wght@500;600&family=Manrope:wght@400..800&display=swap"
+      rel="stylesheet"
+    />
+
     <title>{title}</title>
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#0d9488" />
+    <meta name="theme-color" content="#0f2a22" />
 
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
@@ -59,8 +66,11 @@ const jsonLd = {
     <meta name="twitter:image" content={ogImageURL} />
 
     <script type="application/ld+json" is:inline set:html={JSON.stringify(jsonLd)} />
+    <script is:inline>
+      document.documentElement.classList.add("js");
+    </script>
   </head>
-  <body class="bg-white text-slate-900 antialiased">
+  <body class="bg-paper font-sans text-ink antialiased">
     <slot />
     <FloatingWhatsApp />
   </body>

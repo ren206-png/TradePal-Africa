@@ -1,1 +1,220 @@
 @import "tailwindcss";
+
+/*
+ * "Market Ledger" design system.
+ * A trader's account book: cream paper, deep forest ink, saffron + terracotta
+ * accents, woven-cloth borders, receipt-style pricing. Tokens live here so every
+ * component pulls the same palette (bg-ink, text-saffron, font-display, ...).
+ */
+@theme {
+  --color-ink: #0f2a22;
+  --color-ink-2: #173a2f;
+  --color-ink-3: #24493c;
+  --color-paper: #f7f1e5;
+  --color-paper-2: #efe6d3;
+  --color-paper-3: #e4d8bf;
+  --color-saffron: #e9a21b;
+  --color-saffron-deep: #b87500;
+  --color-clay: #b5441f;
+  --color-leaf: #2f7d5b;
+  --color-wa-out: #d9fdd3;
+  --color-wa-bg: #efe7dc;
+
+  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 5rem;
+  }
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+  }
+  ::selection {
+    background: var(--color-saffron);
+    color: var(--color-ink);
+  }
+  :focus-visible {
+    outline: 3px solid var(--color-saffron);
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
+
+@layer components {
+  /* Display type: Fraunces with its optical-size axis cranked for large headings. */
+  .display {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    font-variation-settings: "opsz" 144;
+    letter-spacing: -0.022em;
+    line-height: 1.02;
+  }
+
+  /* Paper grain over the cream background — pure SVG noise, no image request. */
+  .grain {
+    position: relative;
+  }
+  .grain::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.5;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .36 0 0 0 0 .2 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .grain > * {
+    position: relative;
+  }
+
+  /* Faint ruled-ledger lines, used behind the hero. */
+  .ruled {
+    background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 39px, rgb(15 42 34 / 0.055) 39px, rgb(15 42 34 / 0.055) 40px);
+  }
+
+  /* Woven-cloth border: a repeating band of diamonds and triangles. */
+  .weave {
+    height: 18px;
+    background-color: var(--color-ink);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='18' viewBox='0 0 36 18'%3E%3Cpath d='M18 2 27 9 18 16 9 9Z' fill='%23e9a21b'/%3E%3Cpath d='M18 5.5 22.5 9 18 12.5 13.5 9Z' fill='%23b5441f'/%3E%3Cpath d='M0 0 6 0 3 5Z M30 0 36 0 33 5Z M0 18 6 18 3 13Z M30 18 36 18 33 13Z' fill='%232f7d5b'/%3E%3Ccircle cx='18' cy='9' r='1.2' fill='%23f7f1e5'/%3E%3C/svg%3E");
+    background-size: 36px 18px;
+    background-repeat: repeat-x;
+  }
+  .weave-thin {
+    height: 8px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='8' viewBox='0 0 16 8'%3E%3Cpath d='M0 8 8 0 16 8Z' fill='%23e9a21b'/%3E%3C/svg%3E");
+    background-color: var(--color-ink);
+    background-size: 16px 8px;
+    background-repeat: repeat-x;
+  }
+
+  /* Ledger leader: "label ........ value". */
+  .leader {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+  .leader::after {
+    order: 1;
+    content: "";
+    flex: 1;
+    border-bottom: 2px dotted currentColor;
+    opacity: 0.28;
+    transform: translateY(-0.25em);
+  }
+  .leader > :first-child {
+    order: 0;
+  }
+  .leader > :last-child {
+    order: 2;
+  }
+
+  /* Perforated receipt edge on the top and bottom of a card. */
+  .receipt {
+    --notch: 9px;
+    -webkit-mask:
+      radial-gradient(circle var(--notch) at 50% 0, transparent 98%, #000) top / 26px 51% repeat-x,
+      radial-gradient(circle var(--notch) at 50% 100%, transparent 98%, #000) bottom / 26px 51% repeat-x;
+    mask:
+      radial-gradient(circle var(--notch) at 50% 0, transparent 98%, #000) top / 26px 51% repeat-x,
+      radial-gradient(circle var(--notch) at 50% 100%, transparent 98%, #000) bottom / 26px 51% repeat-x;
+  }
+
+  /* Hand-drawn underline that sits under a highlighted word in a heading. */
+  .scribble {
+    position: relative;
+    white-space: nowrap;
+  }
+  .scribble::after {
+    content: "";
+    position: absolute;
+    left: -2%;
+    right: -2%;
+    bottom: -0.12em;
+    height: 0.34em;
+    background: no-repeat center / 100% 100%
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 14' preserveAspectRatio='none'%3E%3Cpath d='M2 9C28 3 52 12 82 7s58-5 84-1 26 3 32 1' fill='none' stroke='%23e9a21b' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E");
+    z-index: -1;
+  }
+
+  /* Chat bubbles pop in one after another; skipped entirely for reduced motion. */
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes slide-down {
+    from {
+      opacity: 0;
+      transform: translateY(-18px) rotate(-3deg);
+    }
+    to {
+      opacity: 1;
+      transform: rotate(2.2deg);
+    }
+  }
+  @keyframes float-soft {
+    0%,
+    100% {
+      transform: translateY(0) rotate(2.2deg);
+    }
+    50% {
+      transform: translateY(-6px) rotate(2.2deg);
+    }
+  }
+  /* Without JS everything is simply visible. With JS (html.js) the chat waits until the phone
+     scrolls into view (.play is added by an IntersectionObserver in Hero.astro). */
+  .js .phone:not(.play) .bubble,
+  .js .phone:not(.play) .tape {
+    opacity: 0;
+  }
+  .js .phone.play .bubble {
+    opacity: 0;
+    animation: pop-in 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    animation-delay: calc(0.4s + var(--i, 0) * 0.95s);
+  }
+  .tape {
+    transform: rotate(2.2deg);
+  }
+  .js .phone.play .tape {
+    opacity: 0;
+    animation:
+      slide-down 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 5.2s forwards,
+      float-soft 7s ease-in-out 6s infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .js .phone .bubble,
+    .js .phone .tape {
+      opacity: 1 !important;
+      animation: none !important;
+    }
+  }
+
+  /* FAQ accordion (native <details>, no JS). */
+  details.faq > summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  details.faq > summary::-webkit-details-marker {
+    display: none;
+  }
+  details.faq[open] .faq-plus {
+    transform: rotate(45deg);
+  }
+}
