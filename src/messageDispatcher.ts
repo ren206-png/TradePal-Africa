@@ -590,6 +590,12 @@ function replyForParseResult(result: AiParseResult, stockTrackingEnabled: boolea
 
 /** Argument-free commands that also work typed without the leading slash. */
 const BARE_COMMAND_WORDS: ReadonlySet<string> = new Set(["today", "stock", "lowstock", "help", "undo", "debts"]);
+/**
+ * Other things a shop owner types to mean "show me who owes me" (a real owner typed just "Debt" while
+ * testing). A lone "debt" can't be a new entry — that needs a name and amount — so the overview is
+ * the helpful answer, not the /debt usage message.
+ */
+const DEBTS_OVERVIEW_PHRASES: ReadonlySet<string> = new Set(["debt", "owing", "who owes me", "who owes me?", "who owes", "debtors"]);
 
 /**
  * Applies a list message (see ai/listEntry.ts) through the same applyLoggableIntent path single
@@ -717,6 +723,7 @@ async function dispatchCommandOrParse(
   // unambiguous, argument-free command words as the slash command rather than sending them to the AI parser.
   const bareCommand = text.trim().toLowerCase();
   if (BARE_COMMAND_WORDS.has(bareCommand)) text = `/${bareCommand}`;
+  else if (DEBTS_OVERVIEW_PHRASES.has(bareCommand)) text = "/debts";
   // "remind Amina" is likewise unambiguous: the verb "remind" plus a name can't be a sale or expense.
   else if (/^remind\s+\S/i.test(text.trim())) text = `/${text.trim()}`;
 
