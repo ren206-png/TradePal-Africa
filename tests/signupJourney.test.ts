@@ -156,6 +156,13 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
     expect(await say("/today")).toContain("Sales: 0.00 SLE");
   });
 
+  it("understands bare command words typed without a slash, as people do on a phone", async () => {
+    await say("sold 2 bags of rice for 12000");
+    expect(await say("Today")).toContain("Today (Africa/Freetown):");
+    expect(await say("help")).toContain("Available commands");
+    expect(await say("undo")).toBe("Undone: SALE of 12000.00 SLE.");
+  });
+
   it("keeps stock tracking and reminders switched off until the rollout flips them on", async () => {
     expect(await say("/stock")).toMatch(/isn't available/i);
     expect(await say("/remind Amina")).toMatch(/isn't available/i);

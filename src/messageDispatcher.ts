@@ -564,6 +564,9 @@ function replyForParseResult(result: AiParseResult, stockTrackingEnabled: boolea
   return { replyText: CLARIFICATION_REPLY, finalAction: "REJECTED" };
 }
 
+/** Argument-free commands that also work typed without the leading slash. */
+const BARE_COMMAND_WORDS: ReadonlySet<string> = new Set(["today", "stock", "lowstock", "help", "undo"]);
+
 async function dispatchCommandOrParse(
   deps: DispatcherDeps,
   merchant: Merchant,
@@ -575,6 +578,11 @@ async function dispatchCommandOrParse(
     include: { currency: true },
   });
   const scopedPrisma = getTenantScopedClient(deps.prisma, business.id);
+
+  // Shop owners on a phone often type just the word ("Today", "Stock", "help") — treat those few
+  // unambiguous, argument-free command words as the slash command rather than sending them to the AI parser.
+  const bareCommand = text.trim().toLowerCase();
+  if (BARE_COMMAND_WORDS.has(bareCommand)) text = `/${bareCommand}`;
 
   if (text.trim().startsWith("/")) {
     let replyText: string;

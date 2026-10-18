@@ -6,6 +6,7 @@ import {
   continueOnboarding,
   findMerchantByPhoneNumber,
   isOnboardingComplete,
+  looksLikeTransactionNotName,
   parseTestNumberCountryOverrides,
   resolveOnboardingCountry,
   startOnboarding,
@@ -181,5 +182,31 @@ describe("findMerchantByPhoneNumber", () => {
   it("returns null for a phone number that has never messaged in", async () => {
     const found = await findMerchantByPhoneNumber(prisma, "2340000000000");
     expect(found).toBeNull();
+  });
+});
+
+describe("first-customer step", () => {
+  it("does not save a sale typed at the first-customer step as a customer; it finishes setup and asks to resend", async () => {
+    const started = await startOnboarding(prisma, "254712340001");
+    await continueOnboarding(prisma, started.merchant, "Wanjiku's Shop");
+    let merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: "254712340001" } });
+    await continueOnboarding(prisma, merchant, "yes");
+    merchant = await prisma.merchant.findUniqueOrThrow({ where: { phoneNumber: "254712340001" } });
+    expect(merchant.onboardingStep).toBe("AWAITING_FIRST_CUSTOMER");
+
+    const result = await continueOnboarding(prisma, merchant, "sold 2 bags of rice for 12000");
+
+    expect(result.merchant.onboardingStep).toBe("COMPLETE");
+    expect(result.reply).toMatch(/send that message again/i);
+    expect(await prisma.customer.count({ where: { businessId: merchant.businessId } })).toBe(0);
+  });
+
+  it("tells a transaction or sentence apart from a person's name", () => {
+    for (const notAName of ["sold 2 bags of rice for 12000", "sold rice to Amina", "paid the supplier", "Amina 5000", "this is my very long first customer name"]) {
+      expect(looksLikeTransactionNotName(notAName)).toBe(true);
+    }
+    for (const name of ["Amina", "Mama Kadiatu", "Mr. Bangura", "Fatmata Kamara"]) {
+      expect(looksLikeTransactionNotName(name)).toBe(false);
+    }
   });
 });

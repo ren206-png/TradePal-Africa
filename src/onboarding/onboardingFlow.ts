@@ -173,6 +173,14 @@ async function handleAwaitingConsent(
 export const ONBOARDING_COMPLETE_REPLY =
   "Just tell me about a sale, expense, or debt in plain language, or type /help to see commands.";
 
+/** True for text that is clearly a transaction or a sentence rather than a person's name: it has a digit, starts with a bookkeeping verb, or runs past five words / 40 characters. */
+export function looksLikeTransactionNotName(text: string): boolean {
+  const t = text.trim();
+  if (/\d/.test(t)) return true;
+  if (/^(sold|sell|sale|bought|buy|paid|pay|spent|spend|expense|received|owes?|owed|debt|gave|give)\b/i.test(t)) return true;
+  return t.length > 40 || t.split(/\s+/).length > 5;
+}
+
 async function handleAwaitingFirstCustomer(
   prisma: PrismaClient,
   merchant: Merchant,
@@ -208,6 +216,19 @@ async function handleAwaitingFirstCustomer(
     return {
       merchant: updated,
       reply: `You're all set — I've skipped adding a first customer. Please send ${trimmed.split(/\s/)[0]} again. ${ONBOARDING_COMPLETE_REPLY}`,
+    };
+  }
+
+  // A sale, expense or sentence typed here ("sold 2 bags of rice for 12000") is the merchant
+  // already using the bot, not the name of a first customer — same handling as a slash command.
+  if (looksLikeTransactionNotName(trimmed)) {
+    const updated = await scoped.merchant.update({
+      where: { id: merchant.id },
+      data: { onboardingStep: "COMPLETE" },
+    });
+    return {
+      merchant: updated,
+      reply: `You're all set — I've skipped adding a first customer. Please send that message again. ${ONBOARDING_COMPLETE_REPLY}`,
     };
   }
 
