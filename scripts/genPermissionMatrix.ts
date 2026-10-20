@@ -1,0 +1,13 @@
+import { MERCHANT_PERMISSIONS, PLATFORM_PERMISSIONS, PLATFORM_STEP_UP_PERMISSIONS, merchantPermissionsFor, platformPermissionsFor } from "../src/auth/permissions.js";
+const mroles = ["OWNER","MANAGER","SALES_CLERK","INVENTORY_OPERATOR","FINANCE_OPERATOR","RESTRICTED_SUPPORT"] as const;
+const proles = ["SUPER_ADMIN","OPERATOR","SUPPORT","ANALYST"] as const;
+const mark = (b: boolean) => (b ? "yes" : "-");
+let out = "# Permission matrix\n\nGenerated from `src/auth/permissions.ts` by `npx tsx scripts/genPermissionMatrix.ts > docs/expansion/permission-matrix.md`. The code is the source of truth; `tests/permissions.test.ts` pins it. Authorization asks `canMerchant(role, permission)` / `canPlatform(role, permission)`, never role names.\n\n";
+out += "Legacy WhatsApp roles map as: OWNER -> OWNER, STAFF -> SALES_CLERK (`membershipRoleForLegacyMerchantRole`).\n\n## Merchant roles (inside one business)\n\n";
+out += `| Permission | ${mroles.join(" | ")} |\n|---|${mroles.map(() => "---").join("|")}|\n`;
+for (const p of MERCHANT_PERMISSIONS) out += `| \`${p}\` | ${mroles.map((r) => mark(merchantPermissionsFor(r).includes(p))).join(" | ")} |\n`;
+out += "\n## Platform admin roles (TradePal staff; no merchant permission by default)\n\n";
+out += `| Permission | ${proles.join(" | ")} | Step-up (flag \`adminStepUp\`) |\n|---|${proles.map(() => "---").join("|")}|---|\n`;
+for (const p of PLATFORM_PERMISSIONS) out += `| \`${p}\` | ${proles.map((r) => mark(platformPermissionsFor(r).includes(p))).join(" | ")} | ${PLATFORM_STEP_UP_PERMISSIONS.has(p) ? "yes" : "-"} |\n`;
+out += "\nNotes: viewing a merchant's financial data additionally needs a recorded support-access reason when flag `adminSupportAccessRequired` is on. The existing admin routes keep their original role checks (SUPER_ADMIN / SUPPORT); the platform permission is layered on top for the new panels. Regenerate with the command above if the matrix changes.\n";
+console.log(out);

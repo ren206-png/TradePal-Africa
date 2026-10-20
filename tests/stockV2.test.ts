@@ -5,7 +5,7 @@ import { enableFlag, makeBusiness, seedReference } from "./helpers/phase2.js";
 import { createProduct, createVariant } from "../src/domain/catalog.js";
 import {
   StockError, approveStockCount, cancelTransfer, createTransfer, dispatchTransfer, expireReservations, fulfilReservation, fulfilSale, getStockLevel,
-  mirrorLegacyMovement, openStockCount, postAdoptionOpening, quarantineStock, receiveStock, receiveTransfer, reconcileStock, recordCountLine,
+  findLegacyStockDrift, mirrorLegacyMovement, openStockCount, postAdoptionOpening, quarantineStock, receiveStock, receiveTransfer, reconcileStock, recordCountLine,
   recordOpeningBalance, setCountLineReason, recordOwnerWithdrawal, recordSpoilage, releaseReservation, reserveStock, restockReturn, reverseStockMovement, setStockPolicy,
   writeOffQuarantined,
 } from "../src/domain/stock.js";
@@ -420,4 +420,19 @@ describe("legacy inventory bridge (flag stockV2, default off)", () => {
   });
 });
 
-void postAdoptionOpening;
+describe("legacy stock drift detection", () => {
+  it("reports an adopted item whose two counts have parted, and nothing when they agree", async () => {
+    const s = await setup();
+    await enableFlag(prisma, s.businessId, "stockV2");
+    const item = await s.scoped.inventoryItem.create({ data: { businessId: s.businessId, name: "Oil", normalizedName: "oil", estimatedStockQty: 6 } });
+    const variant = await createVariant(s.scoped, { businessId: s.businessId, productId: (await createProduct(s.scoped, { businessId: s.businessId, name: "Oil" })).id, sku: `OIL-${n}`, name: "Oil", baseUnit: "litre" });
+    await s.scoped.productVariant.update({ where: { id: variant.id }, data: { inventoryItemId: item.id } });
+    await postAdoptionOpening(s.scoped, { businessId: s.businessId, shopId: s.shopId, variantId: variant.id, item });
+    expect(await findLegacyStockDrift(s.scoped, s.shopId)).toEqual([]);
+    await applyStockMovement(s.scoped, s.businessId, item, -2, "SALE"); // mirrored: still equal
+    expect(await findLegacyStockDrift(s.scoped, s.shopId)).toEqual([]);
+    await enableFlag(prisma, s.businessId, "stockV2", false); // mirror off: legacy moves alone
+    await applyStockMovement(s.scoped, s.businessId, await s.scoped.inventoryItem.findUniqueOrThrow({ where: { id: item.id } }), -1, "SALE");
+    expect(await findLegacyStockDrift(s.scoped, s.shopId)).toEqual([{ inventoryItemId: item.id, variantId: variant.id, sku: variant.sku, legacyEstimate: 3, v2OnHand: 4 }]);
+  });
+});

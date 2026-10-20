@@ -754,6 +754,32 @@ export async function reconcileStock(scoped: TenantScopedClient): Promise<StockM
   return out;
 }
 
+export interface LegacyStockDrift {
+  inventoryItemId: string;
+  variantId: string;
+  sku: string;
+  legacyEstimate: number;
+  v2OnHand: number;
+}
+
+/**
+ * Items that adopted a catalog variant should keep the legacy estimate and the new on-hand equal while the mirror is
+ * on (they start equal at adoption, then every legacy movement is mirrored). A difference means a mirror write failed,
+ * the flag was off for a while, or someone changed one side directly. Reporting only: nothing is auto-corrected.
+ */
+export async function findLegacyStockDrift(scoped: TenantScopedClient, shopId: string): Promise<LegacyStockDrift[]> {
+  const variants = await scoped.productVariant.findMany({ where: { inventoryItemId: { not: null } }, include: { inventoryItem: true } });
+  const drift: LegacyStockDrift[] = [];
+  for (const v of variants) {
+    if (!v.inventoryItem) continue;
+    const level = await getStockLevel(scoped, shopId, v.id);
+    if (level.onHand !== v.inventoryItem.estimatedStockQty) {
+      drift.push({ inventoryItemId: v.inventoryItem.id, variantId: v.id, sku: v.sku, legacyEstimate: v.inventoryItem.estimatedStockQty, v2OnHand: level.onHand });
+    }
+  }
+  return drift;
+}
+
 // ------------------------------------------------------------------------------- legacy bridge
 
 /**

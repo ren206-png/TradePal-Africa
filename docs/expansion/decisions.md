@@ -107,6 +107,26 @@ Phase 1 was started on `APPROVED: PHASE 0` without separate answers to OPEN-1..3
 | New: admin step-up and support access | flags `adminStepUp`, `adminSupportAccessRequired`, **default OFF** | leave off |
 | New: heartbeat | `SystemHeartbeat`, `/heartbeat` (404 unless `HEARTBEAT_ENABLED=true`) | leave unset |
 
+## C3. Phase 2 decisions (built additively, flags default OFF; confirm or change)
+
+| # | Decision | Alternatives | Why | Reverse by |
+|---|---|---|---|---|
+| D1 | Keep the legacy `InventoryItem`/`Transaction` path unchanged and layer the new catalog/stock/journal system beside it, bridged by explicit adoption (`/adopt`) and flag-gated mirrors | rewrite the legacy tables; dual-write silently | additive-only rule; existing commands must behave identically with flags off (scenario 25) | leave flags off |
+| D2 | Stock is quantities in integer BASE units; pack sizes are declared conversions (>= 2); an undeclared unit is an error | decimal quantities; guessing conversions | no floats; "a bag, carton and piece are never interchangeable without a declaration" | n/a |
+| D3 | Costing = moving weighted average over costed units only; uncosted units tracked and flagged; returns restock at the cost they left at; backdated entries not restated | FIFO layers; blending unknown cost as zero | simplest sound method that never overstates profit; limits documented in `accounting-postings.md` | switch method in `stock.ts` |
+| D4 | Negative-stock policy per business: ALLOW (default, legacy behaviour) or BLOCK with a named approver override; backorders off by default | block always | the existing product never blocks a sale; B2B/B2C reservations need available stock, so reservations always check unless backorders are enabled | `setStockPolicy` |
+| D5 | Overselling is prevented by a row lock on the balance (`SELECT ... FOR UPDATE`) plus append-only movements; reconcile proves balance = movement sum | optimistic retry; advisory locks | atomic, auditable | n/a |
+| D6 | Legacy WhatsApp transactions are journaled to explicit "method not recorded" / "unresolved" / "debt-note suspense" accounts, never guessed as cash or revenue | assume cash; treat debt notes as credit sales | the earlier flow recorded no method and no cost; inventing them would fabricate history (invariant 8) | do not enable `accountingJournals` |
+| D7 | Daily close expects ONLY cash explicitly recorded as cash; receipts with no recorded method are reported separately | assume unspecified = cash | same reason as D6. Consequence: until payment method is captured (Phase 7), a merchant who counts all money will see a "more than books" difference | do not enable `dailyClose` yet (see self-check F6) |
+| D8 | Admin "void" = reverse via the existing `reverseTransaction`, plus audit; no delete route exists | allow delete | master prompt section 18 | n/a |
+| D9 | Every successful admin write gets a generic audit row (`admin.write`) in addition to any specific one; the row is written before the response | per-route audits only | scenario 28 by construction, including routes whose domain code audits nothing | remove middleware (not advised) |
+| D10 | CSV export is formula-safe: apostrophe-prefixed text cells, validated integer columns, 10,000-row cap, audited | no escaping | spreadsheet formula injection from merchant-controlled text | n/a |
+| D11 | Rounding: half away from zero; basis-point percentages; largest-remainder allocation | banker's rounding | retail convention; parts always sum to the total | n/a |
+| D12 | New merchant WhatsApp commands (`/close /products /addproduct /pack /receive /count /adopt`) answer as "unrecognized" while their flag is off | always on | scenario 25 | n/a |
+
+Not decided here (still OPEN): tax treatment, retention periods, which payment-method capture UX (Phase 7), whether to let bulk catalog editing live in a web/PWA surface (planned for a later phase; Phase 2 delivers WhatsApp commands and the admin panel only).
+
 ## D. Change log
 - 2026-10-20 — register created in Phase 0; G1-G13 recorded; P1-P10 proposed; OPEN-1..11 listed.
 - 2026-10-20 — Phase 1 completed on branch `expansion/phase-1`; section C2 records the provisional application of P1-P4, P10 and new admin controls.
+- 2026-10-20 — Phase 2 built on branch `expansion/phase-1` (continuing the same local branch); section C3 records the Phase 2 decisions.

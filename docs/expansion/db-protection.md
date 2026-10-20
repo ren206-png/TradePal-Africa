@@ -1,6 +1,6 @@
 # Database-level protection: runbook
 
-Phase 1 · migrations `20261020000000` … `20261020000400` · status: **implemented, locally tested (PGlite). Not applied to any real database. Not rehearsed on a copy of production.**
+Phase 1-2 · migrations `20261020000000` … `20261021000000` · status: **implemented, locally tested (PGlite). Not applied to any real database. Not rehearsed on a copy of production.**
 
 ## 1. What the database now enforces (without relying on application code)
 
@@ -12,6 +12,11 @@ Phase 1 · migrations `20261020000000` … `20261020000400` · status: **impleme
 | A business with a financial trail cannot be deleted | `tradepal_business_guard` | `Business` (delete allowed only if `isSynthetic`, or it has no Transaction/Debt/Subscription/PaymentRequest) |
 | `isSynthetic` can never change | same guard | `Business` |
 | Cross-tenant reads return nothing | RLS policy `tenant_isolation` on `businessId = current_setting('app.current_business_id')` | 24 tenant tables incl. `Shop`, `Membership` |
+| Journals balance (debits = credits, >= 2 lines, every line in the entry's own business) | deferred constraint trigger, checked at commit | `JournalEntry`, `JournalLine` |
+| Journal lines are one-sided positive amounts | CHECK | `JournalLine` |
+| Stock/journal/daily-close history is append-only and cannot be truncated | triggers (same as Phase 1) | `StockMovement`, `JournalEntry`, `JournalLine`, `DailyClose` |
+| Counts, transfers, reservations, accounts cannot be deleted | no-delete triggers | `StockCount(Line)`, `StockTransfer(Line)`, `StockReservation`, `Account` |
+| Value sanity (pack >= 2, price > 0, validity windows, non-negative buckets, count discrepancy = counted - expected, close difference = counted - expected) | CHECK constraints | catalog/stock/close tables |
 | Money-purpose boundary | enum `PaymentPurpose` on `Invoice` / `PaymentRequest`; code guard `assertProviderAllowedForPurpose` | pawaPay: subscription only |
 
 Synthetic (test/demo) businesses are the only ones whose financial rows may be hard-deleted. A real merchant is closed by suspension/anonymisation, never deletion (decision G13).
@@ -57,5 +62,8 @@ Set `Business.isSynthetic = true` **at creation** (it cannot be changed later). 
 | Triggers refuse UPDATE/DELETE/TRUNCATE; synthetic exception works; `isSynthetic` immutable | `tests/dbProtection.test.ts` (18, PGlite direct) |
 | Migrations build the same schema as `schema.prisma` | `tests/migrationDrift.test.ts` |
 | RLS isolates tenants under the non-owner role | `tests/dbProtection.test.ts` (test role only) |
+| Phase 2 tables are covered by RLS and the tenant scope | same test (the two lists must match exactly) |
+| Migrations apply on a REAL Postgres server | **not verified**: no Postgres server or Docker daemon was available. `scripts/rehearseMigrations.sh` is provided for the owner to run on a restored backup (written, not yet run) |
+| True concurrent lock contention (`FOR UPDATE`) | **not verified**: PGlite serializes sessions; the logic and atomic checks are tested, interleaving is not |
 | Production Postgres accepts these migrations | **not verified** |
 | RLS active in production | **no** (inert by design until §2) |
