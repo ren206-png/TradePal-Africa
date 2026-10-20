@@ -15,7 +15,7 @@ import { requestRefund } from "../domain/store/refunds.js";
 import { publicCatalog } from "../domain/store/storefront.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
 import { isFeatureEnabled } from "../domain/featureFlags.js";
-import { ORDER_UPDATES_NOTICE } from "../messaging/consent.js";
+import { ORDER_UPDATES_NOTICE, deriveUpdatesCode, updatesLink } from "../messaging/consent.js";
 import { FLAG_CONSUMER_MESSAGING, consumerMessagingSwitchOn } from "../messaging/send.js";
 import { esc, money, notFoundPage, page } from "./html.js";
 import type { AdapterRegistry } from "../payments/adapter.js";
@@ -301,7 +301,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
       await handler({ req, res, businessId: ref.businessId, orderId: ref.orderId, token });
     });
 
-  const orderPage = (v: PublicOrderView, token: string, flash = "") => {
+  const orderPage = (v: PublicOrderView, token: string, flash = "", updatesCard = "") => {
     const m = (x: bigint) => money(x, v.minorUnitExp, v.currencyCode);
     const steps = v.timeline.map((t) => `<li>${esc(t.label)} <span class="muted">${esc(t.at.toISOString().slice(0, 16).replace("T", " "))} UTC</span></li>`).join("");
     const items = v.items.map((i) => `<tr><td>${esc(i.description)} <span class="muted">${i.quantity} x ${esc(i.unit)}</span></td><td class="n">${m(i.lineTotalMinor)}</td></tr>`).join("");
@@ -309,6 +309,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
     return page(`Order ${v.reference}`, `<h1>Order ${esc(v.reference)}</h1>${flash ? `<p class="card warn">${esc(flash)}</p>` : ""}
       <p><span class="badge">${esc(v.status.replace(/_/g, " ").toLowerCase())}</span> from <strong>${esc(v.seller.name)}</strong>${v.seller.supportPhone ? `, phone ${esc(v.seller.supportPhone)}` : ""}</p>
       ${v.paymentUnderReview ? `<p class="card warn">We are checking a payment on this order. The seller will contact you.</p>` : ""}
+      ${updatesCard}
       <h2>What happens next</h2><ul>${steps}</ul>
       ${v.collection ? `<p><strong>Collect at:</strong> ${esc(v.collection.location ?? "")}${v.collection.instructions ? `<br>${esc(v.collection.instructions)}` : ""}</p>` : ""}
       ${v.delivery ? `<p><strong>Delivery to:</strong> ${esc(v.delivery.landmark ?? v.delivery.address ?? "")} (${esc(v.delivery.zone ?? "")})${v.delivery.reference ? `<br>Delivery reference: ${esc(v.delivery.reference)}` : ""}</p>` : ""}
@@ -329,8 +330,22 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
 
   router.get("/order/:token", limit(read, "read"), withOrder(async ({ req, res, businessId, orderId, token }) => {
     const v = await publicOrderView(prisma, businessId, orderId, clock());
-    res.type("html").send(orderPage(v, token, typeof req.query["m"] === "string" ? req.query["m"].slice(0, 200) : ""));
+    res.type("html").send(orderPage(v, token, typeof req.query["m"] === "string" ? req.query["m"].slice(0, 200) : "", await updatesCard(businessId, orderId, token)));
   }));
+
+  /** The "start WhatsApp updates" prompt: shown only when the shopper ticked the box and has not yet proved the number is theirs. */
+  const updatesCard = async (businessId: string, orderId: string, token: string): Promise<string> => {
+    if (!consumerMessagingSwitchOn()) return "";
+    const scoped = getTenantScopedClient(prisma, businessId);
+    const order = await scoped.storeOrder.findUnique({ where: { id: orderId }, select: { buyerPhone: true } });
+    if (!order) return "";
+    const consent = await scoped.contactConsent.findFirst({ where: { phone: order.buyerPhone, purpose: "ORDER_UPDATES" } });
+    if (!consent || consent.status !== "OPTED_IN") return "";
+    if (consent.verifiedAt) return `<p class="card">WhatsApp updates for this order are on. Reply STOP to stop them.</p>`;
+    const link = updatesLink(deriveUpdatesCode(token));
+    if (!link) return "";
+    return `<div class="card"><strong>Start your WhatsApp updates</strong><br><span class="muted">You asked for updates. Tap the link and send the message that opens: one tap, and it proves this number is yours. Until then nothing is sent.</span><p><a href="${esc(link)}">Start updates on WhatsApp</a></p></div>`;
+  };
 
   router.get("/order/:token/receipt", limit(read, "read"), withOrder(async ({ res, businessId, orderId }) => {
     const v = await publicOrderView(prisma, businessId, orderId, clock());

@@ -40,7 +40,7 @@ import type { CircuitBreaker } from "./monitoring/circuitBreaker.js";
 import type { SttProvider } from "./stt/provider.js";
 import { downloadWhatsAppMedia } from "./whatsapp/mediaGateway.js";
 import { conversationEnabled, proposeLoggable, tryHandleReply, type ConversationCtx, type InputSource } from "./conversation/flow.js";
-import { applyStart, applyStop, consentKeyword, hasConsentHistory } from "./messaging/consent.js";
+import { applyStart, applyStop, consentKeyword, hasConsentHistory, parseUpdatesMessage, verifyUpdatesByCode } from "./messaging/consent.js";
 import { sendMessage } from "./messaging/send.js";
 import { whatsappTransport } from "./messaging/transport.js";
 import { sendWhatsAppTextMessage, type OutboundGatewayDeps } from "./whatsapp/outboundGateway.js";
@@ -887,6 +887,17 @@ async function dispatchCommandOrParse(
  * a STOP from a number we have no consent record for, so the older behaviour for strangers is unchanged.
  */
 async function handleConsentKeyword(deps: DispatcherDeps, job: InboundMessageJob, text: string): Promise<boolean> {
+  // "UPDATES <code>" from the shopper's own phone verifies their order-update consent (never a sign-up; never from a registered merchant).
+  const updatesCode = parseUpdatesMessage(text);
+  if (updatesCode) {
+    const transport = whatsappTransport({ prisma: deps.prisma, ...deps.outboundGateway });
+    const now = new Date();
+    const v = await verifyUpdatesByCode(deps.prisma, { phone: job.fromNumber, code: updatesCode, now });
+    const base = { toPhone: job.fromNumber, idempotencyKey: `updates:${job.waMessageId}`, lastInboundAt: now, now };
+    if (v.result === "VERIFIED") await sendMessage(deps.prisma, transport, { ...base, classId: "CONSUMER_UPDATES_STARTED", params: { seller: v.sellerName, reference: v.reference } });
+    else await sendMessage(deps.prisma, transport, { ...base, classId: v.result === "BLOCKED" ? "CONSUMER_UPDATES_BLOCKED" : "CONSUMER_UPDATES_UNMATCHED" });
+    return true;
+  }
   const keyword = consentKeyword(text);
   if (!keyword || !(await hasConsentHistory(deps.prisma, job.fromNumber))) return false;
   const transport = whatsappTransport({ prisma: deps.prisma, ...deps.outboundGateway });

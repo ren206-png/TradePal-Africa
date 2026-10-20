@@ -8,7 +8,8 @@ import { makeSeller, type Seller } from "./helpers/store.js";
 import { createAdminRouter } from "../src/admin/adminRoutes.js";
 import { createAdminUser } from "../src/admin/adminUsers.js";
 import { STEP_UP_HEADER } from "../src/admin/platformGuards.js";
-import { recordOrderUpdatesConsent, applyStop } from "../src/messaging/consent.js";
+import { applyStop } from "../src/messaging/consent.js";
+import { recordVerifiedConsent as recordOrderUpdatesConsent } from "./helpers/consent.js";
 import { MESSAGE_CLASSES } from "../src/messaging/registry.js";
 import { sendMessage } from "../src/messaging/send.js";
 import { resetAlertDedupeForTests, setAlertDeliveryRecorder } from "../src/monitoring/alerts.js";
@@ -136,7 +137,7 @@ describe("consent, opt-out and the block list", () => {
     const all = await request(app).get("/admin/messaging/consents").set(auth(t));
     expect(JSON.stringify(all.body)).not.toContain(PHONE);
     const row = all.body.consents.find((c: { business: string }) => c.business === "Msg Admin Shop");
-    expect(row).toMatchObject({ phone: "••••4567", purpose: "ORDER_UPDATES", status: "OPTED_IN", textVersion: "order-updates-v1" });
+    expect(row).toMatchObject({ phone: "••••4567", purpose: "ORDER_UPDATES", status: "OPTED_IN", textVersion: "order-updates-v2" });
     expect((await request(app).get("/admin/messaging/consents?phone=4567").set(auth(t))).body.consents.length).toBeGreaterThan(0);
     expect((await request(app).get(`/admin/messaging/consents?phone=${PHONE}`).set(auth(t))).body.consents.length).toBeGreaterThan(0);
     expect((await request(app).get("/admin/messaging/consents?phone=9999").set(auth(t))).body.consents).toEqual([]);

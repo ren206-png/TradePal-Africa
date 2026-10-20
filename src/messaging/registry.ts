@@ -84,6 +84,24 @@ export const MESSAGE_CLASSES: readonly MessageClassDef[] = [
     notes: "A reply inside the window the shopper just opened.",
   },
   {
+    id: "CONSUMER_UPDATES_STARTED", audience: "CONSUMER", category: "SERVICE", pipeline: "ENFORCED",
+    trigger: "A shopper sends UPDATES <code> from the number they gave at checkout.", consentBasis: "ONE_OFF_REPLY",
+    windowRule: "SESSION_ONLY", bodyKey: "consent.updatesStarted", paramCount: 0,
+    notes: "A reply inside the window the shopper just opened. It is what makes the consent VERIFIED. Names the seller and the order reference.",
+  },
+  {
+    id: "CONSUMER_UPDATES_UNMATCHED", audience: "CONSUMER", category: "SERVICE", pipeline: "ENFORCED",
+    trigger: "A shopper sends UPDATES <code> and the code does not match that number.", consentBasis: "ONE_OFF_REPLY",
+    windowRule: "SESSION_ONLY", bodyKey: "consent.updatesUnmatched", paramCount: 0,
+    notes: "A reply inside the window the sender just opened; reveals nothing about any order.",
+  },
+  {
+    id: "CONSUMER_UPDATES_BLOCKED", audience: "CONSUMER", category: "SERVICE", pipeline: "ENFORCED",
+    trigger: "A shopper who sent STOP earlier sends UPDATES <code>.", consentBasis: "ONE_OFF_REPLY",
+    windowRule: "SESSION_ONLY", bodyKey: "consent.updatesBlocked", paramCount: 0,
+    notes: "Tells them to send START first. A STOP is never undone by a link.",
+  },
+  {
     id: "MERCHANT_CONFIRMATION_REPLY", audience: "MERCHANT", category: "SERVICE", pipeline: "REPLY",
     trigger: "A merchant answers YES, NO or a number to a pending confirmation or clarification.", consentBasis: "ONE_OFF_REPLY",
     windowRule: "SESSION_ONLY", paramCount: 0,

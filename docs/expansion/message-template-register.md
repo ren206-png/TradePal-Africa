@@ -16,6 +16,9 @@ Pipeline column: **ENFORCED** = sent only through `sendMessage` (class, consent,
 | `CONSUMER_ORDER_CANCELLED` | CONSUMER | UTILITY | ENFORCED | An order is cancelled by the seller, by the shopper, or by hold expiry. | ORDER_UPDATES_OPT_IN (ORDER_UPDATES) | TEMPLATE_REQUIRED | `{seller}: your order {reference} was cancelled. Reply STOP to stop order messages.` | {{1}}=seller, {{2}}=reference | NOT SUBMITTED (suppressed) |
 | `CONSUMER_OPT_OUT_CONFIRMATION` | CONSUMER | SERVICE | ENFORCED | A shopper replies STOP. | ONE_OFF_REPLY | SESSION_ONLY | `You will not get any more order messages from TradePal Africa. Reply START if you want them again.` | - | not needed (session reply) |
 | `CONSUMER_OPT_IN_CONFIRMATION` | CONSUMER | SERVICE | ENFORCED | A shopper replies START after STOP. | ONE_OFF_REPLY | SESSION_ONLY | `Order messages from TradePal Africa are on again for this number.` | - | not needed (session reply) |
+| `CONSUMER_UPDATES_STARTED` | CONSUMER | SERVICE | ENFORCED | A shopper sends UPDATES <code> from the number they gave at checkout. | ONE_OFF_REPLY | SESSION_ONLY | `You will now get WhatsApp updates about order {reference} from {seller}. Updates only, no marketing. Reply STOP any time.` | - | not needed (session reply) |
+| `CONSUMER_UPDATES_UNMATCHED` | CONSUMER | SERVICE | ENFORCED | A shopper sends UPDATES <code> and the code does not match that number. | ONE_OFF_REPLY | SESSION_ONLY | `We could not match that code to this phone number. Open your order page and tap the link again, from the phone number you gave when you ordered.` | - | not needed (session reply) |
+| `CONSUMER_UPDATES_BLOCKED` | CONSUMER | SERVICE | ENFORCED | A shopper who sent STOP earlier sends UPDATES <code>. | ONE_OFF_REPLY | SESSION_ONLY | `You stopped messages from TradePal Africa earlier. Reply START first, then tap the link on your order page again.` | - | not needed (session reply) |
 | `MERCHANT_CONFIRMATION_REPLY` | MERCHANT | SERVICE | REPLY | A merchant answers YES, NO or a number to a pending confirmation or clarification. | ONE_OFF_REPLY | SESSION_ONLY | free text | - | not needed (session reply) |
 | `MERCHANT_DEVICE_CODE` | MERCHANT | AUTHENTICATION | REPLY | A merchant sends /connect to link a phone for offline drafts. | ONE_OFF_REPLY | SESSION_ONLY | `Your one-time code to connect this phone is {code}. It works once and expires in {minutes} minutes. Do not share it.` | - | not needed (session reply) |
 | `MERCHANT_REPLY` | MERCHANT | SERVICE | LEGACY | Any reply to a merchant's message (commands, parsed entries, errors). | ONE_OFF_REPLY | SESSION_ONLY | free text | - | legacy: outside this register's control |
@@ -36,6 +39,9 @@ Pipeline column: **ENFORCED** = sent only through `sendMessage` (class, consent,
 - `CONSUMER_ORDER_CANCELLED`: Says only that the order was cancelled. Refund amounts and debt or collection language are never included.
 - `CONSUMER_OPT_OUT_CONFIRMATION`: A reply inside the window the shopper just opened. Sent even though the number is now blocked: it is the only message allowed after STOP.
 - `CONSUMER_OPT_IN_CONFIRMATION`: A reply inside the window the shopper just opened.
+- `CONSUMER_UPDATES_STARTED`: A reply inside the window the shopper just opened. It is what makes the consent VERIFIED. Names the seller and the order reference.
+- `CONSUMER_UPDATES_UNMATCHED`: A reply inside the window the sender just opened; reveals nothing about any order.
+- `CONSUMER_UPDATES_BLOCKED`: Tells them to send START first. A STOP is never undone by a link.
 - `MERCHANT_CONFIRMATION_REPLY`: Free text inside the 24-hour window the merchant just opened. Text comes from the i18n catalog (confirm.*, clarify.*).
 - `MERCHANT_DEVICE_CODE`: One-time code, single use, short expiry. Sent only as a reply to the merchant's own command.
 - `MERCHANT_REPLY`: Free text from `messageDispatcher.reply`. Registered merchants only.

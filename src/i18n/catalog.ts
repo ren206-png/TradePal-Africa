@@ -47,6 +47,10 @@ export const CATALOG = define({
   "consent.optedIn": { en: "Order messages from TradePal Africa are on again for this number." },
   "consent.nothingToTurnOn": { en: "There were no order messages to turn back on for this number." },
 
+  "consent.updatesStarted": { en: "You will now get WhatsApp updates about order {reference} from {seller}. Updates only, no marketing. Reply STOP any time." },
+  "consent.updatesUnmatched": { en: "We could not match that code to this phone number. Open your order page and tap the link again, from the phone number you gave when you ordered." },
+  "consent.updatesBlocked": { en: "You stopped messages from TradePal Africa earlier. Reply START first, then tap the link on your order page again." },
+
   // ---- order updates to a shopper (each one is a registered template class)
   "order.confirmed": { en: "{seller}: your order {reference} is confirmed. Reply STOP to stop order messages." },
   "order.ready": { en: "{seller}: your order {reference} is ready for pickup. Reply STOP to stop order messages." },

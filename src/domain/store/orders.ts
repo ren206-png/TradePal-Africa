@@ -1,5 +1,5 @@
 import { emitOrderStatusEvent } from "../../messaging/orderEvents.js";
-import { recordOrderUpdatesConsent } from "../../messaging/consent.js";
+import { deriveUpdatesCode, recordOrderUpdatesConsent } from "../../messaging/consent.js";
 import { FLAG_CONSUMER_MESSAGING, consumerMessagingSwitchOn } from "../../messaging/send.js";
 import { timingSafeEqual } from "node:crypto";
 import type { Basket, BasketLine, Prisma, PrismaClient, StoreFulfilment, StoreOrder, StoreOrderLine, StorePaymentMethod, TradePaymentMethod } from "@prisma/client";
@@ -188,7 +188,7 @@ async function placeForSeller(
       if (buyer.orderUpdatesConsent && consumerMessagingSwitchOn() && (await isFeatureEnabled(scoped, businessId, FLAG_CONSUMER_MESSAGING))) {
         // Never allowed to disturb the placement (a failure here would otherwise reach the retry loop below).
         try {
-          await recordOrderUpdatesConsent(prisma, { businessId, phone, sourceRef: placed.order.id });
+          await recordOrderUpdatesConsent(prisma, { businessId, phone, sourceRef: placed.order.id, verifyCode: deriveUpdatesCode(placed.accessToken) });
         } catch (consentError) {
           console.error("[messaging] could not record order-updates consent:", (consentError as Error).message);
         }

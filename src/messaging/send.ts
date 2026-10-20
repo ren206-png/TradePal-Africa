@@ -35,7 +35,7 @@ export interface SendRequest {
 }
 
 export type SuppressionReason =
-  | "UNREGISTERED_CLASS" | "NOT_ENFORCED_CLASS" | "SWITCH_OFF" | "FLAG_OFF" | "BLOCKED" | "NO_CONSENT" | "TEMPLATE_NOT_APPROVED"
+  | "UNREGISTERED_CLASS" | "NOT_ENFORCED_CLASS" | "SWITCH_OFF" | "FLAG_OFF" | "BLOCKED" | "NO_CONSENT" | "CONSENT_NOT_VERIFIED" | "TEMPLATE_NOT_APPROVED"
   | "OUTSIDE_WINDOW" | "MISSING_BUSINESS" | "MISSING_IDENTITY" | "BAD_RECIPIENT";
 
 export interface SendOutcome {
@@ -120,6 +120,8 @@ export async function sendMessage(prisma: PrismaClient, transport: MessageTransp
   if (def.consentPurpose) {
     const consent = await getTenantScopedClient(prisma, req.businessId!).contactConsent.findFirst({ where: { phone: to, purpose: def.consentPurpose } });
     if (!consent || consent.status !== "OPTED_IN") return suppress("NO_CONSENT");
+    // a ticked box is a claim; the person must also have messaged TradePal from this number (see messaging/consent.ts)
+    if (!consent.verifiedAt) return suppress("CONSENT_NOT_VERIFIED");
   }
 
   // A message to a shopper always names the seller it is about.

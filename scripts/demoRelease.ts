@@ -157,7 +157,9 @@ export async function runReleaseDemo(log: (line: string) => void = () => undefin
     await openSupportCase(prisma, { businessId: w.R.businessId, orderId: orderA.id, type: "OTHER", openedBy: "CONSUMER", summary: "Please confirm my pickup time next week", contactName: "Amaka Obi", contactPhone: "08031234567" });
 
     // consent and messaging: a recorded opt-in, and a refused message because no template is approved
+    // (the checkout tick already recorded a claim; the order page then asks the shopper to tap a link and message TradePal from the number)
     await recordOrderUpdatesConsent(prisma, { businessId: w.R.businessId, phone: "2348031234567", sourceRef: orderA.id });
+    await prisma.contactConsent.updateMany({ where: { businessId: w.R.businessId, phone: "2348031234567" }, data: { verifiedAt: new Date() } });
     process.env["CONSUMER_MESSAGING_ENABLED"] = "true";
     const refused = await sendMessage(prisma, { sendText: async () => ({}), sendTemplate: async () => ({}) }, { classId: "CONSUMER_ORDER_CONFIRMED", toPhone: "2348031234567", businessId: w.R.businessId, params: { seller: "Retail Corner", reference: orderA.reference }, idempotencyKey: `demo:${orderA.id}:confirmed` });
     log(`  Consumer messaging: Amaka opted in at checkout, but no template is approved, so the update is ${refused.decision} (${refused.reason}). Nothing was sent.`);

@@ -3289,16 +3289,20 @@ enum ContactConsentBasis {
 /// customer list: it exists only because that person said yes themselves (a checkbox at checkout, a message they sent, a form).
 /// Transaction updates and marketing are separate purposes with separate consent.
 model ContactConsent {
-  id          String               @id @default(uuid())
-  businessId  String
-  phone       String // digits, international format
-  purpose     ContactPurpose
-  status      ContactConsentStatus
-  basis       ContactConsentBasis
-  textVersion String // the exact notice wording version the person saw
-  sourceRef   String? // e.g. the order id
-  createdAt   DateTime             @default(now()) @db.Timestamptz()
-  updatedAt   DateTime             @default(now()) @updatedAt @db.Timestamptz()
+  id             String               @id @default(uuid())
+  businessId     String
+  phone          String // digits, international format
+  purpose        ContactPurpose
+  status         ContactConsentStatus
+  basis          ContactConsentBasis
+  textVersion    String // the exact notice wording version the person saw
+  sourceRef      String? // e.g. the order id
+  /// A claim made by ticking a box is not proof the number belongs to the person. Messages are sent only once the person has sent TradePal
+  /// a WhatsApp message from that number carrying the code (verifiedAt set). The code is kept only as a hash.
+  verifiedAt     DateTime?            @db.Timestamptz()
+  verifyCodeHash String?
+  createdAt      DateTime             @default(now()) @db.Timestamptz()
+  updatedAt      DateTime             @default(now()) @updatedAt @db.Timestamptz()
 
   business Business              @relation(fields: [businessId], references: [id])
   events   ContactConsentEvent[]

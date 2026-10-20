@@ -9,7 +9,12 @@ import { makeSeller, placeStoreOrder, type Seller } from "./helpers/store.js";
 import { CATALOG, LOCALES, localeCoverage, t, type CatalogKey } from "../src/i18n/index.js";
 import { MESSAGE_CLASSES, messageClass } from "../src/messaging/registry.js";
 import { renderTemplateRegister } from "../src/messaging/registerDoc.js";
-import { adminBlock, adminUnblock, applyStart, applyStop, consentKeyword, isBlocked, recordOrderUpdatesConsent } from "../src/messaging/consent.js";
+import { recordVerifiedConsent } from "./helpers/consent.js";
+import express from "express";
+import request from "supertest";
+import { createStorefrontRouter } from "../src/storefront/routes.js";
+import { InMemoryLoginRateLimiter } from "../src/admin/rateLimiter.js";
+import { adminBlock, adminUnblock, applyStart, applyStop, consentKeyword, isBlocked, recordOrderUpdatesConsent, deriveUpdatesCode, verifyUpdatesByCode, parseUpdatesMessage, updatesLink } from "../src/messaging/consent.js";
 import { sendMessage, templateParamOrder, type MessageTransport } from "../src/messaging/send.js";
 import { createOrderUpdateHandler } from "../src/messaging/orderUpdates.js";
 import { setOrderEventHandler } from "../src/messaging/orderEvents.js";
@@ -119,9 +124,9 @@ describe("message registry and the generated template register", () => {
     }
   });
 
-  it("contains no debt-collection, lending, promotional or secret-bearing wording in any enforced shopper body", () => {
+  it("contains no debt-collection, lending, promotional or secret-bearing wording in any order-update body", () => {
     const banned = /\b(owe|owed|debt|overdue|loan|credit|collect|discount|offer|promo|sale|buy now|pay now|code|link)\b/i;
-    for (const c of MESSAGE_CLASSES.filter((x) => x.audience === "CONSUMER" && x.pipeline === "ENFORCED" && x.bodyKey)) expect(CATALOG[c.bodyKey!].en, c.id).not.toMatch(banned);
+    for (const c of MESSAGE_CLASSES.filter((x) => x.audience === "CONSUMER" && x.consentPurpose && x.bodyKey)) expect(CATALOG[c.bodyKey!].en, c.id).not.toMatch(banned);
   });
 
   it("matches docs/expansion/message-template-register.md exactly", () => {
@@ -163,6 +168,8 @@ describe("consent, block list and the send pipeline", () => {
     await enableFlag(prisma, s.businessId, "consumerMessaging");
     expect((await attempt("t:3")).reason).toBe("NO_CONSENT");
     await recordOrderUpdatesConsent(prisma, { businessId: s.businessId, phone: PHONE });
+    expect((await attempt("t:3b")).reason).toBe("CONSENT_NOT_VERIFIED"); // a ticked box is only a claim
+    await prisma.contactConsent.updateMany({ where: { businessId: s.businessId, phone: PHONE }, data: { verifiedAt: new Date() } });
     expect((await attempt("t:4")).reason).toBe("TEMPLATE_NOT_APPROVED");
     expect(sent).toEqual([]);
 
@@ -172,7 +179,7 @@ describe("consent, block list and the send pipeline", () => {
     expect(sent).toEqual([{ kind: "template", to: PHONE, template: "order_confirmed_v1", language: "en", params: ["Msg Shop", "ORD-1"] }]);
 
     const log = await prisma.outboundMessageLog.findMany({ where: { businessId: s.businessId }, orderBy: { createdAt: "asc" } });
-    expect(log.map((l) => l.reason ?? l.decision)).toEqual(["SWITCH_OFF", "FLAG_OFF", "NO_CONSENT", "TEMPLATE_NOT_APPROVED", "SENT"]);
+    expect(log.map((l) => l.reason ?? l.decision)).toEqual(["SWITCH_OFF", "FLAG_OFF", "NO_CONSENT", "CONSENT_NOT_VERIFIED", "TEMPLATE_NOT_APPROVED", "SENT"]);
     expect(JSON.stringify(log)).not.toContain(PHONE); // only a hash and the last four digits
     expect(log.every((l) => l.toPhoneLast4 === "4567" && l.toPhoneHash.length === 64)).toBe(true);
   });
@@ -180,7 +187,7 @@ describe("consent, block list and the send pipeline", () => {
   it("never sends twice for the same event, and retries a failed send", async () => {
     const s = await seller(["consumerMessaging"]);
     process.env["CONSUMER_MESSAGING_ENABLED"] = "true";
-    await recordOrderUpdatesConsent(prisma, { businessId: s.businessId, phone: PHONE });
+    await recordVerifiedConsent(prisma, { businessId: s.businessId, phone: PHONE });
     await approve("CONSUMER_ORDER_READY");
     const { transport, sent } = recorder({ failTimes: 1 });
     const req = { classId: "CONSUMER_ORDER_READY", toPhone: PHONE, businessId: s.businessId, params: { seller: "S", reference: "R" }, idempotencyKey: `ready:${s.businessId}` };
@@ -194,7 +201,7 @@ describe("consent, block list and the send pipeline", () => {
   it("refuses an unregistered class, a legacy class, a bad number, and a shopper message that does not name the seller", async () => {
     const s = await seller(["consumerMessaging"]);
     process.env["CONSUMER_MESSAGING_ENABLED"] = "true";
-    await recordOrderUpdatesConsent(prisma, { businessId: s.businessId, phone: PHONE });
+    await recordVerifiedConsent(prisma, { businessId: s.businessId, phone: PHONE });
     await approve("CONSUMER_ORDER_CONFIRMED");
     const { transport, sent } = recorder();
     const go = (over: object, key: string) => sendMessage(prisma, transport, { classId: "CONSUMER_ORDER_CONFIRMED", toPhone: PHONE, businessId: s.businessId, params: { seller: "S", reference: "R" }, idempotencyKey: key, ...over });
@@ -210,7 +217,7 @@ describe("consent, block list and the send pipeline", () => {
     const b = await seller(["consumerMessaging"]);
     process.env["CONSUMER_MESSAGING_ENABLED"] = "true";
     const phone = "2348099990001";
-    for (const biz of [a, b]) await recordOrderUpdatesConsent(prisma, { businessId: biz.businessId, phone });
+    for (const biz of [a, b]) await recordVerifiedConsent(prisma, { businessId: biz.businessId, phone });
     await approve("CONSUMER_ORDER_CONFIRMED");
     const { transport, sent } = recorder();
     const confirm = (biz: Seller, key: string) => sendMessage(prisma, transport, { classId: "CONSUMER_ORDER_CONFIRMED", toPhone: phone, businessId: biz.businessId, params: { seller: "S", reference: "R" }, idempotencyKey: key });
@@ -266,6 +273,7 @@ describe("consent, block list and the send pipeline", () => {
 });
 
 describe("order updates to a shopper", () => {
+  let lastToken = "";
   async function buy(s: Seller, opts: { updates: boolean; fulfilment?: "PICKUP" | "DELIVERY" }) {
     const t0 = await addToBasket(prisma, { token: null, businessId: s.businessId, variantId: s.variant.id, unit: "can", quantity: 2 });
     const zone = await s.scoped.deliveryZone.findFirst({ where: {} });
@@ -276,6 +284,7 @@ describe("order updates to a shopper", () => {
     });
     const o = r.outcomes[0]!;
     if (!o.ok) throw new Error(o.error);
+    lastToken = o.accessToken;
     return o.order;
   }
 
@@ -304,6 +313,8 @@ describe("order updates to a shopper", () => {
 
     const order = await buy(s, { updates: true });
     expect(await prisma.contactConsent.count({ where: { businessId: s.businessId, phone: PHONE, purpose: "ORDER_UPDATES", status: "OPTED_IN" } })).toBe(1);
+    // the box was ticked but the number is not yet proven: the shopper taps the link and messages TradePal from the phone
+    expect((await verifyUpdatesByCode(prisma, { phone: PHONE, code: deriveUpdatesCode(lastToken) })).result).toBe("VERIFIED");
     await confirmStoreOrder(prisma, { businessId: s.businessId, orderId: order.id });
     await markStoreOrderReady(prisma, { businessId: s.businessId, orderId: order.id });
     await cancelStoreOrderBySeller(prisma, { businessId: s.businessId, orderId: order.id, reason: "Out of stock" });
@@ -341,7 +352,7 @@ describe("a shopper's STOP through the inbound dispatcher", () => {
     process.env["CONSUMER_MESSAGING_ENABLED"] = "true";
     const s = await seller(["consumerMessaging"]);
     const phone = "2348055550001";
-    await recordOrderUpdatesConsent(prisma, { businessId: s.businessId, phone });
+    await recordVerifiedConsent(prisma, { businessId: s.businessId, phone });
     const fetchImpl = okFetch();
     await dispatchInboundMessage(deps(fetchImpl), await inbound(phone, "STOP", "wamid.stop.1"));
     expect(await isBlocked(prisma, phone)).toBe(true);
@@ -360,5 +371,91 @@ describe("a shopper's STOP through the inbound dispatcher", () => {
     await dispatchInboundMessage(deps(fetchImpl), await inbound("2348055550999", "STOP", "wamid.stop.stranger"));
     expect(await prisma.blockedNumber.findUnique({ where: { phone: "2348055550999" } })).toBeNull();
     expect(await prisma.merchant.findUnique({ where: { phoneNumber: "2348055550999" } })).not.toBeNull(); // old behaviour: onboarding starts
+  });
+});
+
+describe("verified consent: the shopper proves the number is theirs (double opt-in without another template)", () => {
+  const CODE_RE = /^[A-HJ-NP-Z2-9]{8}$/;
+
+  it("derives a stable code from the private order link, parses only the exact message, and never sends before verification", async () => {
+    expect(deriveUpdatesCode("token-a")).toMatch(CODE_RE);
+    expect(deriveUpdatesCode("token-a")).toBe(deriveUpdatesCode("token-a"));
+    expect(deriveUpdatesCode("token-a")).not.toBe(deriveUpdatesCode("token-b"));
+    expect(parseUpdatesMessage(" updates ab12cd34 ")).toBe("AB12CD34");
+    for (const bad of ["updates", "updates AB12", "please updates AB12CD34", "UPDATES AB12CD34 now"]) expect(parseUpdatesMessage(bad)).toBeNull();
+  });
+
+  it("a message from the SAME number with the right code verifies it; from another number, with a wrong code, or after STOP it does not", async () => {
+    process.env["CONSUMER_MESSAGING_ENABLED"] = "true";
+    const s = await seller(["consumerMessaging"]);
+    const phone = "2348044440001";
+    const code = deriveUpdatesCode("tok-1");
+    await recordOrderUpdatesConsent(prisma, { businessId: s.businessId, phone, verifyCode: code });
+    expect((await verifyUpdatesByCode(prisma, { phone: "2348099990009", code })).result).toBe("NOT_FOUND"); // someone else's phone, even with the code
+    expect((await verifyUpdatesByCode(prisma, { phone, code: "AAAAAAAA" })).result).toBe("NOT_FOUND");
+    expect((await verifyUpdatesByCode(prisma, { phone, code, now: new Date(Date.now() + 31 * 86_400_000) })).result).toBe("NOT_FOUND"); // the link expires
+    await applyStop(prisma, phone);
+    expect((await verifyUpdatesByCode(prisma, { phone, code })).result).toBe("NOT_FOUND"); // STOP withdrew the consent
+    await recordOrderUpdatesConsent(prisma, { businessId: s.businessId, phone, verifyCode: code });
+    expect((await verifyUpdatesByCode(prisma, { phone, code })).result).toBe("BLOCKED"); // a link never undoes a STOP: START does
+    await applyStart(prisma, phone); // START lifts the person's own block
+    expect((await verifyUpdatesByCode(prisma, { phone, code })).result).toBe("VERIFIED"); // and now the link works
+  });
+
+  it("through the inbound dispatcher: the right code gets one confirmation naming the seller; a stranger's wrong code gets a neutral reply and never starts onboarding", async () => {
+    process.env["CONSUMER_MESSAGING_ENABLED"] = "true";
+    const s = await seller(["consumerMessaging"]);
+    const phone = "2348044440002";
+    const code = deriveUpdatesCode("tok-2");
+    await recordOrderUpdatesConsent(prisma, { businessId: s.businessId, phone, verifyCode: code });
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.OUT" }] }), { status: 200 }));
+    const deps = { prisma, aiProvider: { parseTransactionText: vi.fn() } as never, outboundGateway: { accessToken: "tok", phoneNumberId: "pn", fetchImpl } } as DispatcherDeps;
+    const inbound = async (from: string, text: string, id: string): Promise<InboundMessageJob> => {
+      const payload = { object: "whatsapp_business_account", entry: [{ id: "e", changes: [{ field: "messages", value: { messaging_product: "whatsapp", metadata: { display_phone_number: "1", phone_number_id: "pn" }, messages: [{ id, from, timestamp: "1700000000", type: "text", text: { body: text } }] } }] }] };
+      const ev = await prisma.webhookEvent.create({ data: { waMessageId: id, payload } });
+      return { webhookEventId: ev.id, waMessageId: id, fromNumber: from, toNumber: "1", messageType: "text" };
+    };
+    await dispatchInboundMessage(deps, await inbound("2348099990111", `UPDATES ${code}`, "wamid.upd.1")); // a stranger who got hold of the code
+    expect(JSON.parse(fetchImpl.mock.calls[0]![1].body as string).text.body).toContain("could not match");
+    expect(await prisma.merchant.findUnique({ where: { phoneNumber: "2348099990111" } })).toBeNull(); // never treated as a sign-up
+    expect((await prisma.contactConsent.findFirstOrThrow({ where: { businessId: s.businessId, phone } })).verifiedAt).toBeNull();
+    await dispatchInboundMessage(deps, await inbound(phone, `updates ${code.toLowerCase()}`, "wamid.upd.2"));
+    expect(JSON.parse(fetchImpl.mock.calls[1]![1].body as string).text.body).toMatch(/now get WhatsApp updates about order .* from /);
+    expect((await prisma.contactConsent.findFirstOrThrow({ where: { businessId: s.businessId, phone } })).verifiedAt).not.toBeNull();
+    // the code is single-use: it was cleared when it verified
+    expect((await prisma.contactConsent.findFirstOrThrow({ where: { businessId: s.businessId, phone } })).verifyCodeHash).toBeNull();
+  });
+
+  it("the order page offers the link only to someone who ticked the box and has not yet verified, and only when the public number is configured", async () => {
+    process.env["CONSUMER_MESSAGING_ENABLED"] = "true";
+    const s = await seller(["consumerMessaging"]);
+    const app = express();
+    app.use(createStorefrontRouter(prisma, { limiters: { read: new InMemoryLoginRateLimiter(1e6, 1000), write: new InMemoryLoginRateLimiter(1e6, 1000), order: new InMemoryLoginRateLimiter(1e6, 1000) } }));
+    const t = await addToBasket(prisma, { token: null, businessId: s.businessId, variantId: s.variant.id, unit: "can", quantity: 1 });
+    const r = await checkoutBasket(prisma, { basketToken: t.token, allowOnline: false, buyer: { name: "Amaka Obi", phone: "08031234567", contactConsent: true, orderUpdatesConsent: true }, sellers: [{ businessId: s.businessId, fulfilment: "PICKUP", paymentMethod: "PAY_ON_COLLECTION" }] });
+    const o = r.outcomes[0]!;
+    if (!o.ok) throw new Error(o.error);
+    const page = async () => (await request(app).get(`/order/${o.accessToken}`)).text;
+
+    delete process.env["WHATSAPP_PUBLIC_NUMBER"];
+    expect(await page()).not.toContain("Start updates on WhatsApp"); // no number configured: fail closed
+    process.env["WHATSAPP_PUBLIC_NUMBER"] = "+234 800 000 0000";
+    const link = updatesLink(deriveUpdatesCode(o.accessToken))!;
+    expect(link).toBe(`https://wa.me/2348000000000?text=${encodeURIComponent(`UPDATES ${deriveUpdatesCode(o.accessToken)}`)}`);
+    expect(await page()).toContain("Start updates on WhatsApp");
+    expect(await page()).toContain(`UPDATES%20${deriveUpdatesCode(o.accessToken)}`);
+    await verifyUpdatesByCode(prisma, { phone: "2348031234567", code: deriveUpdatesCode(o.accessToken) });
+    const after = await page();
+    expect(after).not.toContain("Start updates on WhatsApp");
+    expect(after).toContain("WhatsApp updates for this order are on");
+    delete process.env["WHATSAPP_PUBLIC_NUMBER"];
+    // an order whose box was not ticked never shows the prompt
+    const t2 = await addToBasket(prisma, { token: null, businessId: s.businessId, variantId: s.variant.id, unit: "can", quantity: 1 });
+    const r2 = await checkoutBasket(prisma, { basketToken: t2.token, allowOnline: false, buyer: { name: "Bola Ade", phone: "08037654321", contactConsent: true }, sellers: [{ businessId: s.businessId, fulfilment: "PICKUP", paymentMethod: "PAY_ON_COLLECTION" }] });
+    const o2 = r2.outcomes[0]!;
+    if (!o2.ok) throw new Error(o2.error);
+    process.env["WHATSAPP_PUBLIC_NUMBER"] = "2348000000000";
+    expect((await request(app).get(`/order/${o2.accessToken}`)).text).not.toContain("Start updates on WhatsApp");
+    delete process.env["WHATSAPP_PUBLIC_NUMBER"];
   });
 });
