@@ -11,6 +11,12 @@ import {
 import { recordStorePayment, resolvePaymentException } from "../domain/store/payments.js";
 import { decideRefund, issueStoreRefund, receiveReturn } from "../domain/store/refunds.js";
 import { addDeliveryZone, ensureStorefront, listVariant, setZoneActive, unlistVariant, updateStorefront } from "../domain/store/storefront.js";
+import { MARKETPLACE_CATEGORIES, disableMarketplace, enableMarketplace, marketplaceReadiness, publishMarketplaceListing, unpublishMarketplaceListing } from "../domain/marketplace.js";
+import { fileAppeal, moderationStatusFor } from "../domain/moderation.js";
+import { PaymentsError } from "../domain/merchantPayments/common.js";
+import { payOutStoreRefund, refundHeldPayment } from "../domain/merchantPayments/storeRefunds.js";
+import { CapabilityError } from "../payments/adapter.js";
+import { getAdapterRegistry } from "../payments/registry.js";
 
 /**
  * The seller's WhatsApp commands for the consumer shop (expansion Phase 4): `/store ...`. One namespace, behind the `storefront`
@@ -36,7 +42,8 @@ const USAGE = [
   "/store orders | order <number> | confirm|ready <number> | dispatch <number> [delivery ref] | done <number> <code> [cash|momo|bank]",
   "/store done <number> nocode <reason> | cancel <number> <reason> | failed <number> <reason> | paid <number> <amount> [cash|momo|bank]",
   "Requests: /store requests | approve|deny <id> | refund approve <id> [amount] | refund deny <id> | refund received <id> | refund pay <id> [cash|momo|bank]",
-  "/store payment <id> refund|reserve|apply | cases | case <id> note <text>",
+  "/store payment <id> refund|reserve|apply | payments | cases | case <id> note <text>",
+  "Marketplace: /store marketplace on|off|status | publish <sku> <category> | unpublish <sku> | categories | moderation | appeal <what happened>",
 ].join("\n");
 
 function methodOf(word: string | undefined): TradePaymentMethod {
@@ -50,7 +57,8 @@ export async function handleStoreCommand(ctx: CommandContext, command: string, a
   try {
     return await dispatch(ctx, args.trim());
   } catch (error) {
-    if (error instanceof StoreError || error instanceof InvalidAmountError) return error.message;
+    if (error instanceof StoreError || error instanceof InvalidAmountError || error instanceof PaymentsError) return error.message;
+    if (error instanceof CapabilityError) return "Your payment provider cannot send this refund from here. Refund the buyer another way, then ask TradePal support to record it.";
     throw error;
   }
 }
@@ -75,6 +83,9 @@ async function dispatch(ctx: CommandContext, args: string): Promise<string> {
     case "order": return showOrder(ctx, rest[0]);
     case "requests": return listRequests(ctx);
     case "cases": return listCases(ctx);
+    case "payments": return listPayments(ctx);
+    case "categories": return `Marketplace categories: ${MARKETPLACE_CATEGORIES.join(", ")}.`;
+    case "moderation": return moderationView(ctx);
     case "name": case "slug": case "phone": case "open": case "close": case "pickup": case "delivery": case "zone": case "returns": case "list": case "unlist":
       if (!can(ctx, "store:manage")) return NOT_ALLOWED;
       return setup(ctx, sub.toLowerCase(), tail);
@@ -84,6 +95,13 @@ async function dispatch(ctx: CommandContext, args: string): Promise<string> {
     case "approve": case "deny": case "refund": case "payment":
       if (!can(ctx, "store:refund")) return NOT_ALLOWED;
       return decide(ctx, sub.toLowerCase(), rest);
+    case "marketplace": case "publish": case "unpublish":
+      if (!can(ctx, "store:manage")) return NOT_ALLOWED;
+      return marketplace(ctx, sub.toLowerCase(), tail);
+    case "appeal":
+      if (!can(ctx, "store:manage")) return NOT_ALLOWED;
+      await fileAppeal(ctx.prisma, { businessId: ctx.businessId, text: tail });
+      return "Your appeal was sent. A person at TradePal will review it and the decision is recorded. Send /store moderation to see where it stands.";
     case "case": return caseNote(ctx, rest);
     default: return `I don't know "/store ${sub}".\n\n${USAGE}`;
   }
@@ -299,6 +317,11 @@ async function decide(ctx: CommandContext, sub: string, rest: string[]): Promise
     const word = (rest[1] ?? "").toLowerCase();
     const action = word === "refund" ? "REFUND" : word === "reserve" ? "RE_RESERVE" : word === "apply" ? "APPLY" : null;
     if (!action) return `Say what to do: /store payment ${shortId(e.id)} refund|reserve|apply`;
+    if (action === "REFUND") {
+      const out = await refundHeldPayment(ctx.prisma, getAdapterRegistry(ctx.prisma), { businessId: ctx.businessId, exceptionId: e.id, actor });
+      if (out.via === "PROVIDER") return out.refund.status === "SUCCEEDED" ? "The held payment was sent back through the payment provider and recorded." : out.refund.status === "PENDING" ? "The refund was sent to the payment provider. It will be recorded when the provider confirms." : `The payment provider could not send the refund (${out.refund.failureReason ?? "no reason given"}). The payment is still held.`;
+      return `Done: ${label(e.type)} resolved by refund. Order ${out.orderReference} updated.`;
+    }
     const r = await resolvePaymentException(ctx.prisma, { businessId: ctx.businessId, exceptionId: e.id, action, refundMethod: "MOBILE_MONEY", actor });
     return `Done: ${label(r.exception.type)} resolved by ${word}. Order ${r.order.reference} is now ${label(r.order.status)}.`;
   }
@@ -321,8 +344,14 @@ async function decide(ctx: CommandContext, sub: string, rest: string[]): Promise
       return `Goods back in stock. Refund due: ${money(ctx, r.approvedAmountMinor ?? 0n)}. Pay it out: /store refund pay ${shortId(r.id)} [cash|momo|bank].`;
     }
     case "pay": {
-      const p = await issueStoreRefund(ctx.prisma, { businessId: ctx.businessId, orderId: req.orderId, requestId: req.id, method: methodOf(rest[2]), actor });
-      return `Refund of ${money(ctx, p.amountMinor)} recorded. Make sure the money actually reaches the buyer.`;
+      const out = await payOutStoreRefund(ctx.prisma, getAdapterRegistry(ctx.prisma), { businessId: ctx.businessId, orderId: req.orderId, requestId: req.id, manualMethod: methodOf(rest[2]), actor });
+      if (out.via === "MANUAL") return `Refund of ${money(ctx, out.payment.amountMinor)} recorded. Make sure the money actually reaches the buyer.`;
+      if (out.replayed && out.refund.status === "SUCCEEDED") return "That refund was already sent and recorded. Nothing more to do.";
+      return out.refund.status === "SUCCEEDED"
+        ? `Refund of ${money(ctx, out.refund.amountMinor)} sent back through the payment provider and recorded.`
+        : out.refund.status === "PENDING"
+          ? `Refund of ${money(ctx, out.refund.amountMinor)} sent to the payment provider. It will be recorded when the provider confirms.`
+          : `The payment provider could not send the refund (${out.refund.failureReason ?? "no reason given"}). It is NOT recorded. TradePal support can see it; try again later with /store refund pay ${shortId(req.id)}.`;
     }
     default: return USAGE;
   }
@@ -344,4 +373,54 @@ async function caseNote(ctx: CommandContext, rest: string[]): Promise<string> {
   if ((rest[1] ?? "").toLowerCase() !== "note" || body.length < 3) return `Use /store case ${shortId(c.id)} note <what you did>.`;
   await ctx.scopedPrisma.supportCaseNote.create({ data: { businessId: ctx.businessId, caseId: c.id, authorType: "SELLER", authorId: ctx.merchantId, body: body.slice(0, 1_000) } });
   return "Note added to the case.";
+}
+
+// ------------------------------------------------------------------------------------- marketplace
+
+async function marketplace(ctx: CommandContext, sub: string, tail: string): Promise<string> {
+  const biz = ctx.businessId;
+  if (sub === "marketplace") {
+    const word = tail.toLowerCase();
+    if (word === "on") {
+      await enableMarketplace(ctx.prisma, biz);
+      return "You are on the marketplace. Shoppers in your country can now find your published items. Everything is sold and delivered by you; TradePal only shows it.";
+    }
+    if (word === "off") {
+      await disableMarketplace(ctx.prisma, biz);
+      return "You are off the marketplace. Your own shop link still works.";
+    }
+    const sf = await ctx.scopedPrisma.storefront.findFirst({ where: {} });
+    const r = await marketplaceReadiness(ctx.prisma, biz);
+    const published = await ctx.scopedPrisma.listing.count({ where: { channel: "MARKETPLACE", status: "ACTIVE" } });
+    return [`Marketplace: ${sf?.marketplaceStatus ?? "OFF"}. ${published} item(s) published.`, ...(sf?.marketplaceNote ? [`Note: ${sf.marketplaceNote}`] : []), r.ready ? "You are ready: /store marketplace on" : `Not ready: ${r.missing.join("; ")}.`].join("\n");
+  }
+  const [skuWord, ...catWords] = tail.split(/\s+/).filter(Boolean);
+  const v = skuWord ? await findVariantByText(ctx.scopedPrisma, skuWord) : null;
+  if (!v) return `I can't find a product "${skuWord ?? ""}". See /products.`;
+  if (sub === "unpublish") {
+    await unpublishMarketplaceListing(ctx.prisma, biz, v.id);
+    return `${v.sku} is no longer on the marketplace.`;
+  }
+  if (catWords.length === 0) return `Say the category: /store publish ${v.sku} <category>. See /store categories.`;
+  const r = await publishMarketplaceListing(ctx.prisma, biz, v.id, catWords.join(" "));
+  return `${v.sku} is published on the marketplace under "${r.category}". It shows once you switch the marketplace on (/store marketplace on).`;
+}
+
+async function moderationView(ctx: CommandContext): Promise<string> {
+  const m = await moderationStatusFor(ctx.prisma, ctx.businessId);
+  const lines = [`Marketplace status: ${m.marketplaceStatus}${m.note ? ` (${m.note})` : ""}.`];
+  for (const u of m.unpublished) lines.push(`Unpublished by a moderator: ${u.sku}${u.reason ? ` - ${u.reason}` : ""}.`);
+  for (const a of m.appeals) lines.push(`Appeal (${a.createdAt.toISOString().slice(0, 10)}): ${a.status.toLowerCase()}${a.decisionNote ? ` - ${a.decisionNote}` : ""}.`);
+  if (lines.length === 1 && m.marketplaceStatus !== "SUSPENDED") lines.push("No moderation decisions about you.");
+  else if (m.unpublished.length > 0 || m.marketplaceStatus === "SUSPENDED") lines.push("If you think this is wrong: /store appeal <what happened>.");
+  return lines.join("\n");
+}
+
+// ----------------------------------------------------------------------------------------- payments
+
+async function listPayments(ctx: CommandContext): Promise<string> {
+  const attempts = await ctx.scopedPrisma.paymentAttempt.findMany({ orderBy: { createdAt: "desc" }, take: 8, include: { intent: true } });
+  if (attempts.length === 0) return "No online payments yet.";
+  const lines = attempts.map((a) => `${a.intent.reference}: ${money(ctx, a.amountMinor)} - ${a.status === "PENDING" ? "waiting for the buyer/provider" : a.status === "UNKNOWN" ? "NOT CONFIRMED (checking with the provider)" : a.status.toLowerCase()}${a.status === "SUCCEEDED" ? `, ${a.settledAt ? "paid out to you" : "collected by the provider, not paid out yet"}` : ""}`);
+  return ["Recent online payments:", ...lines, "A payment counts only when the provider confirms it."].join("\n");
 }
