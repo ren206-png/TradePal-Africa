@@ -32,6 +32,11 @@ Legacy WhatsApp roles map as: OWNER -> OWNER, STAFF -> SALES_CLERK (`membershipR
 | `trade:payments` | yes | yes | - | - | yes | - |
 | `trade:partners` | yes | yes | - | - | - | - |
 | `trade:credit_override` | yes | - | - | - | - | - |
+| `store:manage` | yes | yes | - | - | - | - |
+| `store:fulfil` | yes | yes | yes | - | - | - |
+| `store:refund` | yes | yes | - | - | - | - |
+| `billing:view` | yes | yes | - | - | - | - |
+| `billing:manage` | yes | - | - | - | - | - |
 
 ## Platform admin roles (TradePal staff; no merchant permission by default)
 
@@ -51,12 +56,20 @@ Legacy WhatsApp roles map as: OWNER -> OWNER, STAFF -> SALES_CLERK (`membershipR
 | `admin:replay_dead_letter` | yes | yes | - | - | yes |
 | `admin:pause_job_class` | yes | yes | - | - | yes |
 | `admin:manage_subscriptions` | yes | - | - | - | yes |
-| `admin:moderate_listings` | yes | - | - | - | yes |
+| `admin:moderate_listings` | yes | yes | - | - | yes |
 | `admin:resolve_support_case` | yes | yes | yes | - | yes |
 | `admin:delete_synthetic_org` | yes | - | - | - | yes |
 | `admin:flip_forecast_gate` | yes | - | - | - | yes |
 | `admin:set_forecast_thresholds` | yes | - | - | - | yes |
 | `admin:view_reorder` | yes | yes | - | - | - |
+| `admin:view_support_cases` | yes | yes | yes | - | - |
+| `admin:view_payments` | yes | yes | - | - | - |
+| `admin:view_moderation` | yes | yes | yes | - | - |
+| `admin:view_subscriptions` | yes | yes | yes | - | - |
+| `admin:view_messaging` | yes | yes | yes | - | - |
+| `admin:manage_messaging` | yes | yes | - | - | yes |
+| `admin:approve_templates` | yes | - | - | - | yes |
+| `admin:manage_payment_connections` | yes | - | - | - | yes |
 | `admin:manage_admins` | yes | - | - | - | yes |
 
 Notes: viewing a merchant's financial data additionally needs a recorded support-access reason when flag `adminSupportAccessRequired` is on. The existing admin routes keep their original role checks (SUPER_ADMIN / SUPPORT); the platform permission is layered on top for the new panels. Regenerate with the command above if the matrix changes.

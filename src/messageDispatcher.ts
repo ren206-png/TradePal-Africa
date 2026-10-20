@@ -10,7 +10,8 @@ import { parseListMessage, type ListSection, type ParsedList } from "./ai/listEn
 import { isUndoTypo, matchBareCommand, UNDO_CONFIRM_REPLY } from "./commands/bareCommands.js";
 import { recordAiParseLog } from "./ai/logParse.js";
 import { buildAiParseResult, parseTransactionText, type AiParseResult } from "./ai/parse.js";
-import { isAiProviderConfigurationError, type AiProvider } from "./ai/provider.js";
+import { classifyAiProviderFailure } from "./ai/failureClass.js";
+import type { AiProvider } from "./ai/provider.js";
 import type { DeepSeekAiProvider } from "./ai/deepseekProvider.js";
 import { estimateCostMicroUsd, resolveAiModel } from "./ai/modelRegistry.js";
 import type { ParsedIntent } from "./ai/schema.js";
@@ -350,13 +351,11 @@ async function parseWithCircuitBreaker(
     // also covers ordinary transient blips) keeps it from being lost in routine noise, and
     // gives it its own alerts.ts dedupe window so it doesn't get silently suppressed by an
     // unrelated transient failure that happened to fire first.
-    const configurationFailure = isAiProviderConfigurationError(error);
+    const failure = classifyAiProviderFailure(error);
     await reportIncident(deps.alerts, {
       service: SERVICE_NAME,
-      title: configurationFailure
-        ? "AI provider billing/auth failure (non-retryable — needs manual fix, not a retry)"
-        : "AI provider call failed",
-      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+      title: failure ? failure.title : "AI provider call failed",
+      detail: `${failure ? `${failure.advice} (HTTP ${failure.status ?? "?"})\n` : ""}${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
     });
     return { result: AI_PROVIDER_UNAVAILABLE_RESULT, degraded: true };
   }
@@ -459,10 +458,12 @@ async function tryParseWithDeepSeek(
         detail: releaseError instanceof Error ? (releaseError.stack ?? releaseError.message) : String(releaseError),
       });
     });
+    // DeepSeek out of balance, or its key rejected, never fixes itself and is invisible to merchants while Anthropic covers: it gets its own title.
+    const failure = classifyAiProviderFailure(error);
     await reportIncident(deps.alerts, {
       service: SERVICE_NAME,
-      title: "DeepSeek transaction-parse call failed — falling back to Anthropic",
-      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+      title: failure ? failure.title : "DeepSeek transaction-parse call failed — falling back to Anthropic",
+      detail: `${failure ? `${failure.advice} (HTTP ${failure.status ?? "?"}). Merchants are being served by the fallback provider meanwhile.\n` : ""}${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
     });
     return undefined;
   }

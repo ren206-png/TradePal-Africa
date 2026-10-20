@@ -5,6 +5,8 @@ import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
 import { createOfflineRouter } from "./offline/routes.js";
+import { installAlertDeliveryRecorder } from "./monitoring/alertRecorder.js";
+import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
 import { wireConsumerMessaging } from "./messaging/wire.js";
 import { sendWhatsAppTextMessage } from "./whatsapp/outboundGateway.js";
 import { createStorefrontRouter } from "./storefront/routes.js";
@@ -16,7 +18,6 @@ import {
   buildDeletionResolutionOutboundGatewayFromEnv,
   buildSubscriptionExpiryOutboundGatewayFromEnv,
 } from "./config/outboundGatewayEnv.js";
-import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
 import {
   buildFlutterwaveDepsFromEnv,
   buildPawaPayDepsFromEnv,
@@ -30,7 +31,7 @@ import { installCrashReporting, installGracefulShutdown } from "./monitoring/pro
 import { createRequestErrorHandler } from "./monitoring/requestErrorHandler.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { evaluateHeartbeats, heartbeatEnabled, requiredHeartbeatServices, startHeartbeat } from "./monitoring/heartbeat.js";
-import { enqueueInboundMessage } from "./queue/inboundMessageQueue.js";
+import { enqueueInboundMessage, replayInboundMessage } from "./queue/inboundMessageQueue.js";
 import { RedisInboundMessageRateLimiter } from "./whatsapp/inboundRateLimiter.js";
 import { createWebhookPostHandler, verifyWebhookSubscription, type RequestWithRawBody } from "./whatsapp/webhookRoute.js";
 
@@ -68,6 +69,7 @@ installCrashReporting("server", alerts);
 // when absent, that route still runs the sweep, just without notifications.
 const outboundGateway = buildSubscriptionExpiryOutboundGatewayFromEnv();
 wireConsumerMessaging(prisma);
+installAlertDeliveryRecorder(prisma);
 
 // Same optionality as outboundGateway above, for the Phase 18 deletion-request
 // resolution notification (see adminRoutes.ts, domain/deletion.ts) instead of
@@ -226,7 +228,12 @@ app.use(
   createAdminRouter(prisma, adminJwtSecret, {
     ...(outboundGateway ? { outboundGateway } : {}),
     // Phase 6: the admin "send reminder" action uses the same WhatsApp credentials as the other subscription notices, to the business's own owner.
-    ...(outboundGateway ? { platform: { sendRenewalReminder: (toPhoneNumber: string, body: string) => sendWhatsAppTextMessage({ prisma, ...outboundGateway }, { toPhoneNumber, body }) } } : {}),
+    platform: {
+      ...(outboundGateway ? { sendRenewalReminder: (toPhoneNumber: string, body: string) => sendWhatsAppTextMessage({ prisma, ...outboundGateway }, { toPhoneNumber, body }) } : {}),
+      // Phase 7: the admin messaging panel can run an alert channel check and replay a stuck inbound message.
+      alertDeps: buildAlertEmailDepsFromEnv(),
+      replayInbound: replayInboundMessage,
+    },
     ...(deletionResolutionOutboundGateway ? { deletionResolutionOutboundGateway } : {}),
     ...(loginRateLimiter ? { loginRateLimiter } : {}),
   }),

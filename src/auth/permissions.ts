@@ -100,6 +100,9 @@ export const PLATFORM_PERMISSIONS = [
   "admin:view_payments", //              merchant payment intents, attempts, refunds, settlements and the exception queue
   "admin:view_moderation", //            marketplace reports, listings, suspensions and appeals
   "admin:view_subscriptions", //         plans, plan versions, subscriptions, invoices, entitlements and billing exceptions
+  "admin:view_messaging", //             message template register, consent and opt-out records (numbers masked), block list, volumes, alert channel
+  "admin:manage_messaging", //           disable a template, block / unblock a number, replay a stuck inbound message, run an alert channel check
+  "admin:approve_templates", //          record that a provider template is APPROVED (owner only: it is what allows a class of message to go out)
   "admin:manage_payment_connections", // connect a merchant to a payment provider (owner only; never a secret)
   "admin:manage_admins", //              create/disable platform admins
 ] as const;
@@ -112,10 +115,11 @@ const PLATFORM_MATRIX: Readonly<Record<AdminRole, ReadonlySet<PlatformPermission
     "admin:view_merchant_financials", "admin:manage_flags", "admin:resolve_exception", "admin:replay_dead_letter",
     "admin:pause_job_class", "admin:reverse_transaction", "admin:resolve_support_case", "admin:view_reorder", "admin:view_support_cases",
     "admin:view_payments", "admin:view_moderation", "admin:moderate_listings", "admin:view_subscriptions",
+    "admin:view_messaging", "admin:manage_messaging",
   ]),
   SUPPORT: new Set<PlatformPermission>([
     "admin:view_overview", "admin:view_orgs", "admin:view_audit_log", "admin:view_merchant_financials",
-    "admin:revoke_staff", "admin:resolve_support_case", "admin:view_support_cases", "admin:view_moderation", "admin:view_subscriptions",
+    "admin:revoke_staff", "admin:resolve_support_case", "admin:view_support_cases", "admin:view_moderation", "admin:view_subscriptions", "admin:view_messaging",
   ]),
   // Read-only analyst (legacy role): metadata and audit only, never merchant financials.
   ANALYST: new Set<PlatformPermission>(["admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log"]),
@@ -141,6 +145,8 @@ export const PLATFORM_STEP_UP_PERMISSIONS: ReadonlySet<PlatformPermission> = new
   "admin:replay_dead_letter",
   "admin:pause_job_class",
   "admin:manage_subscriptions",
+  "admin:manage_messaging",
+  "admin:approve_templates",
   "admin:moderate_listings",
   "admin:resolve_support_case",
   "admin:delete_synthetic_org",

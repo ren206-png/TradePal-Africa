@@ -11,6 +11,8 @@ import { createAdminReorderRouter } from "./adminReorder.js";
 import { createAdminSupportRouter } from "./adminSupport.js";
 import { createAdminPaymentsRouter } from "./adminPayments.js";
 import { createAdminModerationRouter } from "./adminModeration.js";
+import { alertChannelStatus } from "../monitoring/alertRecorder.js";
+import { createAdminMessagingRouter } from "./adminMessaging.js";
 import { createAdminSubscriptionsRouter } from "./adminSubscriptions.js";
 import { correlationIdOf } from "./adminAudit.js";
 import { verifyAdminPassword } from "./auth.js";
@@ -41,6 +43,9 @@ export interface PlatformAdminOptions {
   now?: () => Date;
   /** Sends a WhatsApp reminder to a business owner about their own subscription; omitted when messaging is not configured. */
   sendRenewalReminder?: (toPhoneNumber: string, body: string) => Promise<void>;
+  /** Phase 7: alert email settings (for the channel check) and the queue replay hook; either may be absent. */
+  alertDeps?: import("../monitoring/alerts.js").AlertEmailDeps | undefined;
+  replayInbound?: (job: import("../whatsapp/webhookHandler.js").InboundMessageJob) => Promise<"QUEUED" | "IN_FLIGHT">;
 }
 
 /**
@@ -58,6 +63,8 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
   router.use(createAdminPaymentsRouter(prisma, jwtSecret));
   router.use(createAdminModerationRouter(prisma, jwtSecret));
   router.use(createAdminSubscriptionsRouter(prisma, jwtSecret, { ...(options.sendRenewalReminder ? { sendReminder: options.sendRenewalReminder } : {}), ...(options.now ? { now: options.now } : {}) }));
+
+  router.use(createAdminMessagingRouter(prisma, jwtSecret, { alertDeps: options.alertDeps, ...(options.replayInbound ? { replayInbound: options.replayInbound } : {}), ...(options.now ? { now: options.now } : {}) }));
 
   router.get("/me/permissions", (req, res) => {
     const admin = (req as AuthenticatedAdminRequest).adminUser;
@@ -204,6 +211,8 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
         outbox,
         inbox,
         ai: { lastSuccessfulCallAt: lastAi?.createdAt ?? null, lastSuccessfulProvider: lastAi?.provider ?? null },
+        // Phase 7: whether alerts can actually reach a person: the last proven delivery, the last failure, the last channel check.
+        alertChannel: await alertChannelStatus(prisma, now),
         configured: {
           alertEmail: Boolean(env["ALERT_EMAIL_API_KEY"] && env["ALERT_EMAIL_TO"]),
           deepseek: Boolean(env["DEEPSEEK_API_KEY"]),

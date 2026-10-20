@@ -39,6 +39,7 @@ const ENTITY_BY_SEGMENT: Record<string, string> = {
   "billing-switches": "BillingSwitch",
   invoices: "Invoice",
   "payment-connections": "ProviderConnection",
+  messaging: "Messaging",
 };
 
 // Routes with their own, richer audit trail or that are not data writes.

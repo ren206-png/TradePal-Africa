@@ -1334,7 +1334,7 @@ describe("dispatchInboundMessage: AI-provider outage / unexpected-error handling
     expect(alertFetchImpl).toHaveBeenCalledTimes(1);
     const [, init] = alertFetchImpl.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string);
-    expect(body.subject).toContain("billing/auth failure");
+    expect(body.subject).toContain("AI provider billing failure (Anthropic)");
     expect(body.subject).not.toContain("AI provider call failed");
   });
 
@@ -1528,6 +1528,30 @@ describe("dispatchInboundMessage: parseWithProviderFallback (DeepSeek primary, A
     expect(commitRows).toHaveLength(0);
 
     expect(breaker.getState()).toBe("closed"); // one recorded failure, threshold 5 — not yet tripped
+  });
+
+  it.each([
+    [402, "Insufficient Balance", "AI provider billing failure (DeepSeek)"],
+    [401, "Authentication Fails", "AI provider authentication failure (DeepSeek)"],
+  ])("alerts under its own title when DeepSeek answers %i, and the merchant is still served by the fallback (scenario 26)", async (status, message, title) => {
+    const fromNumber = `23480111194${status}`;
+    const merchant = await onboardMerchant(fromNumber, `DeepSeek ${status} Stores`);
+    await enableDeepSeekProviderFlag(merchant.businessId);
+    const deepSeekFetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ error: { message } }), { status }));
+    const { deps, fetchImpl } = buildDeps(fakeProvider({ intent: "SALE", amountMinor: 2000, paymentStatus: "PAID", confidence: 0.95 }));
+    deps.deepseekProvider = fakeDeepSeekProvider(deepSeekFetch);
+    deps.deepseekCircuitBreaker = new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 60_000 });
+    const alertFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "email-ds" }), { status: 200 }));
+    deps.alerts = { apiKey: "key-1", from: "alerts@tradepal.africa", to: ["ren@example.com"], fetchImpl: alertFetch };
+
+    await dispatchInboundMessage(deps, await storeInboundTextMessage({ waMessageId: `wamid.DS${status}.1`, fromNumber, text: "sold bread for 2000" }));
+
+    expect(deepSeekFetch).toHaveBeenCalledTimes(1); // a 401 / 402 is never retried
+    expect(JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string).text.body).toContain("20.00"); // served by Anthropic
+    const subjects = alertFetch.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string).subject as string);
+    expect(subjects).toHaveLength(1);
+    expect(subjects[0]).toContain(title);
+    expect(subjects[0]).not.toContain("falling back");
   });
 
   it("keeps the DeepSeek result (no Anthropic fallback, breaker not tripped) when recording its cost in the ledger fails", async () => {
