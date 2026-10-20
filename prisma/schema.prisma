@@ -1276,7 +1276,7 @@ model StockMovement {
   unitCostMinor        BigInt? // per base unit, when known (receipts, restocks); null = cost unknown
   costCurrency         String?
   costIncomplete       Boolean           @default(false) // a SALE_FULFILLMENT whose cost could not be fully determined
-  cogsMinor            BigInt? // SALE_FULFILLMENT: cost of goods released, computed at posting time
+  costMinor            BigInt? // cost of the units that LEFT on-hand (sale, spoilage, withdrawal...), computed at posting time
   occurredAt           DateTime          @default(now()) @db.Timestamptz()
   createdAt            DateTime          @default(now()) @db.Timestamptz()
   provenance           Provenance        @default(MERCHANT_ENTERED)

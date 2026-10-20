@@ -1,5 +1,6 @@
 import type { PaymentStatus, Transaction, TransactionType } from "@prisma/client";
 import type { TenantScopedClient } from "../db/tenantScope.js";
+import { journalLegacyTransactionIfEnabled } from "./accounting.js";
 import { applyStockMovement } from "./inventory.js";
 
 export class TransactionAlreadyReversedError extends Error {}
@@ -29,7 +30,7 @@ export async function recordTransaction(
   scopedPrisma: TenantScopedClient,
   input: RecordTransactionInput,
 ): Promise<Transaction> {
-  return scopedPrisma.transaction.create({
+  const created = await scopedPrisma.transaction.create({
     data: {
       businessId: input.businessId,
       type: input.type,
@@ -57,6 +58,9 @@ export async function recordTransaction(
         : {}),
     },
   });
+  // Expansion Phase 2: balanced journal entry (OFF unless the accountingJournals flag is on; never throws).
+  await journalLegacyTransactionIfEnabled(scopedPrisma, created);
+  return created;
 }
 
 /**
@@ -111,5 +115,6 @@ export async function reverseTransaction(
     await applyStockMovement(scopedPrisma, original.businessId, item, -movement.quantityDelta, "ADJUSTMENT", reversal.id);
   }
 
+  await journalLegacyTransactionIfEnabled(scopedPrisma, reversal);
   return reversal;
 }

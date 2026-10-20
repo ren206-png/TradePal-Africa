@@ -133,7 +133,7 @@ CREATE TABLE "StockMovement" (
     "unitCostMinor" BIGINT,
     "costCurrency" TEXT,
     "costIncomplete" BOOLEAN NOT NULL DEFAULT false,
-    "cogsMinor" BIGINT,
+    "costMinor" BIGINT,
     "occurredAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "provenance" "Provenance" NOT NULL DEFAULT 'MERCHANT_ENTERED',

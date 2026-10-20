@@ -151,3 +151,21 @@ export function getTenantScopedClient<TClient extends PrismaClient>(prisma: TCli
 }
 
 export type TenantScopedClient = ReturnType<typeof getTenantScopedClient>;
+
+/**
+ * `$transaction` hands its callback a client without the `$transaction`/`$connect` helpers. It has the same model
+ * delegates and the same tenant scoping, so domain code that needs atomicity treats it as a TenantScopedClient.
+ * One reviewed cast, here, instead of one at every call site.
+ */
+export function asTenantScoped(tx: unknown): TenantScopedClient {
+  return tx as TenantScopedClient;
+}
+
+/** Runs `work` in one database transaction against the business-scoped client. */
+export async function withScopedTransaction<T>(
+  scoped: TenantScopedClient,
+  work: (tx: TenantScopedClient) => Promise<T>,
+  options?: { timeoutMs?: number },
+): Promise<T> {
+  return scoped.$transaction((tx) => work(asTenantScoped(tx)), { timeout: options?.timeoutMs ?? 15_000 });
+}
