@@ -468,6 +468,54 @@ describe("scenario 23: provider outage blocks new attempts with a clear message;
   });
 });
 
+describe("a provider with a WEAK callback scheme: the message is only a hint, the authenticated status decides", () => {
+  it("never trusts the body: a claimed success is checked at the provider before anything is applied", async () => {
+    const s = await seller();
+    const weak = Object.create(sim, { id: { value: "simulator" }, callbackAuth: { value: "WEAK" } }) as SimulatorAdapter;
+    // an unsigned message is accepted as a hint (it carries no proof) and stored as UNVERIFIED
+    (weak as unknown as { receiveCallback: SimulatorAdapter["receiveCallback"] }).receiveCallback = (raw, headers) => sim.receiveCallback(raw, { "x-simulator-signature": headers["x-simulator-signature"] ?? "" });
+    const reg = new AdapterRegistry().register(weak);
+    setAdapterRegistry(reg);
+    try {
+      const { order } = await placeStoreOrder(prisma, s, { qty: 1, online: true });
+      const { attempt } = await startPayment(prisma, reg, { businessId: s.businessId, subjectType: "STORE_ORDER", subjectId: order.id });
+      const lie = sim.signedEvent({ event: "payment.updated", eventId: "evt-weak-lie-01", purpose: "MERCHANT_SALE", externalRef: attempt.externalRef, merchantReference: attempt.id, status: "SUCCEEDED", amountMinor: "10000", currencyCode: "NGN", destinationKey: `sim-dest-${s.businessId.slice(0, 8)}` });
+      expect(await receiveProviderCallback(prisma, reg, "simulator", lie.body, lie.headers)).toEqual({ status: "recorded" });
+      expect((await prisma.callbackInbox.findFirstOrThrow({ where: { externalId: "evt-weak-lie-01" } })).signatureVerified).toBe(false);
+      await drainInbox(prisma);
+      expect(await orderOf(s, order.id)).toMatchObject({ paidMinor: 0n }); // the provider was asked and said PENDING
+      expect((await s.scoped.paymentAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).status).toBe("PENDING");
+      // once the provider really has the money, the next hint finds it
+      await sim.completePayment(attempt.externalRef!);
+      const hint = sim.signedEvent({ event: "payment.updated", eventId: "evt-weak-hint-02", purpose: "MERCHANT_SALE", externalRef: attempt.externalRef, merchantReference: attempt.id, status: "PENDING", amountMinor: "10000", currencyCode: "NGN", destinationKey: "x" });
+      await receiveProviderCallback(prisma, reg, "simulator", hint.body, hint.headers);
+      await drainInbox(prisma);
+      expect(await orderOf(s, order.id)).toMatchObject({ paidMinor: 10_000n, status: "CONFIRMED" });
+    } finally {
+      setAdapterRegistry(registry);
+    }
+  });
+});
+
+describe("database protection for the payment tables", () => {
+  it("refuses deletes, truncates and edits of history, and a settled-out intent cannot come back", async () => {
+    const s = await seller();
+    const { intent, attempt } = await pending(s);
+    const ev = await s.scoped.paymentAttemptEvent.findFirstOrThrow({ where: { attemptId: attempt.id } });
+    await expect(testDb.db.query(`DELETE FROM "PaymentAttempt" WHERE id='${attempt.id}'`)).rejects.toThrow(/cannot be deleted|not allowed|delete/i);
+    await expect(testDb.db.query(`DELETE FROM "PaymentIntent" WHERE id='${intent.id}'`)).rejects.toThrow(/cannot be deleted|not allowed|delete/i);
+    await expect(testDb.db.query(`TRUNCATE "PaymentAttempt" CASCADE`)).rejects.toThrow(/truncate/i);
+    await expect(testDb.db.query(`UPDATE "PaymentAttemptEvent" SET source='EDITED' WHERE id='${ev.id}'`)).rejects.toThrow(/append-only/);
+    await prisma.providerException.createMany({ data: [{ type: "UNKNOWN_REFERENCE", fingerprint: "db-protection-probe-1" }], skipDuplicates: true });
+    await expect(testDb.db.query(`DELETE FROM "ProviderException" WHERE fingerprint='db-protection-probe-1'`)).rejects.toThrow(/cannot be deleted|not allowed|delete/i);
+    // an intent that was closed stays closed
+    await s.scoped.paymentIntent.updateMany({ where: { id: intent.id }, data: { status: "CANCELLED" } });
+    await expect(testDb.db.query(`UPDATE "PaymentIntent" SET "status"='OPEN' WHERE id='${intent.id}'`)).rejects.toThrow(/final/);
+    // refunds cannot exceed what was paid on the intent, at the database
+    await expect(testDb.db.query(`UPDATE "PaymentIntent" SET "refundedMinor" = "paidMinor" + 1 WHERE id='${intent.id}'`)).rejects.toThrow(/check/i);
+  });
+});
+
 async function replayReport(cb: { body: string }) {
   const e = JSON.parse(cb.body);
   return {

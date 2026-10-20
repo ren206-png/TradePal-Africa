@@ -215,6 +215,17 @@ describe("reports and appeals", () => {
     await expect(resolveReport(prisma, { reportId: stored.id, adminUserId: "admin-1", outcome: "DISMISSED", note: "Second time" })).rejects.toMatchObject({ code: "WRONG_STATE" });
   });
 
+  it("a whole shop can be reported from its page; a suspended shop cannot be reached to report", async () => {
+    const s = await onMarket("Shop Report Co");
+    expect((await request(app).get(`/shop/${s.slug}`)).text).toContain("Report this shop");
+    expect((await request(app).get(`/report-shop/${s.slug}`)).status).toBe(200);
+    const res = await request(app).post(`/report-shop/${s.slug}`).type("form").send({ reason: "SCAM", details: "They never deliver what you pay for." });
+    expect(res.status).toBe(200);
+    expect(await prisma.marketplaceReport.count({ where: { businessId: s.businessId, listingId: null } })).toBe(1);
+    expect((await request(app).post(`/report-shop/${s.slug}`).type("form").send({ reason: "NOPE", details: "x" })).status).toBe(400);
+    expect((await request(app).get("/report-shop/no-such-shop")).status).toBe(404);
+  });
+
   it("a decision is recorded append-only, can be appealed once, and an overturned appeal reinstates", async () => {
     const s = await onMarket("Appeal Me");
     const report = await fileReport(prisma, { listingId: s.listing.id, reason: "COUNTERFEIT", details: "These look like fakes of a famous brand." });

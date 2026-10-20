@@ -137,7 +137,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
       ${items || "<p>Nothing to show.</p>"}
       ${cat.hasMore ? `<p><a href="/shop/${esc(sf.slug)}?q=${encodeURIComponent(q)}&amp;page=${pageNo + 1}">More items</a></p>` : ""}
       ${sf.termsText ? `<h2>Shop terms</h2><p class="muted">${esc(sf.termsText)}</p>` : ""}
-      <p class="muted">Sold by ${esc(sf.title)}. The seller is responsible for the goods and for delivery.</p>`;
+      <p class="muted">Sold by ${esc(sf.title)}. The seller is responsible for the goods and for delivery.${options.marketplace ? ` <a href="/report-shop/${esc(sf.slug)}">Report this shop</a>` : ""}</p>`;
     res.type("html").send(page(sf.title, body));
   }));
 
@@ -475,6 +475,35 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
       } catch (error) {
         if (!(error instanceof StoreError)) throw error;
         res.status(422).type("html").send(reportForm("Report", `/report/${esc(listingId)}`, error.message));
+      }
+    }));
+    router.get("/report-shop/:slug", limit(read, "read"), asyncHandler(async (req, res) => {
+      const sf = await loadPublicStorefront(prisma, req.params["slug"] as string);
+      if (!sf) {
+        res.status(404).type("html").send(notFoundPage());
+        return;
+      }
+      res.type("html").send(reportForm(`Report: ${sf.title}`, `/report-shop/${esc(sf.slug)}`));
+    }));
+
+    router.post("/report-shop/:slug", limit(write, "write"), asyncHandler(async (req, res) => {
+      const slug = req.params["slug"] as string;
+      const sf = await loadPublicStorefront(prisma, slug);
+      if (!sf) {
+        res.status(404).type("html").send(notFoundPage());
+        return;
+      }
+      const parsed = z.object({ reason: z.enum(REPORT_REASONS), details: text(1_000), contact: text(100).optional() }).safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).type("html").send(reportForm("Report", `/report-shop/${esc(slug)}`, "Please choose a reason and describe the problem."));
+        return;
+      }
+      try {
+        await fileReport(prisma, { slug, reason: parsed.data.reason, details: parsed.data.details, ...(parsed.data.contact ? { contact: parsed.data.contact } : {}) });
+        res.type("html").send(page("Thank you", `<h1>Thank you</h1><p>Your report was received. A person will look at it.</p>`));
+      } catch (error) {
+        if (!(error instanceof StoreError)) throw error;
+        res.status(422).type("html").send(reportForm("Report", `/report-shop/${esc(slug)}`, error.message));
       }
     }));
   }

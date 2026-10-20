@@ -20,15 +20,18 @@ let testDb: TestDb;
 let prisma: PrismaClient;
 let app: express.Express;
 let k = 0;
+let sim: import("../src/payments/simulatorAdapter.js").SimulatorAdapter;
 
 beforeAll(async () => {
   testDb = await createTestDb();
   prisma = testDb.prisma;
   await seedReference(prisma);
   app = express();
-  const { registry } = simulatorWorld(prisma);
+  const world = simulatorWorld(prisma);
+  sim = world.sim;
+  const { registry } = world;
   delete process.env["STOREFRONT_SIMULATOR_ENABLED"]; // each test switches it on only where it needs it
-  app.use(createStorefrontRouter(prisma, { payments: { registry } }));
+  app.use(createStorefrontRouter(prisma, { payments: { registry }, limiters: { order: new InMemoryLoginRateLimiter(1000, 60_000) } }));
 }, 60_000);
 afterAll(async () => {
   await testDb.teardown();
@@ -260,8 +263,8 @@ describe("delivery, cancellation and the handover code through the web (scenario
 });
 
 describe("online test payment through the web (scenario 10)", () => {
-  async function onlineOrder() {
-    const s = await shop();
+  async function onlineOrder(existing?: Seller) {
+    const s = existing ?? (await shop());
     await enableFlag(prisma, s.businessId, "storefrontOnlinePayment");
     process.env["STOREFRONT_SIMULATOR_ENABLED"] = "true";
     const agent = shopper();
@@ -285,6 +288,30 @@ describe("online test payment through the web (scenario 10)", () => {
       expect(decodeURIComponent(again.headers["location"] as string)).toMatch(/Nothing to pay/);
     } finally {
       delete process.env["STOREFRONT_SIMULATOR_ENABLED"];
+    }
+  });
+
+  it("scenario 23: when the provider is down the shopper gets a plain message, the order is untouched, and it recovers", async () => {
+    const { s, link } = await onlineOrder();
+    try {
+      sim.outage = true;
+      const first = await request(app).post(`${link}/pay`);
+      expect(decodeURIComponent(first.headers["location"] as string)).toContain("could not confirm that your payment request was sent");
+      const retry = await request(app).post(`${link}/pay`);
+      expect(decodeURIComponent(retry.headers["location"] as string)).toMatch(/previous payment request may still complete/);
+      const order = await s.scoped.storeOrder.findFirstOrThrow({ where: {} });
+      expect(await loadStoreOrder(s.scoped, order.id)).toMatchObject({ status: "PLACED", paidMinor: 0n });
+      // three other shoppers hit the same outage: the circuit opens and the message changes to the plain "unavailable" one, without creating attempts
+      for (let i = 0; i < 2; i++) {
+        const other = await onlineOrder(s);
+        await request(app).post(`${other.link}/pay`);
+      }
+      const late = await onlineOrder(s);
+      const refused = await request(app).post(`${late.link}/pay`);
+      expect(decodeURIComponent(refused.headers["location"] as string)).toContain("temporarily unavailable");
+      expect((await request(app).get(late.link)).status).toBe(200); // the order page still works
+    } finally {
+      sim.outage = false;
     }
   });
 
