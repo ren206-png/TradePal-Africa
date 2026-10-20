@@ -7,6 +7,7 @@ import { createAdminRouter } from "./admin/adminRoutes.js";
 import { createStorefrontRouter } from "./storefront/routes.js";
 import { getAdapterRegistry } from "./payments/registry.js";
 import { createMerchantPaymentWebhookRouter } from "./payments/webhookRoute.js";
+import { createPawaPayBillingWebhookRouter } from "./pawapay/billingWebhook.js";
 import { RedisLoginRateLimiter } from "./admin/rateLimiter.js";
 import {
   buildDeletionResolutionOutboundGatewayFromEnv,
@@ -228,6 +229,10 @@ app.use(
 // Merchant-payment provider callbacks (expansion Phase 5). Always mounted, but only providers in the adapter registry answer: in production
 // the registry is empty until a real adapter is added, so this is a 404 for everything.
 app.use(createMerchantPaymentWebhookRouter(prisma, () => getAdapterRegistry(prisma)));
+
+// pawaPay callbacks about TradePal SUBSCRIPTION billing (expansion Phase 6): signed (RFC 9421) and processed asynchronously. Mounted
+// regardless of the billing flags, because finishing a charge that already exists must never depend on new charges being allowed.
+app.use(createPawaPayBillingWebhookRouter(prisma));
 
 // Public storefront (expansion Phase 4): server-rendered pages for shoppers. Off unless STOREFRONT_ENABLED=true; even then a shop
 // only appears once its owner switches the per-business `storefront` flag on and opens the shop. Behind a proxy set TRUST_PROXY so

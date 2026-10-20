@@ -8,6 +8,7 @@ import { expireTradeOrders } from "../domain/trade/orders.js";
 import { expireStoreOrders } from "../domain/store/orders.js";
 import { reconcilePayments } from "../domain/merchantPayments/outcomes.js";
 import { getAdapterRegistry } from "../payments/registry.js";
+import { reconcileBilling } from "../domain/subscriptions/collection.js";
 
 /**
  * Periodic operations for the Phase 2-3 capabilities (OFF unless OPERATIONS_SWEEP_ENABLED=true):
@@ -32,6 +33,7 @@ export interface OperationsSweepResult {
   tradeOrdersExpired: number;
   storeOrdersExpired: number;
   basketsExpired: number;
+  billingPolled: number;
   paymentsPolled: number;
   paymentsApplied: number;
   suggestionsCreated: number;
@@ -41,7 +43,7 @@ export interface OperationsSweepResult {
 }
 
 export async function runOperationsSweep(prisma: PrismaClient, now: Date = new Date()): Promise<OperationsSweepResult> {
-  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, storeOrdersExpired: 0, basketsExpired: 0, paymentsPolled: 0, paymentsApplied: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
+  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, storeOrdersExpired: 0, basketsExpired: 0, billingPolled: 0, paymentsPolled: 0, paymentsApplied: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
   const step = async (name: string, fn: () => Promise<void>) => {
     try {
       await fn();
@@ -67,6 +69,10 @@ export async function runOperationsSweep(prisma: PrismaClient, now: Date = new D
     const r = await reconcilePayments(prisma, getAdapterRegistry(prisma), now);
     out.paymentsPolled = r.polled;
     out.paymentsApplied = r.applied;
+  });
+  await step("subscription billing", async () => {
+    // reconciles pawaPay subscription charges and refunds (always, whatever the billing flags say) and notes lapsed subscriptions
+    out.billingPolled = (await reconcileBilling(prisma, now)).polled;
   });
   await step("forecasts", async () => {
     const written = await runForecasts(prisma, now);

@@ -217,10 +217,10 @@ describe("outbox sweep wiring", () => {
     // callback handlers follow the registered payment providers: none by default (and none in production), the simulator only when allowed
     const { setAdapterRegistry } = await import("../src/payments/registry.js");
     setAdapterRegistry(null);
-    expect(Object.keys(buildCallbackHandlers(prisma))).toEqual([]);
+    expect(Object.keys(buildCallbackHandlers(prisma))).toEqual(["pawapay-billing"]);
     const { simulatorWorld } = await import("./helpers/payments.js");
     simulatorWorld(prisma);
-    expect(Object.keys(buildCallbackHandlers(prisma))).toEqual(["simulator"]);
+    expect(Object.keys(buildCallbackHandlers(prisma)).sort()).toEqual(["pawapay-billing", "simulator"]);
     delete process.env["STOREFRONT_SIMULATOR_ENABLED"];
     setAdapterRegistry(null);
   });

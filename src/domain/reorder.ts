@@ -1,3 +1,4 @@
+import { assertEntitled } from "./subscriptions/entitlements.js";
 import type { PrismaClient, ReorderMode, ReorderRule, ReorderSuggestion, SuggestionMethod } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { getTenantScopedClient, type TenantScopedClient } from "../db/tenantScope.js";
@@ -105,6 +106,7 @@ function posInt(n: number | undefined, what: string, min = 1): number {
 
 /** Creates or replaces the rule for a variant in a shop. Thresholds are the merchant's own; nothing is defaulted. */
 export async function setReorderRule(scoped: TenantScopedClient, input: SetRuleInput): Promise<ReorderRule> {
+  await assertEntitled(scoped, input.businessId, "reorder.rule");
   if (!(await scoped.productVariant.findUnique({ where: { id: input.variantId } }))) throw new TradeError("NOT_FOUND", "Product not found.");
   const data =
     input.mode === "FIXED"

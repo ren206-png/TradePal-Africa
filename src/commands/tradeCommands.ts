@@ -8,6 +8,7 @@ import { acceptSuggestion, dismissSuggestion, generateReorderSuggestions, listOp
 import { forecastForLive } from "../domain/forecast.js";
 import { StockError } from "../domain/stock.js";
 import { TradeError } from "../domain/trade/common.js";
+import { EntitlementError } from "../domain/subscriptions/entitlements.js";
 import { receiveShipment, shipOrder } from "../domain/trade/fulfilment.js";
 import { deliverTradeEvents } from "../domain/trade/handlers.js";
 import { acceptSalesOrder, submitPurchaseOrder } from "../domain/trade/orders.js";
@@ -65,7 +66,7 @@ export async function handleTradeCommand(ctx: CommandContext, command: string, a
       default: return null;
     }
   } catch (error) {
-    if (error instanceof TradeError || error instanceof StockError || error instanceof PriceError || error instanceof InvalidAmountError) return error.message;
+    if (error instanceof TradeError || error instanceof StockError || error instanceof PriceError || error instanceof InvalidAmountError || error instanceof EntitlementError) return error.message;
     throw error;
   }
 }
@@ -95,7 +96,7 @@ async function handleReorder(ctx: CommandContext, args: string): Promise<string>
         ...(rule[2]!.toLowerCase() === "fixed" ? { mode: "FIXED" as const, reorderPoint: a, reorderQuantity: b } : { mode: "DAYS_OF_COVER" as const, targetCoverDays: a, windowDays: b }),
       });
     } catch (error) {
-      if (error instanceof TradeError) return error.message;
+      if (error instanceof TradeError || error instanceof EntitlementError) return error.message;
       throw error;
     }
     return rule[2]!.toLowerCase() === "fixed"

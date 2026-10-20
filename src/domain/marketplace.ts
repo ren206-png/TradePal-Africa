@@ -1,5 +1,6 @@
 import type { PrismaClient, ReportReason } from "@prisma/client";
 import { getTenantScopedClient } from "../db/tenantScope.js";
+import { assertEntitled } from "./subscriptions/entitlements.js";
 import { isFeatureEnabled } from "./featureFlags.js";
 import { normalizeKey } from "./catalog.js";
 import { FLAG_STOREFRONT, StoreError } from "./store/common.js";
@@ -68,6 +69,7 @@ export async function publishMarketplaceListing(prisma: PrismaClient, businessId
   const category = categoryOf(categoryText);
   if (!category) throw new StoreError("INVALID", `Choose a category: ${MARKETPLACE_CATEGORIES.join(", ")}.`);
   const scoped = getTenantScopedClient(prisma, businessId);
+  await assertEntitled(scoped, businessId, "marketplace.publish");
   const shopListing = await scoped.listing.findFirst({ where: { variantId, channel: "STOREFRONT", status: "ACTIVE" } });
   if (!shopListing) throw new StoreError("NOT_LISTED", "List the item in your shop first (/store list <sku>).");
   const list = await retailListOf(scoped);

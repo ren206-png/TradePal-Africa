@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertEntitled } from "../subscriptions/entitlements.js";
 import type { Prisma, PrismaClient, TradeOrder, TradeOrderLine, TradePartner } from "@prisma/client";
 import { asTenantScoped, getTenantScopedClient, withScopedTransaction, type TenantScopedClient } from "../../db/tenantScope.js";
 import { enqueueOutboxEvent } from "../outbox.js";
@@ -208,6 +209,7 @@ export async function createPurchaseOrder(
 ): Promise<TradeOrderWithLines> {
   const scoped = getTenantScopedClient(prisma, input.businessId);
   await requireTradeEnabled(scoped, input.businessId);
+  await assertEntitled(scoped, input.businessId, "trade.order.create", input.now ?? new Date());
   const partner = await scoped.tradePartner.findUnique({ where: { id: input.partnerId } });
   if (!partner) throw new TradeError("NOT_FOUND", "Partner not found.");
   if (partner.role === "CUSTOMER") throw new TradeError("INVALID", `${partner.name} is a customer, not a supplier.`);

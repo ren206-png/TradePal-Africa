@@ -5,6 +5,7 @@ import { findVariantByText } from "../domain/catalog.js";
 import { isFeatureEnabled } from "../domain/featureFlags.js";
 import { formatMoney, InvalidAmountError, parseAmountToMinorUnits } from "../domain/money.js";
 import { FLAG_STOREFRONT, StoreError } from "../domain/store/common.js";
+import { EntitlementError } from "../domain/subscriptions/entitlements.js";
 import {
   cancelStoreOrderBySeller, completeStoreOrder, confirmStoreOrder, decideCancellationRequest, dispatchStoreOrder, markDeliveryFailed, markStoreOrderReady,
 } from "../domain/store/orders.js";
@@ -57,7 +58,7 @@ export async function handleStoreCommand(ctx: CommandContext, command: string, a
   try {
     return await dispatch(ctx, args.trim());
   } catch (error) {
-    if (error instanceof StoreError || error instanceof InvalidAmountError || error instanceof PaymentsError) return error.message;
+    if (error instanceof StoreError || error instanceof InvalidAmountError || error instanceof PaymentsError || error instanceof EntitlementError) return error.message;
     if (error instanceof CapabilityError) return "Your payment provider cannot send this refund from here. Refund the buyer another way, then ask TradePal support to record it.";
     throw error;
   }

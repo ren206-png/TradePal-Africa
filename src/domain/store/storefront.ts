@@ -1,4 +1,5 @@
 import type { DeliveryZone, PrismaClient, Storefront } from "@prisma/client";
+import { assertEntitled } from "../subscriptions/entitlements.js";
 import { getTenantScopedClient, type TenantScopedClient } from "../../db/tenantScope.js";
 import { normalizeKey } from "../catalog.js";
 import { PriceError, resolvePrice, type ResolvedPrice } from "../pricing.js";
@@ -71,6 +72,7 @@ export async function updateStorefront(prisma: PrismaClient, businessId: string,
   if (patch.returnWindowDays !== undefined && patch.returnWindowDays !== null && (!Number.isInteger(patch.returnWindowDays) || patch.returnWindowDays < 0)) {
     throw new StoreError("INVALID", "The return window is a whole number of days, or none.");
   }
+  if (patch.enabled === true && !sf.enabled) await assertEntitled(scoped, businessId, "store.open"); // opening is premium; closing and edits are not
   if (patch.enabled === true || (sf.enabled && patch.enabled !== false)) {
     if (!next.pickupEnabled && !next.deliveryEnabled) throw new StoreError("INVALID", "Offer pickup or delivery before opening the shop.");
     if (next.pickupEnabled && !next.pickupLocation?.trim()) throw new StoreError("INVALID", "Say where shoppers collect their orders (a landmark or address).");
