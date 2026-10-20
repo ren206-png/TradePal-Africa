@@ -8,12 +8,16 @@ import { BusinessesPage } from "./pages/BusinessesPage";
 import { DeletionRequestsPage } from "./pages/DeletionRequestsPage";
 import { FeatureFlagsPage } from "./pages/FeatureFlagsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { OverviewPage } from "./pages/OverviewPage";
+import { SystemHealthPage } from "./pages/SystemHealthPage";
+import { GuardPrompts } from "./components/GuardPrompts";
 import { MobileMoneyAlertsPage } from "./pages/MobileMoneyAlertsPage";
 import { PlansPage } from "./pages/PlansPage";
 
 function App() {
   return (
     <AuthProvider>
+      <GuardPrompts />
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
@@ -83,6 +87,26 @@ function App() {
               <ProtectedRoute>
                 <Layout>
                   <FeatureFlagsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/overview"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <OverviewPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/system-health"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <SystemHealthPage />
                 </Layout>
               </ProtectedRoute>
             }

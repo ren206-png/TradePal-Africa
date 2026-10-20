@@ -3,6 +3,8 @@ import { NavLink } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
 const navItems = [
+  { to: "/overview", label: "Overview" },
+  { to: "/system-health", label: "System health" },
   { to: "/businesses", label: "Businesses" },
   { to: "/deletion-requests", label: "Deletion requests" },
   { to: "/audit-logs", label: "Audit logs" },
