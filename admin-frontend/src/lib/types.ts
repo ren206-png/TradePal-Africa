@@ -456,3 +456,45 @@ export interface PlanVersionRow {
   subscribers: number;
   prices: { countryCode: string; currencyCode: string; priceMinor: string | null }[];
 }
+
+// ---- Expansion Phase 7: messaging and consent
+export interface AlertChannelStatus {
+  lastDeliveredAt: string | null;
+  lastFailedAt: string | null;
+  lastChannelCheckAt: string | null;
+  lastChannelCheckStatus: string | null;
+  failedLast7Days: number;
+  recentFailures: { at: string; title: string; error: string | null; httpStatus: number | null }[];
+  needsAttention: boolean;
+}
+export interface MessagingOverview {
+  consumerMessaging: { platformSwitchOn: boolean; globalDefault: boolean };
+  templatesByStatus: Record<string, number>;
+  consents: { purpose: string; status: string; count: number }[];
+  blockedNumbers: number;
+  outbound30d: Record<string, number>;
+  suppressionReasons30d: { reason: string; count: number }[];
+  volumes: { inbound24h: number; inbound7d: number; outbound24h: number; outbound7d: number };
+  aiParse7d: { total: number; validationPassed: number; validationFailed: number; successRate: number | null };
+  stuckInbound: number;
+  alertChannel: AlertChannelStatus;
+  localization: { code: string; name: string; status: string; keysServed: number; keysTotal: number; caveat: string }[];
+}
+export interface TemplateRow {
+  messageClass: string;
+  audience: string;
+  category: string;
+  pipeline: string;
+  trigger: string;
+  consentBasis: string;
+  windowRule: string;
+  body: string | null;
+  needsTemplate: boolean;
+  status: string;
+  providerTemplateName: string | null;
+  approvalReference: string | null;
+  disabledReason: string | null;
+}
+export interface ConsentRow { id: string; phone: string; business: string; purpose: string; status: string; basis: string; textVersion: string; updatedAt: string }
+export interface BlockRow { id: string; phone: string; source: string; reason: string | null; active: boolean; createdAt: string; liftedAt: string | null; liftReason: string | null }
+export interface StuckInboundRow { id: string; waMessageId: string; receivedAt: string; from: string | null; messageType: string | null; replayable: boolean; tooOld: boolean }

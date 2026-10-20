@@ -12,6 +12,7 @@ import { ReorderPage } from "./pages/ReorderPage";
 import { SupportCasesPage } from "./pages/SupportCasesPage";
 import { PaymentsPage } from "./pages/PaymentsPage";
 import { ModerationPage } from "./pages/ModerationPage";
+import { MessagingPage } from "./pages/MessagingPage";
 import { SubscriptionsPage } from "./pages/SubscriptionsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SystemHealthPage } from "./pages/SystemHealthPage";
@@ -173,6 +174,16 @@ function App() {
               <ProtectedRoute>
                 <Layout>
                   <SubscriptionsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/messaging"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <MessagingPage />
                 </Layout>
               </ProtectedRoute>
             }
