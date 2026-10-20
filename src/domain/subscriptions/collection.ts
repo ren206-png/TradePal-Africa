@@ -110,15 +110,13 @@ export async function allocateBillingPayment(prisma: PrismaClient, attemptId: st
   const probe = await prisma.billingAttempt.findUnique({ where: { id: attemptId } });
   if (!probe || probe.status !== "COMPLETED") return "SKIPPED";
   const scoped = getTenantScopedClient(prisma, probe.businessId);
-  return withScopedTransaction(scoped, async (tx) => {
-    if (await tx.billingAllocation.findUnique({ where: { attemptId } })) return "EXISTS" as const;
+  type Hold = { held: "DUPLICATE_PAYMENT" | "PAYMENT_AFTER_CANCELLATION" | "MISMATCH"; invoiceId: string; businessId: string; amountMinor: bigint; invoiceStatus: string };
+  const outcome = await withScopedTransaction(scoped, async (tx): Promise<"GRANTED" | "EXISTS" | Hold> => {
+    if (await tx.billingAllocation.findUnique({ where: { attemptId } })) return "EXISTS";
     const attempt = await tx.billingAttempt.findUniqueOrThrow({ where: { id: attemptId } });
     const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: attempt.invoiceId }, include: { subscription: true } });
-    if (invoice.amountMinor !== attempt.capturedMinor) return "HELD" as const;
-    const hold = async (type: "DUPLICATE_PAYMENT" | "PAYMENT_AFTER_CANCELLATION") => {
-      await raiseBillingException(prisma, { type, fingerprint: `${type.toLowerCase()}:${attempt.id}`, businessId: attempt.businessId, attemptId: attempt.id, invoiceId: invoice.id, amountMinor: attempt.capturedMinor, details: { invoiceStatus: invoice.status } });
-      return "HELD" as const;
-    };
+    const hold = (held: Hold["held"]): Hold => ({ held, invoiceId: invoice.id, businessId: attempt.businessId, amountMinor: attempt.capturedMinor, invoiceStatus: invoice.status });
+    if (invoice.amountMinor !== attempt.capturedMinor) return hold("MISMATCH");
     if (invoice.status === "PAID" || invoice.status === "PARTIALLY_REFUNDED" || invoice.status === "REFUNDED") return hold("DUPLICATE_PAYMENT");
     if (!(INVOICE_OPEN as readonly string[]).includes(invoice.status)) return hold("PAYMENT_AFTER_CANCELLATION");
     const claimed = await tx.invoice.updateMany({ where: { id: invoice.id, status: { in: [...INVOICE_OPEN] } }, data: { status: "PAID", paidAt: now, paidMinor: attempt.capturedMinor } });
@@ -129,7 +127,9 @@ export async function allocateBillingPayment(prisma: PrismaClient, attemptId: st
     const held = sub.planVersionId ? await tx.planVersion.findUnique({ where: { id: sub.planVersionId } }) : null;
     const grace = held?.graceDays ?? 3;
     const wasEntitled = (sub.status === "ACTIVE" || sub.status === "PAST_DUE") && now.getTime() < sub.currentPeriodEnd.getTime() + grace * DAY_MS;
-    const start = wasEntitled ? new Date(Math.max(now.getTime(), sub.currentPeriodEnd.getTime())) : now;
+    // In time (or within the grace period during which entitlements continued) the new period begins where the old one ended: the days used
+    // in grace are paid for and no days are lost. After grace it begins now: the lapsed days are not given away.
+    const start = wasEntitled ? sub.currentPeriodEnd : now;
     const end = new Date(start.getTime() + (bought?.billingPeriodDays ?? LEGACY_PERIOD_DAYS) * DAY_MS);
     const planCode = bought?.planCode ?? sub.planCode;
     await tx.subscription.update({
@@ -147,8 +147,14 @@ export async function allocateBillingPayment(prisma: PrismaClient, attemptId: st
       businessId: attempt.businessId, actorType: "SYSTEM", actorId: "pawapay-billing", action: "SUBSCRIPTION_PAYMENT_CONFIRMED", entityType: "Subscription", entityId: sub.id,
       metadata: { invoiceId: invoice.id, reference: invoice.reference, depositId: attempt.id, planCode, periodStart: start.toISOString(), periodEnd: end.toISOString() },
     });
-    return "GRANTED" as const;
+    return "GRANTED";
   });
+  if (outcome === "GRANTED" || outcome === "EXISTS") return outcome;
+  // raised AFTER the transaction: the exception table is written through the plain client, which must not wait on our open transaction
+  if (outcome.held !== "MISMATCH") {
+    await raiseBillingException(prisma, { type: outcome.held, fingerprint: `${outcome.held.toLowerCase()}:${attemptId}`, businessId: outcome.businessId, attemptId, invoiceId: outcome.invoiceId, amountMinor: outcome.amountMinor, details: { invoiceStatus: outcome.invoiceStatus } });
+  }
+  return "HELD";
 }
 
 // ------------------------------------------------------------------------------------ reconciliation
