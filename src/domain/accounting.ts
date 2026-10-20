@@ -40,6 +40,7 @@ export const SYSTEM_ACCOUNTS = [
   { key: "OWNER_WITHDRAWALS", code: "3100", name: "Owner withdrawals", type: "EQUITY" },
   { key: "OPENING_BALANCE_EQUITY", code: "3900", name: "Opening balance equity", type: "EQUITY" },
   { key: "SALES_REVENUE", code: "4000", name: "Sales", type: "REVENUE" },
+  { key: "DELIVERY_FEES", code: "4100", name: "Delivery fees charged", type: "REVENUE" },
   { key: "SALES_RETURNS", code: "4900", name: "Sales returns and refunds", type: "REVENUE" },
   { key: "COGS", code: "5000", name: "Cost of goods sold", type: "EXPENSE" },
   { key: "INVENTORY_SHRINKAGE", code: "5100", name: "Stock losses and adjustments", type: "EXPENSE" },
@@ -56,6 +57,9 @@ const METHOD_ACCOUNT: Record<PaymentMethod, SystemAccountKey> = {
   BANK: "BANK",
   UNSPECIFIED: "UNCLASSIFIED_FUNDS",
 };
+
+/** The ledger account a payment method maps to (shared by every module that books money in or out). */
+export const accountForMethod = (m: PaymentMethod): SystemAccountKey => METHOD_ACCOUNT[m];
 
 export async function ensureChartOfAccounts(scoped: TenantScopedClient, businessId: string): Promise<Map<SystemAccountKey, string>> {
   const existing = await scoped.account.findMany({ where: {} });

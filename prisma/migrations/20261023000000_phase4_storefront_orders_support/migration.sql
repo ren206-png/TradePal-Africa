@@ -477,10 +477,12 @@ ALTER TABLE "StorePayment" ADD CONSTRAINT "StorePayment_amount_check" CHECK ("am
 ALTER TABLE "StoreRefundLine" ADD CONSTRAINT "StoreRefundLine_values_check" CHECK ("quantityBase" > 0 AND "receivedBase" >= 0 AND "receivedBase" <= "quantityBase");
 ALTER TABLE "PaymentException" ADD CONSTRAINT "PaymentException_amount_check" CHECK ("amountMinor" > 0);
 
--- ---- a finished order never comes back to life: COMPLETED, CANCELLED and EXPIRED are terminal
+-- ---- a finished order never comes back to life: COMPLETED and CANCELLED are final; EXPIRED can only be re-instated to CONFIRMED
 CREATE OR REPLACE FUNCTION tradepal_store_order_terminal() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
+  -- EXPIRED may be re-instated to CONFIRMED (the resolution of a late payment). CANCELLED and COMPLETED are final.
+  IF OLD."status" = 'EXPIRED' AND NEW."status" = 'CONFIRMED' THEN RETURN NEW; END IF;
   IF OLD."status" IN ('CANCELLED', 'EXPIRED', 'COMPLETED') AND NEW."status" IS DISTINCT FROM OLD."status" THEN
     RAISE EXCEPTION 'TradePal: store order % is % and cannot change status', OLD."id", OLD."status" USING ERRCODE = 'integrity_constraint_violation';
   END IF;

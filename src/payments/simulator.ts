@@ -5,6 +5,7 @@ import { recordCallback } from "../domain/callbackInbox.js";
 import { PaymentPurposeForbiddenError, assertProviderAllowedForPurpose } from "../domain/paymentPurpose.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
 import { applyProviderPayment, applyProviderPaymentToBuyer } from "../domain/trade/payments.js";
+import { applyStoreProviderPayment } from "../domain/store/payments.js";
 
 /**
  * The deterministic merchant-payment SIMULATOR (expansion section 12, Phase 3). It moves no money and talks to no
@@ -19,15 +20,20 @@ import { applyProviderPayment, applyProviderPaymentToBuyer } from "../domain/tra
  */
 export const SIMULATOR_PROVIDER = "simulator" as const;
 
-const eventSchema = z.object({
-  event: z.literal("payment.succeeded"),
-  externalId: z.string().min(8).max(100),
-  purpose: z.enum(["MERCHANT_SALE", "PLATFORM_SUBSCRIPTION"]),
-  sellerBusinessId: z.string().min(1),
-  invoiceId: z.string().min(1),
-  amountMinor: z.string().regex(/^[1-9]\d{0,17}$/),
-  currencyCode: z.string().length(3),
-});
+const eventSchema = z
+  .object({
+    event: z.literal("payment.succeeded"),
+    externalId: z.string().min(8).max(100),
+    purpose: z.enum(["MERCHANT_SALE", "PLATFORM_SUBSCRIPTION"]),
+    sellerBusinessId: z.string().min(1),
+    /** Pays a B2B trade invoice... */
+    invoiceId: z.string().min(1).optional(),
+    /** ...or a B2C store order. Exactly one of the two. */
+    storeOrderId: z.string().min(1).optional(),
+    amountMinor: z.string().regex(/^[1-9]\d{0,17}$/),
+    currencyCode: z.string().length(3),
+  })
+  .refine((e) => (e.invoiceId === undefined) !== (e.storeOrderId === undefined), "Name exactly one target.");
 export type SimulatorPaymentEvent = z.infer<typeof eventSchema>;
 
 export function signSimulatorBody(rawBody: string, secret: string): string {
@@ -46,10 +52,10 @@ export function verifySimulatorSignature(rawBody: string, signature: string, sec
 }
 
 /** What a payer's simulated checkout produces: the exact body and its signature, as a provider would send them. */
-export function simulateSuccessfulPayment(input: { secret: string; externalId: string; sellerBusinessId: string; invoiceId: string; amountMinor: bigint; currencyCode: string; purpose?: "MERCHANT_SALE" | "PLATFORM_SUBSCRIPTION" }) {
+export function simulateSuccessfulPayment(input: { secret: string; externalId: string; sellerBusinessId: string; invoiceId?: string; storeOrderId?: string; amountMinor: bigint; currencyCode: string; purpose?: "MERCHANT_SALE" | "PLATFORM_SUBSCRIPTION" }) {
   const body = JSON.stringify({
     event: "payment.succeeded", externalId: input.externalId, purpose: input.purpose ?? "MERCHANT_SALE", sellerBusinessId: input.sellerBusinessId,
-    invoiceId: input.invoiceId, amountMinor: input.amountMinor.toString(), currencyCode: input.currencyCode,
+    ...(input.invoiceId ? { invoiceId: input.invoiceId } : {}), ...(input.storeOrderId ? { storeOrderId: input.storeOrderId } : {}), amountMinor: input.amountMinor.toString(), currencyCode: input.currencyCode,
   });
   return { body, signature: signSimulatorBody(body, input.secret) };
 }
@@ -86,11 +92,18 @@ export function simulatorCallbackHandler(prisma: PrismaClient) {
     if (!callback.signatureVerified) throw new Error("Refusing to apply an unverified simulator callback.");
     const event = eventSchema.parse(callback.payload);
     assertProviderAllowedForPurpose(SIMULATOR_PROVIDER, event.purpose);
+    if (event.storeOrderId) {
+      await applyStoreProviderPayment(prisma, {
+        sellerBusinessId: event.sellerBusinessId, orderId: event.storeOrderId, provider: SIMULATOR_PROVIDER, externalId: event.externalId,
+        amountMinor: BigInt(event.amountMinor), currencyCode: event.currencyCode, evidence: "SIMULATOR_CONFIRMED",
+      });
+      return;
+    }
     const seller = getTenantScopedClient(prisma, event.sellerBusinessId);
-    const invoice = await seller.tradeInvoice.findUnique({ where: { id: event.invoiceId } });
+    const invoice = await seller.tradeInvoice.findUnique({ where: { id: event.invoiceId! } });
     if (!invoice) throw new Error("The invoice named by this callback does not exist for that seller.");
     const { payment } = await applyProviderPayment(prisma, {
-      sellerBusinessId: event.sellerBusinessId, invoiceId: event.invoiceId, provider: SIMULATOR_PROVIDER, externalId: event.externalId,
+      sellerBusinessId: event.sellerBusinessId, invoiceId: event.invoiceId!, provider: SIMULATOR_PROVIDER, externalId: event.externalId,
       amountMinor: BigInt(event.amountMinor), currencyCode: event.currencyCode, evidence: "SIMULATOR_CONFIRMED",
     });
     if (payment.state === "APPLIED" && invoice.counterpartInvoiceId) {
