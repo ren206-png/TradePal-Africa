@@ -240,3 +240,24 @@ describe("heartbeat evaluation", () => {
     expect(out.find((s) => s.service === "ghost")).toMatchObject({ stale: true, lastSeenAt: null });
   });
 });
+
+describe("previously un-audited platform writes now leave an audit row (Standard #8)", () => {
+  it("global flag default, plan upsert and inventory backfill are audited with the acting admin", async () => {
+    const t = await loginAs("super@t.test");
+    const admin = await prisma.adminUser.findUniqueOrThrow({ where: { email: "super@t.test" } });
+    await prisma.featureFlag.upsert({ where: { key: "stockTracking" }, update: {}, create: { key: "stockTracking", description: "test", enabledByDefault: false } });
+
+    expect((await request(app).post("/admin/feature-flags/stockTracking").set(auth(t)).send({ enabledByDefault: false })).status).toBe(200);
+    const flagRow = await prisma.auditLog.findFirst({ where: { action: "admin.feature_flag.global_default_set", entityId: "stockTracking" } });
+    expect(flagRow?.actorId).toBe(admin.id);
+    expect(flagRow?.actorType).toBe("ADMIN");
+
+    const plan = await request(app).post("/admin/plans").set(auth(t)).send({ code: "AUDIT_T", name: "Audit test", priceMinor: "100", currencyCode: "SLE", entryCapPerMonth: 10, voiceEnabled: false });
+    expect(plan.status).toBe(200);
+    expect(await prisma.auditLog.count({ where: { action: "admin.plan.upserted", entityId: "AUDIT_T" } })).toBe(1);
+
+    expect((await request(app).post(`/admin/businesses/${bizB}/inventory/backfill`).set(auth(t)).send({})).status).toBe(200);
+    expect(await prisma.auditLog.count({ where: { action: "admin.inventory.backfill_run", businessId: bizB } })).toBe(1);
+  });
+});
+

@@ -52,7 +52,7 @@ import { parsePaginationParams, paginate } from "./pagination.js";
 import { InMemoryLoginRateLimiter, type LoginRateLimiter } from "./rateLimiter.js";
 import { revokeAdminToken } from "./tokenRevocation.js";
 import { createPlatformAdminRouter, type PlatformAdminOptions } from "./platformAdmin.js";
-import { requireStepUp, requireSupportAccess } from "./platformGuards.js";
+import { recordPlatformAudit, requireStepUp, requireSupportAccess } from "./platformGuards.js";
 import type { PlatformPermission } from "../auth/permissions.js";
 
 const loginBodySchema = z.object({
@@ -451,6 +451,14 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
           voiceEnabled: parsed.data.voiceEnabled,
           staffCapCount,
         });
+        // Standard #8: these platform-level writes were previously un-audited (no business to scope to).
+        await recordPlatformAudit(prisma, {
+          adminUserId: (req as AuthenticatedAdminRequest).adminUser!.adminUserId,
+          action: "admin.plan.upserted",
+          entityType: "Plan",
+          entityId: plan.code,
+          metadata: { priceMinor: plan.priceMinor.toString(), currencyCode: plan.currencyCode, entryCapPerMonth: plan.entryCapPerMonth },
+        });
         res.json({ plan: serializePlan(plan) });
       } catch (error) {
         if (error instanceof PlanValidationError || error instanceof CurrencyNotFoundError) {
@@ -484,6 +492,13 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
       try {
         const flag = await setFeatureFlagGlobalDefault(prisma, req.params["key"] as string, parsed.data.enabledByDefault);
+        await recordPlatformAudit(prisma, {
+          adminUserId: (req as AuthenticatedAdminRequest).adminUser!.adminUserId,
+          action: "admin.feature_flag.global_default_set",
+          entityType: "FeatureFlag",
+          entityId: flag.key,
+          metadata: { enabledByDefault: flag.enabledByDefault },
+        });
         res.json({ featureFlag: flag });
       } catch (error) {
         if (error instanceof FeatureFlagNotFoundError) {
@@ -783,6 +798,14 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
       if (!(await requireBusinessExists(businessId, res))) return;
 
       const result = await backfillInventoryLinksForBusiness(getTenantScopedClient(prisma, businessId), businessId);
+      await recordPlatformAudit(prisma, {
+        adminUserId: (req as AuthenticatedAdminRequest).adminUser!.adminUserId,
+        action: "admin.inventory.backfill_run",
+        entityType: "Business",
+        entityId: businessId,
+        businessId,
+        metadata: { ...result },
+      });
       res.json(result);
     }),
   );
