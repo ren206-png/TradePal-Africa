@@ -363,7 +363,6 @@ export async function completeStoreOrder(
   input: { businessId: string; orderId: string; code?: string; withoutCodeReason?: string; collect?: { method: TradePaymentMethod; amountMinor?: bigint } } & Actor,
 ): Promise<StoreOrderFull> {
   const now = input.now ?? new Date();
-  const scoped = getTenantScopedClient(prisma, input.businessId);
   return transition(prisma, input.businessId, input.orderId, ["READY", "CONFIRMED", "OUT_FOR_DELIVERY"], async (tx, order) => {
     if (order.fulfilment === "PICKUP" && order.status === "OUT_FOR_DELIVERY") throw new StoreError("WRONG_STATE", "Invalid state.");
     if (order.fulfilment === "DELIVERY" && order.status !== "OUT_FOR_DELIVERY") throw new StoreError("WRONG_STATE", "Dispatch a delivery order before completing it.");
@@ -383,7 +382,7 @@ export async function completeStoreOrder(
     }
     if (order.fulfilment === "PICKUP") await fulfilOrderStock(tx, order, now, input.actor);
     await journalStoreHandover(tx, { ...order, paidMinor: paid }, now);
-    return { status: "COMPLETED", completedAt: now, paidMinor: paid, accessExpiresAt: extendAccess(now, AFTER_COMPLETION_ACCESS_DAYS + Math.max(0, (await returnWindow(scoped)) ?? 0)) };
+    return { status: "COMPLETED", completedAt: now, paidMinor: paid, accessExpiresAt: extendAccess(now, AFTER_COMPLETION_ACCESS_DAYS + Math.max(0, (await returnWindow(tx)) ?? 0)) };
   });
 }
 

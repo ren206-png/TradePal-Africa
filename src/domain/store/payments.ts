@@ -89,8 +89,9 @@ export async function applyStoreProviderPayment(prisma: PrismaClient, input: Pro
     };
     if (exceptionType) {
       const payment = await tx.storePayment.create({ data: { ...base, state: "HELD", reason: `Held: ${exceptionType.toLowerCase().replace(/_/g, " ")}` } });
-      // the money exists (the provider collected it), so it is booked as an advance even though it is not applied to the order
-      await journalStorePaymentIn(tx, { businessId: input.sellerBusinessId, currencyCode: input.currencyCode, amountMinor: base.amountMinor, method: "MOBILE_MONEY", clearing: true, paymentId: payment.id, now, evidenceRef: `${input.provider}:${input.externalId}` });
+      // the money exists (the provider collected it), so it is booked as an advance even though it is not applied to the order.
+      // Money in a currency the seller does not keep books in is recorded but not journaled until a person resolves it.
+      if (input.currencyCode === order.currencyCode) await journalStorePaymentIn(tx, { businessId: input.sellerBusinessId, currencyCode: input.currencyCode, amountMinor: base.amountMinor, method: "MOBILE_MONEY", clearing: true, paymentId: payment.id, now, evidenceRef: `${input.provider}:${input.externalId}` });
       const exception = await tx.paymentException.create({
         data: { businessId: input.sellerBusinessId, orderId: order.id, type: exceptionType, amountMinor: base.amountMinor, paymentId: payment.id, details: { orderStatus: order.status, orderTotalMinor: order.totalMinor.toString(), paidMinor: order.paidMinor.toString(), currencyOnOrder: order.currencyCode, holdLapsed } },
       });
@@ -141,7 +142,7 @@ export async function resolvePaymentException(
       const refund = await tx.storePayment.create({
         data: { businessId: input.businessId, orderId: order.id, direction: "OUT", amountMinor: held.amountMinor, currencyCode: held.currencyCode, method: input.refundMethod ?? "MOBILE_MONEY", evidence: "MERCHANT_RECORDED", state: "APPLIED", reason: `Refund of held payment ${held.id}`, createdBy: input.actor ?? null },
       });
-      await journalStoreRefund(tx, { order, amountMinor: held.amountMinor, method: refund.method, clearing: held.evidence !== "MERCHANT_RECORDED", paymentId: refund.id, now, afterHandover: false });
+      if (held.currencyCode === order.currencyCode) await journalStoreRefund(tx, { order, amountMinor: held.amountMinor, method: refund.method, clearing: held.evidence !== "MERCHANT_RECORDED", paymentId: refund.id, now, afterHandover: false });
       await tx.storePayment.update({ where: { id: held.id }, data: { reason: `Held payment refunded (${refund.id})` } });
       resolution = "REFUNDED";
     } else if (input.action === "RE_RESERVE") {

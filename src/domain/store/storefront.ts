@@ -46,6 +46,7 @@ export async function ensureStorefront(prisma: PrismaClient, businessId: string)
   const base = defaultSlug(business.name);
   for (let i = 0; i < 20; i++) {
     const slug = i === 0 ? base : `${base.slice(0, 33)}-${i + 1}`;
+    if (await prisma.storefront.findUnique({ where: { slug } })) continue;
     try {
       return await scoped.storefront.create({ data: { businessId, slug, title: business.name } });
     } catch (error) {
@@ -76,6 +77,7 @@ export async function updateStorefront(prisma: PrismaClient, businessId: string,
     if (next.deliveryEnabled && (await scoped.deliveryZone.count({ where: { active: true } })) === 0) throw new StoreError("INVALID", "Add at least one delivery area with its fee before offering delivery.");
     if (!next.supportPhone?.trim()) throw new StoreError("INVALID", "Give a phone number shoppers can reach you on.");
   }
+  if (patch.slug !== undefined && patch.slug !== sf.slug && (await prisma.storefront.findUnique({ where: { slug: patch.slug } }))) throw new StoreError("DUPLICATE", "That shop address is taken. Choose another.");
   try {
     return await scoped.storefront.update({ where: { id: sf.id }, data: { ...patch } });
   } catch (error) {
