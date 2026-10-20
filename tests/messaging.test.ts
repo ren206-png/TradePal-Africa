@@ -240,6 +240,18 @@ describe("consent, block list and the send pipeline", () => {
     expect(events.map((e) => e.event)).toEqual(["OPT_IN", "GLOBAL_STOP", "GLOBAL_START", "GLOBAL_STOP"]);
   });
 
+  it("free text is allowed only inside the 24-hour window the person opened", async () => {
+    process.env["CONSUMER_MESSAGING_ENABLED"] = "true";
+    const { transport, sent } = recorder();
+    const phone = "2348066660001";
+    const reply = (key: string, lastInboundAt: Date | null) => sendMessage(prisma, transport, { classId: "CONSUMER_OPT_OUT_CONFIRMATION", toPhone: phone, idempotencyKey: key, lastInboundAt });
+    expect((await reply("w:1", null)).reason).toBe("OUTSIDE_WINDOW");
+    expect((await reply("w:2", new Date(Date.now() - 25 * 3600_000))).reason).toBe("OUTSIDE_WINDOW");
+    expect((await reply("w:3", new Date(Date.now() + 3600_000))).reason).toBe("OUTSIDE_WINDOW"); // a timestamp in the future is not a window
+    expect((await reply("w:4", new Date(Date.now() - 3600_000))).decision).toBe("SENT");
+    expect(sent).toHaveLength(1);
+  });
+
   it("keeps the log and consent history append-only, refuses marketing consent from a checkout box, and refuses an approval with no reference", async () => {
     const s = await seller();
     await recordOrderUpdatesConsent(prisma, { businessId: s.businessId, phone: "2348077770001" });

@@ -38,6 +38,7 @@ import { reportIncident } from "./monitoring/alerts.js";
 import type { CircuitBreaker } from "./monitoring/circuitBreaker.js";
 import type { SttProvider } from "./stt/provider.js";
 import { downloadWhatsAppMedia } from "./whatsapp/mediaGateway.js";
+import { conversationEnabled, proposeLoggable, tryHandleReply, type ConversationCtx, type InputSource } from "./conversation/flow.js";
 import { applyStart, applyStop, consentKeyword, hasConsentHistory } from "./messaging/consent.js";
 import { sendMessage } from "./messaging/send.js";
 import { whatsappTransport } from "./messaging/transport.js";
@@ -707,12 +708,28 @@ async function dispatchCommandOrParse(
   merchant: Merchant,
   text: string,
   whatsappMessageId: string,
+  source: InputSource = "TEXT",
 ): Promise<void> {
   const business = await deps.prisma.business.findUniqueOrThrow({
     where: { id: merchant.businessId },
     include: { currency: true },
   });
   const scopedPrisma = getTenantScopedClient(deps.prisma, business.id);
+
+  // Phase 7 (per-business flag, default OFF): AI-read entries are previewed and saved only after the person confirms. With the
+  // flag off, every line below behaves exactly as it did before.
+  const conversational = await conversationEnabled(scopedPrisma, business.id);
+  const convCtx: ConversationCtx = { prisma: deps.prisma, scoped: scopedPrisma, merchant, business };
+  if (conversational) {
+    if (source === "VOICE") text = text.replace(/^\s*\/+/, ""); // a transcript is never run as a slash command
+    if (!text.trim().startsWith("/")) {
+      const answer = await tryHandleReply(convCtx, text, source);
+      if (answer !== null) {
+        await reply(deps, merchant.phoneNumber, answer);
+        return;
+      }
+    }
+  }
 
   // Shop owners on a phone often type just the word, with a slip of the finger ("Today", "stok", "debst",
   // "remnd Amina"): a few unambiguous read-only commands work without the slash and with one wrong letter.
@@ -785,6 +802,20 @@ async function dispatchCommandOrParse(
     : replyForParseResult(result, stockTrackingEnabled);
   let finalAction = outcome.finalAction;
   let replyText: string;
+
+  if (outcome.loggable && conversational) {
+    try {
+      await assertWithinQuotaIfEnabled(scopedPrisma, business.id, business.timezone);
+    } catch (error) {
+      if (!(error instanceof QuotaExceededError)) throw error;
+      await recordAiParseLog(deps.prisma, { businessId: business.id, whatsappMessageId, rawInput: text, result, finalAction: "REJECTED" });
+      await reply(deps, merchant.phoneNumber, error.message);
+      return;
+    }
+    const proposal = await proposeLoggable(convCtx, { parsed: outcome.loggable, parse: result, rawText: text, whatsappMessageId, source });
+    await reply(deps, merchant.phoneNumber, proposal.reply);
+    return;
+  }
 
   if (outcome.loggable) {
     try {
@@ -986,7 +1017,7 @@ export async function dispatchInboundMessage(deps: DispatcherDeps, job: InboundM
         } else if (outcome.kind === "transcription_failed") {
           await reply(deps, job.fromNumber, VOICE_TRANSCRIPTION_FAILED_REPLY);
         } else {
-          await dispatchCommandOrParse(deps, merchant, outcome.text, job.waMessageId);
+          await dispatchCommandOrParse(deps, merchant, outcome.text, job.waMessageId, "VOICE");
         }
       }
     } else {

@@ -25,8 +25,10 @@ export const CATALOG = define({
   "confirm.nothingPending": { en: "There is nothing waiting for your confirmation." },
   "confirm.changed": { en: "I could not save that because something changed: {reason} Nothing was saved. Please send it again." },
   "confirm.notYours": { en: "Only the person who sent the request can confirm it. Nothing was saved." },
-  "confirm.wrongCode": { en: "That code does not match. Nothing was saved yet. Reply with the code {code}, or NO to cancel." },
+  "confirm.wrongCode": { en: "That code does not match. Nothing was saved. Reply with the code from my earlier message, or NO to cancel." },
   "confirm.replaced": { en: "Your earlier request was replaced by this newer one and was not saved." },
+  "confirm.typeIt": { en: "For your safety, please type YES, or the code, to confirm. Nothing was saved." },
+  "confirm.needsCode": { en: "This one needs the code from my message, not just YES. Reply with the code, or NO to cancel." },
   "confirm.reminder": { en: "You still have a request waiting: {summary}\nReply YES to save it or NO to cancel." },
 
   // ---- clarification
