@@ -3,10 +3,10 @@
 Resume from this file across sessions. Update after every slice.
 
 ## Current state
-- **Phase 0: approved. Phase 1: approved** (`APPROVED: PHASE 1` received).
-- **Phase 2 (catalog, pricing, stock, journals, daily close, admin transactions panel): complete, awaiting approval.** Gate line: `AWAITING: APPROVED: PHASE 2`.
+- **Phases 0, 1, 2: approved.** (`APPROVED: PHASE 2` received.)
+- **Phase 3 (B2B procurement and wholesale, reorder engine Tier 1 + Tier 2 shadow + scoring + gate, admin reorder panel): complete, awaiting approval.** Gate line: `AWAITING: APPROVED: PHASE 3`.
 - Branch `expansion/phase-1` (local only: **not pushed, not merged, nothing deployed, no migration run against any real database**). A push to `main` would deploy production and run `prisma migrate deploy`.
-- Tests: backend 75 files / 879 pass; admin-frontend 7 files / 36 pass + build OK. Self-check: `self-check-phase-2.md`.
+- Tests: backend 83 files / 944 pass; admin-frontend 8 files / 40 pass + build OK. Self-check: `self-check-phase-3.md`. Demo: `npx tsx scripts/demoWholesale.ts`.
 - Production at `86a072d`, untouched.
 
 ## Completed slices
@@ -31,6 +31,12 @@ Resume from this file across sessions. Update after every slice.
 | 2026-10-20 | 2d daily close | locally tested; do not enable for real merchants yet (no payment method in legacy entries) |
 | 2026-10-20 | 2e admin transactions panel, void-by-reversal, formula-safe export, correlation ids, `admin.write` audit guarantee | locally tested (scenarios 28, 30) |
 | 2026-10-20 | 2f WhatsApp commands behind flags, docs, rehearsal script | locally tested; script never run against a DB |
+| 2026-10-20 | 3a trade schema + migration (partners, links, orders, shipments, receipts, invoices, payments, credit notes, reorder, forecasts, gate) | locally tested; migration not run on a real server |
+| 2026-10-20 | 3b trade domain: linking, shared catalog, order lifecycle with quotes/holds/expiry, shipments, receipts, invoices, credit notes, payments, credit rules, simulator, outbox mirror handlers | locally tested (scenario 1) |
+| 2026-10-20 | 3c reorder Tier 1 | locally tested (scenario 31) |
+| 2026-10-20 | 3d Tier 2 shadow forecasting, scoring, promotion gate with DB guard | locally tested (scenario 32); real-data accuracy unknown |
+| 2026-10-20 | 3e merchant commands, operations sweep, permissions | locally tested; sweeps default off |
+| 2026-10-20 | 3f admin reorder and forecasting panel, trade views, demo, docs | locally tested |
 
 ## Commands run (reproducible)
 - `git log --oneline | head`, `git show --stat dfe8bb6`
@@ -40,11 +46,12 @@ Resume from this file across sessions. Update after every slice.
 - Provider docs fetched 2026-10-20 (URLs in `merchant-provider-matrix.md`)
 
 ## Open blockers
-1. **Migration rehearsal on a real Postgres / restored backup** before any deploy (`scripts/rehearseMigrations.sh`; no Postgres or Docker daemon was available in this environment).
-2. Owner decisions OPEN-1..11 and Phase 2 decisions D1-D12 (`decisions.md` C3), especially: keep `dailyClose` OFF; web/PWA catalog editing deferred.
-3. Owner actions: external heartbeat monitor polling `/heartbeat`; verified alert sender + second recipient; Railway CLI relink; pawaPay approval/token; mobile-money API approval.
-4. No merchant-sales payment provider established (matrix).
-5. Known gaps: no scheduled drift/reconcile checks; support access gates only some routes (Phase 1 list + new panels); RLS not activated; FOR UPDATE contention untested on a real server.
+1. **Migration rehearsal on a real Postgres / restored backup** before any deploy (`scripts/rehearseMigrations.sh`; still never run against a database).
+2. Owner decisions OPEN-1..11 (**OPEN-6 promotion thresholds unset on purpose**), Phase 2 decisions D1-D12 and Phase 3 decisions E1-E15 (`decisions.md`); keep `dailyClose` OFF.
+3. Activation prerequisites to add to the checklist: `OUTBOX_SWEEP_ENABLED=true`, `OPERATIONS_SWEEP_ENABLED=true`, `HEARTBEAT_ENABLED` on both services.
+4. Owner actions: external heartbeat monitor; verified alert sender + second recipient; Railway CLI relink; pawaPay approval/token; mobile-money API approval.
+5. No merchant-sales payment provider established (simulator only).
+6. Known gaps: credit-limit check not atomic under concurrent acceptance; no duplicate-payment detection; no dead-letter replay button; quotes/partial receipts/credit notes lack merchant commands; no web surface; FOR UPDATE contention untested on a real server; forecast quality unknown on real data.
 
 ## Next concrete step
-On `APPROVED: PHASE 2`: start Phase 3 (B2B procurement and wholesale slice, reorder engine Tier 1 + Tier 2 shadow + scoring job, admin reorder panel). Before any deploy of Phase 1-2 work: rehearse the migrations on a restored production backup.
+On `APPROVED: PHASE 3`: start Phase 4 (B2C storefront, checkout and fulfilment on the same inventory and accounting services; admin support-cases panel). Before any deploy of Phase 1-3 work: rehearse the migrations on a restored production backup.
