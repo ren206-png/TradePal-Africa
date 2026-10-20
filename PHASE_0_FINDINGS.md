@@ -1255,3 +1255,9 @@ Exists and reusable: `STOCK_ADJUSTMENT` AI intent; low-stock thresholds (`/lowst
 See `docs/expansion/phase-plan.md` §"Owner decisions required". Summary: (1) approve quarantining pawaPay `/collect`; (2) decide Flutterwave's role (subscriptions? retire?) and quarantine merchant paylinks until proceeds settle to merchants; (3) approve Organization/Shop/Membership direction; (4) approve DB-level immutability + RLS as part of Phase 1; (5) approve the one-line test-helper path fix; (6) owner action: external heartbeat; (7) owner action: verified alert sender/domain and a second recipient; (8) relink the Railway CLI for the new folder location (local config only).
 
 **End of Expansion Audit — Phase 0.**
+
+---
+
+## Expansion outcome (added at the end of Phase 9)
+
+Everything in this file up to here is the pre-expansion record and Phase 0 evidence; it is kept as written. The expansion (Phases 1-9) is documented under `docs/expansion/`: start at `handoff.md`, then `status-matrix.md` (what is true at which level), `progress.md` (resume point) and `decisions.md` (every decision and open question). Phase 0's blockers were: alerts and heartbeat (owner actions, still open), no merchant payment provider (still open), pawaPay token and approval (still open). The Phase 0 production reads were read-only and nothing in the expansion has touched production.

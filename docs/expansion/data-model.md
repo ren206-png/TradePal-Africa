@@ -1,5 +1,7 @@
 # Data model: mapping, ownership and money flows (Phases 1-3)
 
+> Ownership boundaries and where each kind of money is recorded: see `money-flow.md`.
+
 Where a conceptual entity from the master prompt (section 7) already existed, it was reused; new tables were added only for genuine gaps. Every table below carries `businessId` (the tenant) unless marked, is covered by the application tenant scope and a row-level-security policy, and is **additive**: no existing table or column was altered. The only change to existing tables is two guard triggers on `FeatureFlag` and `BusinessFeatureFlag` (Phase 3) that refuse to turn the forecast promotion gate on except through its controlled function.
 
 ## Entity mapping

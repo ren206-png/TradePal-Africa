@@ -68,3 +68,11 @@ An admin (owner) can also refund a payment pawaPay collected but that was never 
 | Record | Admin can | Admin cannot |
 |---|---|---|
 | Admin account | be disabled (by the platform owner through `scripts/disableAdmin.ts`); a disabled account cannot log in and its tokens stop working on the next request | be deleted (audit rows point at it); there is no in-app screen for this yet |
+
+## Phase 9 records
+
+| Record | Admin can | Admin cannot |
+|---|---|---|
+| Background job class | pause / resume with a reason (owner or operator, step-up, audited); send a synthetic incident | pause inbound messages or payment callbacks |
+| Phone (device) sessions | revoke every session of one business (reason, step-up) | read a draft's content from a session, or create a session |
+| Not built | | hard-delete a synthetic org, anonymize an org, force a password reset, from the console (see `status-matrix.md`) |

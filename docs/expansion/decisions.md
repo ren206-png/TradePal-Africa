@@ -246,6 +246,18 @@ Open: **OPEN-13** the real template wording, languages and Meta submission (owne
 
 Open: **OPEN-16** run `scripts/rehearseMigrations.sh` on a restored backup (or authorise a local Postgres) and measure pages on a real low-end phone and throttled link; **OPEN-17** whether the weekly digest template's "Net" wording should change.
 
+## C10. Phase 9 decisions (release package)
+
+| # | Decision | Why |
+|---|---|---|
+| L1 | The release demo is part of the test suite (`tests/demoRelease.test.ts`) and reads every admin panel through the real admin API, so "every panel populated" is checked, not claimed | master prompt section 22 |
+| L2 | Background job classes can be paused from System health (reason, step-up, audited); a paused class skips scheduled runs only; inbound messages and payment callbacks are not pausable; a failed read of the pause state runs the job (fails open) | an incident control that cannot itself stop reconciliation |
+| L3 | A "synthetic incident" travels the real alert path and reports whether the email service accepted it; a unique title per press defeats de-duplication | a test of alerting must not be silently swallowed |
+| L4 | Admin can sign every phone out of a business (`admin:revoke_staff`, step-up) | lost or shared device |
+| L5 | Status classification is by the six levels of section 0.11 in `status-matrix.md`; **nothing is above `locally tested`** and the matrix says so | no fabricated status |
+| L6 | Not built, recorded as such: console control to hard-delete a synthetic org, anonymize an org, force a password reset, "re-run reconciliation" button; tax-category infrastructure; statement import; a real merchant-sales provider; product-measurement instrumentation (specified only) | scope and honesty; each is listed in `handoff.md` |
+| L7 | Landing/privacy copy is edited in the repository only and is deployed by the owner at activation, in the order set out in `runbooks/production-activation.md` | nothing public changes without the owner |
+
 ## D. Change log
 - 2026-10-20 — register created in Phase 0; G1-G13 recorded; P1-P10 proposed; OPEN-1..11 listed.
 - 2026-10-20 — Phase 1 completed on branch `expansion/phase-1`; section C2 records the provisional application of P1-P4, P10 and new admin controls.
@@ -256,3 +268,4 @@ Open: **OPEN-16** run `scripts/rehearseMigrations.sh` on a restored backup (or a
 - 2026-10-20 — Phase 6 built on the same local branch; section C7 records the Phase 6 decisions; `pawapay-audit.md` section 7 records the activation status.
 - 2026-10-20 — Phase 7 built on the same local branch; section C8 records the Phase 7 decisions; `message-template-register.md` records the outbound classes.
 - 2026-10-20 — Phase 8 built on the same local branch; section C9 records the Phase 8 decisions; `reports.md`, `performance-baseline.md`, `security-checks.md`, `migration-rehearsal.md` are new.
+- 2026-10-20 — Phase 9 built on the same local branch; section C10 records the Phase 9 decisions; the release package is `handoff.md`, `status-matrix.md`, `runbooks/`, `test-evidence.md`.
