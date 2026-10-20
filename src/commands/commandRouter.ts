@@ -146,6 +146,7 @@ const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
   { flag: "tradeOrders", line: "/partners, /partner add|invite|share|terms|unlink, /join <code> - trade partners and linking" },
   { flag: "tradeOrders", line: "/invoices, /payinvoice <invoice> <amount> [cash|momo|bank], /confirmpayment, /rejectpayment - trade invoices and payments" },
   { flag: "catalogV2", line: "/wholesale <sku> <price> [per <pack>] [from <qty>], /publish <sku>, /unpublish <sku> - wholesale prices for your partners" },
+  { flag: "storefront", line: "/store - your online shop: set it up, see and move orders, deal with cancellations, refunds and problems (/store help)" },
   { line: "/help - show this message" },
 ];
 

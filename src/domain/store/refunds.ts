@@ -127,6 +127,7 @@ export async function issueStoreRefund(
     if (input.requestId) {
       request = await tx.storeRefundRequest.findUnique({ where: { id: input.requestId } });
       if (!request || request.orderId !== order.id) throw new StoreError("NOT_FOUND", "Request not found for this order.");
+      if (request.status === "REFUNDED") throw new StoreError("WRONG_STATE", "This request has already been refunded.");
       const ready = request.kind === "RETURN" ? request.status === "GOODS_RECEIVED" : request.status === "APPROVED";
       if (!ready || request.approvedAmountMinor === null) throw new StoreError("WRONG_STATE", request.kind === "RETURN" ? "Receive the returned goods before refunding." : "Approve the request before refunding.");
       if (amount !== undefined && amount !== request.approvedAmountMinor) throw new StoreError("REFUND_LIMIT", "A request is refunded exactly as approved.");

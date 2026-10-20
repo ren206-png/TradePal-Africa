@@ -37,6 +37,9 @@ export const MERCHANT_PERMISSIONS = [
   "trade:payments", //      record and confirm payments on trade invoices
   "trade:partners", //      trade partners, links, shared price lists, credit terms
   "trade:credit_override", // go ahead despite a credit block (with a reason)
+  "store:manage", //        the shop's web page, delivery areas, which products are listed
+  "store:fulfil", //        confirm, prepare, dispatch and hand over consumer orders; record payments taken at hand-over
+  "store:refund", //        decide cancellations and refunds, take returns back, pay refunds out
 ] as const;
 export type MerchantPermission = (typeof MERCHANT_PERMISSIONS)[number];
 
@@ -48,10 +51,10 @@ const MERCHANT_MATRIX: Readonly<Record<MembershipRole, ReadonlySet<MerchantPermi
     "sales:create", "sales:void", "expenses:create", "customers:manage", "debts:record", "debts:view",
     "inventory:view", "inventory:receive", "inventory:adjust", "prices:manage", "reports:view",
     "finance:close_day", "finance:export", "finance:reconcile", "payments:view", "staff:manage",
-    "trade:buy", "trade:sell", "trade:payments", "trade:partners",
+    "trade:buy", "trade:sell", "trade:payments", "trade:partners", "store:manage", "store:fulfil", "store:refund",
   ]),
   SALES_CLERK: new Set<MerchantPermission>([
-    "sales:create", "expenses:create", "customers:manage", "debts:record", "debts:view", "inventory:view", "reports:view",
+    "sales:create", "expenses:create", "customers:manage", "debts:record", "debts:view", "inventory:view", "reports:view", "store:fulfil",
   ]),
   INVENTORY_OPERATOR: new Set<MerchantPermission>(["inventory:view", "inventory:receive", "inventory:adjust", "prices:manage", "trade:buy"]),
   FINANCE_OPERATOR: new Set<MerchantPermission>([
