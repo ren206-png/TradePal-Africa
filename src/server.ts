@@ -234,6 +234,8 @@ if (process.env["STOREFRONT_ENABLED"] === "true") {
   app.use(
     createStorefrontRouter(prisma, {
       payments: { registry: paymentRegistry },
+      // Marketplace discovery is a separate switch from having storefronts, and each seller is separately flagged.
+      marketplace: process.env["MARKETPLACE_ENABLED"] === "true",
       // Shared across instances when Redis is configured (RATE_LIMIT_BACKEND), otherwise per process and reset on restart.
       ...(rateLimitRedisClient
         ? { limiters: { read: new RedisLoginRateLimiter(rateLimitRedisClient, 300, 60_000), write: new RedisLoginRateLimiter(rateLimitRedisClient, 120, 10 * 60_000), order: new RedisLoginRateLimiter(rateLimitRedisClient, 10, 60 * 60_000) } }

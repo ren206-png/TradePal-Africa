@@ -46,7 +46,7 @@ export async function addToBasket(prisma: PrismaClient, input: AddInput): Promis
   const sf = await loadPublicStorefrontById(prisma, input.businessId);
   if (!sf) throw new StoreError("UNAVAILABLE", "This shop is not open right now.");
   const scoped = getTenantScopedClient(prisma, input.businessId);
-  const listing = await scoped.listing.findFirst({ where: { variantId: input.variantId, channel: "STOREFRONT", status: "ACTIVE" }, include: { variant: { include: { packs: true } } } });
+  const listing = await scoped.listing.findFirst({ where: { variantId: input.variantId, channel: "STOREFRONT", status: "ACTIVE", moderation: "VISIBLE" }, include: { variant: { include: { packs: true } } } });
   if (!listing || listing.variant.status === "ARCHIVED") throw new StoreError("UNAVAILABLE", "That item is no longer available.");
   const unit = normalizeKey(input.unit);
   const units = [listing.variant.baseUnit, ...listing.variant.packs.map((p) => p.normalizedName)];
@@ -134,7 +134,7 @@ export async function basketView(prisma: PrismaClient, token: string | null | un
     const views: BasketLineView[] = [];
     for (const l of ls) {
       const variant = await scoped.productVariant.findUnique({ where: { id: l.variantId }, include: { product: true, packs: true } });
-      const listing = await scoped.listing.findFirst({ where: { variantId: l.variantId, channel: "STOREFRONT", status: "ACTIVE" } });
+      const listing = await scoped.listing.findFirst({ where: { variantId: l.variantId, channel: "STOREFRONT", status: "ACTIVE", moderation: "VISIBLE" } });
       const name = variant ? `${variant.product.name}${variant.name && variant.name !== variant.product.name ? ` ${variant.name}` : ""}` : "Item";
       let problem: string | null = null;
       let price: bigint | null = null;

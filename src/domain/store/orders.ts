@@ -126,7 +126,7 @@ async function placeForSeller(
   const built: { variantId: string; sku: string; description: string; unit: string; packBase: number; quantity: number; baseQuantity: number; unitPrice: bigint; total: bigint; track: boolean }[] = [];
   for (const l of lines) {
     const variant = await scoped.productVariant.findUnique({ where: { id: l.variantId }, include: { product: true } });
-    const listing = await scoped.listing.findFirst({ where: { variantId: l.variantId, channel: "STOREFRONT", status: "ACTIVE" } });
+    const listing = await scoped.listing.findFirst({ where: { variantId: l.variantId, channel: "STOREFRONT", status: "ACTIVE", moderation: "VISIBLE" } });
     if (!variant || !listing || variant.status === "ARCHIVED") throw new StoreError("UNAVAILABLE", "An item in your basket is no longer available.");
     try {
       const r = await resolvePrice(scoped, { priceListId: list.id, variantId: l.variantId, quantity: l.quantity, unit: l.unit, at: now });

@@ -15,6 +15,7 @@ import { getTenantScopedClient } from "../db/tenantScope.js";
 import { esc, money, notFoundPage, page } from "./html.js";
 import type { AdapterRegistry } from "../payments/adapter.js";
 import { SimulatorAdapter } from "../payments/simulatorAdapter.js";
+import { MARKETPLACE_CATEGORIES, REPORT_REASONS, fileReport, getMarketplaceListing, marketplaceCountries, searchMarketplace, type MarketplaceResult } from "../domain/marketplace.js";
 import { createPaymentIntent, ensureSimulatorConnection, startPaymentAttempt } from "../domain/merchantPayments/intents.js";
 import { receiveProviderCallback } from "../domain/merchantPayments/outcomes.js";
 import { PaymentsError } from "../domain/merchantPayments/common.js";
@@ -31,6 +32,8 @@ import { PaymentsError } from "../domain/merchantPayments/common.js";
 export interface StorefrontOptions {
   /** Payment providers available to this process. Online payment is offered only when the simulator is in it, the environment is not production and the seller's flag is on. */
   payments?: { registry: AdapterRegistry };
+  /** Mount the public marketplace pages (search, listing pages, reports). Off by default; each seller is also gated by the `marketplace` flag. */
+  marketplace?: boolean;
   limiters?: { read?: LoginRateLimiter; write?: LoginRateLimiter; order?: LoginRateLimiter };
   secureCookies?: boolean;
   now?: () => Date;
@@ -391,6 +394,90 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
       throw error;
     }
   }));
+
+  // ------------------------------------------------------------------------------- marketplace (public discovery)
+
+  if (options.marketplace) {
+    const fromPrice = (r: MarketplaceResult) => {
+      const o = r.item.options.filter((x) => x.available)[0] ?? r.item.options[0]!;
+      return `${money(o.unitPriceMinor, r.minorUnitExp, r.currencyCode)} per ${esc(o.label)}`;
+    };
+    const sellerLine = (r: MarketplaceResult) => `Sold by <strong>${esc(r.seller.name)}</strong> (${esc(r.seller.countryCode)})${r.seller.areas.length ? ` &middot; delivers to ${esc(r.seller.areas.slice(0, 4).join(", "))}` : ""}${r.seller.pickup ? " &middot; pickup" : ""}`;
+
+    router.get("/marketplace", limit(read, "read"), asyncHandler(async (req, res) => {
+      const country = typeof req.query["c"] === "string" ? req.query["c"].slice(0, 2).toUpperCase() : "";
+      if (!country) {
+        const countries = await marketplaceCountries(prisma);
+        res.type("html").send(page("Marketplace", `<h1>Marketplace</h1><p>Choose your country to see what sellers near you offer.</p>${countries.map((c) => `<p><a class="btn" href="/marketplace?c=${esc(c.code)}">${esc(c.name)}</a></p>`).join("") || "<p>No sellers are listed yet.</p>"}<p class="muted">Every item is sold and delivered by the seller named on it, not by TradePal.</p>`));
+        return;
+      }
+      const q = typeof req.query["q"] === "string" ? req.query["q"].slice(0, 60) : "";
+      const cat = typeof req.query["cat"] === "string" ? req.query["cat"].slice(0, 40) : "";
+      const area = typeof req.query["area"] === "string" ? req.query["area"].slice(0, 40) : "";
+      const pageNo = Math.max(1, Math.min(100, Number(req.query["page"]) || 1));
+      const { results, hasMore } = await searchMarketplace(prisma, { country, ...(cat ? { category: cat } : {}), ...(q ? { q } : {}), ...(area ? { area } : {}), take: 20, skip: (pageNo - 1) * 20, now: clock() });
+      const rows = results.map((r) => `<div class="card"><a href="/listing/${esc(r.listingId)}"><strong>${esc(r.item.name)}</strong></a>${r.item.variantName ? ` <span class="muted">${esc(r.item.variantName)}</span>` : ""}
+        <p>${fromPrice(r)} <span class="badge">${r.item.availability === "IN_STOCK" ? "In stock" : r.item.availability === "LOW_STOCK" ? "Only a few left" : "Out of stock"}</span></p><p class="muted">${sellerLine(r)}</p></div>`).join("");
+      const qs = (p: number) => `/marketplace?c=${encodeURIComponent(country)}&amp;q=${encodeURIComponent(q)}&amp;cat=${encodeURIComponent(cat)}&amp;area=${encodeURIComponent(area)}&amp;page=${p}`;
+      res.type("html").send(page("Marketplace", `<h1>Marketplace (${esc(country)})</h1>
+        <form method="get" action="/marketplace"><input type="hidden" name="c" value="${esc(country)}">
+        <label for="q">What are you looking for?</label><input id="q" name="q" value="${esc(q)}" maxlength="60">
+        <label for="cat">Category</label><select id="cat" name="cat"><option value="">Any</option>${MARKETPLACE_CATEGORIES.map((c) => `<option${c === cat ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>
+        <label for="area">Area</label><input id="area" name="area" value="${esc(area)}" maxlength="40"><p><button type="submit">Search</button> <a class="btn secondary" href="/basket">Basket</a></p></form>
+        ${rows || "<p>Nothing matches. Try fewer words or another area.</p>"}
+        ${hasMore ? `<p><a href="${qs(pageNo + 1)}">More</a></p>` : ""}
+        <p class="muted">Results are ordered by how well they match your words, then by what is in stock, then by what the seller updated most recently. Nobody pays to be placed higher. Every item is sold and delivered by the seller named on it.</p>`));
+    }));
+
+    router.get("/listing/:id", limit(read, "read"), asyncHandler(async (req, res) => {
+      const r = await getMarketplaceListing(prisma, req.params["id"] as string, clock());
+      if (!r) {
+        res.status(404).type("html").send(notFoundPage());
+        return;
+      }
+      const it = r.item;
+      res.type("html").send(page(it.name, `<h1>${esc(it.name)}</h1>${it.variantName ? `<p class="muted">${esc(it.variantName)}</p>` : ""}
+        ${it.imageUrl ? `<div><img src="${esc(it.imageUrl)}" alt="${esc(it.name)}" loading="lazy" width="160" height="160"></div>` : ""}
+        <p><span class="badge">${it.availability === "IN_STOCK" ? "In stock" : it.availability === "LOW_STOCK" ? "Only a few left" : "Out of stock"}</span></p>
+        <div class="card"><h2>Seller</h2><p><strong>${esc(r.seller.name)}</strong> (${esc(r.seller.countryCode)})<br>${r.seller.supportPhone ? `Phone ${esc(r.seller.supportPhone)}<br>` : ""}${r.seller.pickup ? "Pickup available. " : ""}${r.seller.delivery ? `Delivery to ${esc(r.seller.areas.join(", ") || "areas set by the seller")}. ` : ""}<br><a href="/shop/${esc(r.seller.slug)}">See everything this seller offers</a></p>
+        <p class="muted">The seller is responsible for this item and for getting it to you. TradePal does not hold your money or deliver goods.</p></div>
+        ${it.availability === "OUT_OF_STOCK" ? "" : `<form method="post" action="/shop/${esc(r.seller.slug)}/add"><input type="hidden" name="variantId" value="${esc(it.variantId)}">
+          <label for="u">Size</label><select id="u" name="unit">${it.options.map((o) => `<option value="${esc(o.unit)}"${o.available ? "" : " disabled"}>${esc(o.label)} - ${money(o.unitPriceMinor, r.minorUnitExp, r.currencyCode)}${o.minQuantity > 1 ? ` (from ${o.minQuantity})` : ""}${o.available ? "" : " (not enough in stock)"}</option>`).join("")}</select>
+          <label for="q">Quantity</label><input id="q" name="quantity" type="number" inputmode="numeric" min="1" max="999" value="${it.options[0]?.minQuantity ?? 1}" required><p><button type="submit">Add to basket</button></p></form>`}
+        <p><a href="/report/${esc(r.listingId)}">Report this listing</a></p>`));
+    }));
+
+    const reportForm = (title: string, action: string, flash = "") => page("Report", `<h1>${esc(title)}</h1>${flash ? `<p class="card warn">${esc(flash)}</p>` : ""}
+      <form method="post" action="${action}"><label for="reason">What is wrong?</label><select id="reason" name="reason">${REPORT_REASONS.map((x) => `<option value="${x}">${esc(x.replace(/_/g, " ").toLowerCase())}</option>`).join("")}</select>
+      <label for="details">Tell us what you saw</label><textarea id="details" name="details" rows="4" maxlength="1000" required></textarea>
+      <label for="contact">How can we reach you? (optional)</label><input id="contact" name="contact" maxlength="100"><p><button type="submit">Send report</button></p></form>
+      <p class="muted">A report is looked at by a person. Nothing is taken down automatically.</p>`);
+
+    router.get("/report/:listingId", limit(read, "read"), asyncHandler(async (req, res) => {
+      const r = await getMarketplaceListing(prisma, req.params["listingId"] as string, clock());
+      if (!r) {
+        res.status(404).type("html").send(notFoundPage());
+        return;
+      }
+      res.type("html").send(reportForm(`Report: ${r.item.name}`, `/report/${esc(r.listingId)}`));
+    }));
+
+    router.post("/report/:listingId", limit(write, "write"), asyncHandler(async (req, res) => {
+      const parsed = z.object({ reason: z.enum(REPORT_REASONS), details: text(1_000), contact: text(100).optional() }).safeParse(req.body);
+      const listingId = req.params["listingId"] as string;
+      if (!parsed.success) {
+        res.status(400).type("html").send(reportForm("Report", `/report/${esc(listingId)}`, "Please choose a reason and describe the problem."));
+        return;
+      }
+      try {
+        await fileReport(prisma, { listingId, reason: parsed.data.reason, details: parsed.data.details, ...(parsed.data.contact ? { contact: parsed.data.contact } : {}) });
+        res.type("html").send(page("Thank you", `<h1>Thank you</h1><p>Your report was received. A person will look at it. We may not be able to tell you the outcome.</p><p><a href="/marketplace">Back to the marketplace</a></p>`));
+      } catch (error) {
+        if (!(error instanceof StoreError)) throw error;
+        res.status(422).type("html").send(reportForm("Report", `/report/${esc(listingId)}`, error.message));
+      }
+    }));
+  }
 
   return router;
 }

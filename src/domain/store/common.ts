@@ -13,7 +13,7 @@ export const FLAG_ONLINE_PAYMENT = "storefrontOnlinePayment";
 
 export type StoreErrorCode =
   | "NOT_FOUND" | "INVALID" | "WRONG_STATE" | "UNAVAILABLE" | "NOT_ALLOWED" | "OVER_QUANTITY" | "PAYMENT_REQUIRED" | "OVER_PAYMENT" | "BAD_CODE"
-  | "REFUND_LIMIT" | "FEATURE_OFF" | "SIMULATOR_FORBIDDEN" | "DUPLICATE";
+  | "REFUND_LIMIT" | "FEATURE_OFF" | "SIMULATOR_FORBIDDEN" | "DUPLICATE" | "NOT_READY" | "SUSPENDED" | "NOT_LISTED" | "UNPUBLISHED" | "BUSY";
 
 export class StoreError extends Error {
   readonly code: StoreErrorCode;
@@ -49,7 +49,7 @@ export function toE164(input: string, defaultCallingCode: string): string | null
 /** Is the seller allowed to be public right now? Enabled storefront, flag on, business not suspended. */
 export async function loadPublicStorefront(prisma: PrismaClient, slug: string) {
   const sf = await prisma.storefront.findUnique({ where: { slug: slug.toLowerCase() }, include: { business: { include: { country: true } } } });
-  if (!sf || !sf.enabled || sf.business.status !== "ACTIVE") return null;
+  if (!sf || !sf.enabled || sf.marketplaceStatus === "SUSPENDED" || sf.business.status !== "ACTIVE") return null;
   const scoped = (await import("../../db/tenantScope.js")).getTenantScopedClient(prisma, sf.businessId);
   if (!(await isFeatureEnabled(scoped, sf.businessId, FLAG_STOREFRONT))) return null;
   return sf;
@@ -58,7 +58,7 @@ export async function loadPublicStorefront(prisma: PrismaClient, slug: string) {
 /** Same check by business id (used when a basket line or order is acted on after the shopper first saw the shop). */
 export async function loadPublicStorefrontById(prisma: PrismaClient, businessId: string) {
   const sf = await prisma.storefront.findFirst({ where: { businessId }, include: { business: { include: { country: true } } } });
-  if (!sf || !sf.enabled || sf.business.status !== "ACTIVE") return null;
+  if (!sf || !sf.enabled || sf.marketplaceStatus === "SUSPENDED" || sf.business.status !== "ACTIVE") return null;
   const scoped = (await import("../../db/tenantScope.js")).getTenantScopedClient(prisma, businessId);
   if (!(await isFeatureEnabled(scoped, businessId, FLAG_STOREFRONT))) return null;
   return sf;

@@ -178,6 +178,26 @@ export interface PublicCatalog {
   hasMore: boolean;
 }
 
+
+type VariantForItem = { id: string; name: string | null; baseUnit: string; trackStock: boolean; lowStockThreshold: number | null; product: { name: string; imageUrls: string[] }; packs: { normalizedName: string }[] };
+
+/** One variant as a shopper sees it: name, availability label, and every unit it can be bought in with its price. Null if it cannot be priced. */
+export async function buildPublicItem(scoped: TenantScopedClient, businessId: string, v: VariantForItem, priceListId: string, at: Date): Promise<PublicItem | null> {
+  const av = await availabilityOf(scoped, businessId, v);
+  const options: PublicItem["options"] = [];
+  for (const unit of [v.baseUnit, ...v.packs.map((p) => p.normalizedName)]) {
+    const r = await resolveOptionPrice(scoped, priceListId, v.id, unit, at);
+    if (!r) continue;
+    const available = av.availableBase === null || av.availableBase >= r.baseQuantity;
+    options.push({ unit: r.unit, label: r.unit === v.baseUnit ? r.unit : `${r.unit} of ${r.baseQuantity / r.quantity}`, packBaseQuantity: r.baseQuantity / r.quantity, minQuantity: r.quantity, unitPriceMinor: r.unitPriceMinor, available });
+  }
+  if (options.length === 0) return null;
+  return {
+    variantId: v.id, name: v.product.name, variantName: v.name && v.name !== v.product.name ? v.name : null, baseUnit: v.baseUnit,
+    imageUrl: v.product.imageUrls[0] && /^https:\/\//.test(v.product.imageUrls[0]) ? v.product.imageUrls[0] : null, availability: av.label, options,
+  };
+}
+
 /** Items on a seller's storefront (published fields only). Tenant-scoped to that seller; search is within this one shop. */
 export async function publicCatalog(prisma: PrismaClient, businessId: string, opts: { q?: string; take?: number; skip?: number; at?: Date } = {}): Promise<PublicCatalog> {
   const at = opts.at ?? new Date();
@@ -189,7 +209,7 @@ export async function publicCatalog(prisma: PrismaClient, businessId: string, op
   const q = opts.q?.trim();
   const listings = await scoped.listing.findMany({
     where: {
-      channel: "STOREFRONT", status: "ACTIVE", variant: { status: { not: "ARCHIVED" },
+      channel: "STOREFRONT", status: "ACTIVE", moderation: "VISIBLE", variant: { status: { not: "ARCHIVED" },
         ...(q ? { OR: [{ sku: { contains: q, mode: "insensitive" } }, { name: { contains: q, mode: "insensitive" } }, { product: { name: { contains: q, mode: "insensitive" } } }, { aliases: { some: { normalizedAlias: { contains: normalizeKey(q) } } } }] } : {}) },
     },
     orderBy: { createdAt: "asc" }, take: take + 1, skip,
@@ -198,20 +218,8 @@ export async function publicCatalog(prisma: PrismaClient, businessId: string, op
   const items: PublicItem[] = [];
   if (list) {
     for (const l of listings.slice(0, take)) {
-      const v = l.variant;
-      const av = await availabilityOf(scoped, businessId, v);
-      const options: PublicItem["options"] = [];
-      for (const unit of [v.baseUnit, ...v.packs.map((p) => p.normalizedName)]) {
-        const r = await resolveOptionPrice(scoped, list.id, v.id, unit, at);
-        if (!r) continue;
-        const available = av.availableBase === null || av.availableBase >= r.baseQuantity;
-        options.push({ unit: r.unit, label: r.unit === v.baseUnit ? r.unit : `${r.unit} of ${r.baseQuantity / r.quantity}`, packBaseQuantity: r.baseQuantity / r.quantity, minQuantity: r.quantity, unitPriceMinor: r.unitPriceMinor, available });
-      }
-      if (options.length === 0) continue;
-      items.push({
-        variantId: v.id, name: v.product.name, variantName: v.name && v.name !== v.product.name ? v.name : null, baseUnit: v.baseUnit,
-        imageUrl: v.product.imageUrls[0] && /^https:\/\//.test(v.product.imageUrls[0]) ? v.product.imageUrls[0] : null, availability: av.label, options,
-      });
+      const item = await buildPublicItem(scoped, businessId, l.variant, list.id, at);
+      if (item) items.push(item);
     }
   }
   return { currencyCode: business.currencyCode, minorUnitExp: business.currency.minorUnitExp, items, hasMore: listings.length > take };
