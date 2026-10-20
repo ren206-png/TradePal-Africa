@@ -80,75 +80,85 @@ enum BusinessStatus {
 }
 
 model Business {
-  storefronts         Storefront[]
-  deliveryZones       DeliveryZone[]
-  listings            Listing[]
-  storeOrders         StoreOrder[]
-  storeOrderLines     StoreOrderLine[]
-  storePayments       StorePayment[]
-  storeCancellations  StoreCancellationRequest[]
-  storeRefunds        StoreRefundRequest[]
-  storeRefundLines    StoreRefundLine[]
-  paymentExceptions   PaymentException[]
-  supportCases        SupportCase[]
-  supportCaseNotes    SupportCaseNote[]
-  tradePartners       TradePartner[]
-  linksInvited        BusinessLink[]             @relation("LinkInviter")
-  linksReceived       BusinessLink[]             @relation("LinkInvitee")
-  priceListShares     PriceListShare[]
-  tradeOrders         TradeOrder[]
-  tradeOrderLines     TradeOrderLine[]
-  shipments           Shipment[]
-  shipmentLines       ShipmentLine[]
-  goodsReceipts       GoodsReceipt[]
-  goodsReceiptLines   GoodsReceiptLine[]
-  tradeInvoices       TradeInvoice[]
-  tradeInvoiceLines   TradeInvoiceLine[]
-  tradePayments       TradePayment[]
-  creditNotes         CreditNote[]
-  reorderRules        ReorderRule[]
-  reorderSuggestions  ReorderSuggestion[]
-  forecastPredictions ForecastPrediction[]
-  forecastScores      ForecastScore[]
-  forecastGateEvents  ForecastGateEvent[]
-  products            Product[]
-  productVariants     ProductVariant[]
-  variantAliases      VariantAlias[]
-  packConversions     PackConversion[]
-  priceLists          PriceList[]
-  priceRules          PriceRule[]
-  stockMovements      StockMovement[]
-  stockBalances       StockBalance[]
-  stockReservations   StockReservation[]
-  stockCounts         StockCount[]
-  stockCountLines     StockCountLine[]
-  stockTransfers      StockTransfer[]
-  stockTransferLines  StockTransferLine[]
-  accounts            Account[]
-  journalEntries      JournalEntry[]
-  journalLines        JournalLine[]
-  dailyCloses         DailyClose[]
-  stockPolicy         StockPolicy?
-  id                  String                     @id @default(uuid())
-  name                String
-  countryCode         String
-  currencyCode        String
-  languageCode        String
-  timezone            String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
+  storefronts             Storefront[]
+  providerConnections     ProviderConnection[]
+  paymentIntents          PaymentIntent[]
+  paymentAttempts         PaymentAttempt[]
+  paymentAttemptEvents    PaymentAttemptEvent[]
+  paymentAllocations      PaymentAllocation[]
+  providerRefunds         ProviderRefund[]
+  providerSettlements     ProviderSettlement[]
+  providerSettlementLines ProviderSettlementLine[]
+  moderationActions       ModerationAction[]
+  appeals                 Appeal[]
+  deliveryZones           DeliveryZone[]
+  listings                Listing[]
+  storeOrders             StoreOrder[]
+  storeOrderLines         StoreOrderLine[]
+  storePayments           StorePayment[]
+  storeCancellations      StoreCancellationRequest[]
+  storeRefunds            StoreRefundRequest[]
+  storeRefundLines        StoreRefundLine[]
+  paymentExceptions       PaymentException[]
+  supportCases            SupportCase[]
+  supportCaseNotes        SupportCaseNote[]
+  tradePartners           TradePartner[]
+  linksInvited            BusinessLink[]             @relation("LinkInviter")
+  linksReceived           BusinessLink[]             @relation("LinkInvitee")
+  priceListShares         PriceListShare[]
+  tradeOrders             TradeOrder[]
+  tradeOrderLines         TradeOrderLine[]
+  shipments               Shipment[]
+  shipmentLines           ShipmentLine[]
+  goodsReceipts           GoodsReceipt[]
+  goodsReceiptLines       GoodsReceiptLine[]
+  tradeInvoices           TradeInvoice[]
+  tradeInvoiceLines       TradeInvoiceLine[]
+  tradePayments           TradePayment[]
+  creditNotes             CreditNote[]
+  reorderRules            ReorderRule[]
+  reorderSuggestions      ReorderSuggestion[]
+  forecastPredictions     ForecastPrediction[]
+  forecastScores          ForecastScore[]
+  forecastGateEvents      ForecastGateEvent[]
+  products                Product[]
+  productVariants         ProductVariant[]
+  variantAliases          VariantAlias[]
+  packConversions         PackConversion[]
+  priceLists              PriceList[]
+  priceRules              PriceRule[]
+  stockMovements          StockMovement[]
+  stockBalances           StockBalance[]
+  stockReservations       StockReservation[]
+  stockCounts             StockCount[]
+  stockCountLines         StockCountLine[]
+  stockTransfers          StockTransfer[]
+  stockTransferLines      StockTransferLine[]
+  accounts                Account[]
+  journalEntries          JournalEntry[]
+  journalLines            JournalLine[]
+  dailyCloses             DailyClose[]
+  stockPolicy             StockPolicy?
+  id                      String                     @id @default(uuid())
+  name                    String
+  countryCode             String
+  currencyCode            String
+  languageCode            String
+  timezone                String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
   // Phase 29: platform-moderation suspension (src/domain/businessModeration.ts),
   // distinct from Merchant.removedAt's per-staff soft-deactivation — this cuts
   // off every merchant on the business at once, for a platform-rules
   // violation. suspendedAt/suspensionReason are null whenever status is
   // ACTIVE (reinstateBusiness clears them). Enforced in the live message path
   // by messageDispatcher.ts's own gate, not just by hiding admin UI.
-  status              BusinessStatus             @default(ACTIVE)
-  suspendedAt         DateTime?                  @db.Timestamptz()
+  status                  BusinessStatus             @default(ACTIVE)
+  suspendedAt             DateTime?                  @db.Timestamptz()
   /// True only for synthetic/test/demo organizations. The ONLY businesses whose financial rows may ever be hard-deleted
   /// (database triggers enforce this); set at creation and immutable afterwards. See docs/expansion/db-protection.md.
-  isSynthetic         Boolean                    @default(false)
-  suspensionReason    String?
-  createdAt           DateTime                   @default(now()) @db.Timestamptz()
-  updatedAt           DateTime                   @updatedAt @db.Timestamptz()
+  isSynthetic             Boolean                    @default(false)
+  suspensionReason        String?
+  createdAt               DateTime                   @default(now()) @db.Timestamptz()
+  updatedAt               DateTime                   @updatedAt @db.Timestamptz()
 
   country  Country  @relation(fields: [countryCode], references: [code])
   currency Currency @relation(fields: [currencyCode], references: [code])
@@ -2125,23 +2135,27 @@ enum ListingStatus {
 
 /// A seller's own shop front. Nothing is public until `enabled` AND the `storefront` flag are both on.
 model Storefront {
-  id                 String   @id @default(uuid())
-  businessId         String   @unique
-  slug               String   @unique
-  enabled            Boolean  @default(false)
+  id                 String            @id @default(uuid())
+  businessId         String            @unique
+  slug               String            @unique
+  enabled            Boolean           @default(false)
   title              String
   about              String?
   supportPhone       String?
-  pickupEnabled      Boolean  @default(true)
+  pickupEnabled      Boolean           @default(true)
   pickupLocation     String? // landmark-style directions, not a map pin
   pickupInstructions String?
-  deliveryEnabled    Boolean  @default(false)
-  reservationMinutes Int      @default(60) // how long stock is held for an unpaid online order
-  pickupHoldHours    Int      @default(48) // how long a confirmed pay-on-collection order is held
+  deliveryEnabled    Boolean           @default(false)
+  reservationMinutes Int               @default(60) // how long stock is held for an unpaid online order
+  pickupHoldHours    Int               @default(48) // how long a confirmed pay-on-collection order is held
   returnWindowDays   Int? // null = this seller does not accept returns by default
   termsText          String? // shown to the buyer and snapshotted onto each order
-  createdAt          DateTime @default(now()) @db.Timestamptz()
-  updatedAt          DateTime @updatedAt @db.Timestamptz()
+  /// Public marketplace presence (Phase 5). OFF until the seller opts in and is ready; SUSPENDED by a platform admin hides the
+  /// shop, its listings and checkout everywhere public, while orders already placed carry on.
+  marketplaceStatus  MarketplaceStatus @default(OFF)
+  marketplaceNote    String? // why it is suspended, shown to the seller
+  createdAt          DateTime          @default(now()) @db.Timestamptz()
+  updatedAt          DateTime          @updatedAt @db.Timestamptz()
 
   business Business       @relation(fields: [businessId], references: [id])
   zones    DeliveryZone[]
@@ -2167,12 +2181,18 @@ model DeliveryZone {
 
 /// Which variants a seller shows on which channel. Separate from wholesale publishing (a different audience).
 model Listing {
-  id         String         @id @default(uuid())
-  businessId String
-  variantId  String
-  channel    ListingChannel
-  status     ListingStatus  @default(ACTIVE)
-  createdAt  DateTime       @default(now()) @db.Timestamptz()
+  id               String            @id @default(uuid())
+  businessId       String
+  variantId        String
+  channel          ListingChannel
+  status           ListingStatus     @default(ACTIVE)
+  /// Marketplace category from the fixed list in src/domain/marketplace.ts (null for storefront listings).
+  category         String?
+  /// A platform admin can unpublish a listing everywhere public without touching the seller's own setting.
+  moderation       ListingModeration @default(VISIBLE)
+  moderationReason String?
+  createdAt        DateTime          @default(now()) @db.Timestamptz()
+  updatedAt        DateTime          @default(now()) @updatedAt @db.Timestamptz()
 
   business Business       @relation(fields: [businessId], references: [id])
   variant  ProductVariant @relation(fields: [variantId], references: [id])
@@ -2523,4 +2543,397 @@ model SupportCaseNote {
   case     SupportCase @relation(fields: [caseId], references: [id])
 
   @@index([caseId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 5: merchant sales payments (provider adapters) and the public marketplace
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ConnectionStatus {
+  ACTIVE
+  DISABLED
+}
+
+/// One merchant's own arrangement with one payment provider (section 12: "each connection belongs to one approved merchant arrangement").
+/// It holds NO secret: `credentialRef` names a server-side secret. `destinationKey` is the allow-listed account a provider must report
+/// for money collected for this merchant; a payment reported against any other destination is an exception, never applied.
+model ProviderConnection {
+  id                  String           @id @default(uuid())
+  businessId          String
+  provider            String
+  status              ConnectionStatus @default(ACTIVE)
+  arrangementRef      String
+  destinationKey      String
+  destinationLabel    String
+  credentialRef       String?
+  consecutiveFailures Int              @default(0)
+  lastFailureAt       DateTime?        @db.Timestamptz()
+  lastSuccessAt       DateTime?        @db.Timestamptz()
+  /// While in the future, new attempts are refused ("provider unavailable"); reconciliation of existing attempts is not.
+  openUntil           DateTime?        @db.Timestamptz()
+  createdBy           String?
+  createdAt           DateTime         @default(now()) @db.Timestamptz()
+
+  business    Business             @relation(fields: [businessId], references: [id])
+  attempts    PaymentAttempt[]
+  settlements ProviderSettlement[]
+
+  @@unique([businessId, provider])
+}
+
+enum PaymentSubjectType {
+  STORE_ORDER
+  TRADE_INVOICE
+}
+
+enum PaymentIntentStatus {
+  OPEN
+  PAID
+  EXPIRED
+  CANCELLED
+}
+
+/// The merchant's request to be paid a fixed amount for one thing. Merchant sales only (a CHECK refuses any other purpose).
+model PaymentIntent {
+  id             String              @id @default(uuid())
+  businessId     String
+  purpose        PaymentPurpose      @default(MERCHANT_SALE)
+  subjectType    PaymentSubjectType
+  subjectId      String
+  reference      String
+  amountMinor    BigInt
+  currencyCode   String
+  status         PaymentIntentStatus @default(OPEN)
+  paidMinor      BigInt              @default(0)
+  refundedMinor  BigInt              @default(0)
+  idempotencyKey String
+  expiresAt      DateTime            @db.Timestamptz()
+  createdAt      DateTime            @default(now()) @db.Timestamptz()
+  updatedAt      DateTime            @updatedAt @db.Timestamptz()
+
+  business    Business            @relation(fields: [businessId], references: [id])
+  attempts    PaymentAttempt[]
+  allocations PaymentAllocation[]
+  refunds     ProviderRefund[]
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, subjectType, subjectId])
+  @@index([businessId, status])
+}
+
+enum PaymentAttemptStatus {
+  CREATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  UNKNOWN
+  CANCELLED
+}
+
+/// One try to collect an intent through one provider. "Provider accepted" is PENDING, never paid. At most one attempt per intent is
+/// active (CREATED, PENDING or UNKNOWN) at a time: a partial unique index in the migration enforces it.
+model PaymentAttempt {
+  id             String               @id @default(uuid())
+  businessId     String
+  intentId       String
+  connectionId   String
+  provider       String
+  externalRef    String?
+  status         PaymentAttemptStatus @default(CREATED)
+  amountMinor    BigInt
+  currencyCode   String
+  capturedMinor  BigInt               @default(0)
+  refundedMinor  BigInt               @default(0)
+  feeMinor       BigInt?
+  checkoutUrl    String?
+  failureReason  String?
+  idempotencyKey String
+  expiresAt      DateTime             @db.Timestamptz()
+  pollCount      Int                  @default(0)
+  nextPollAt     DateTime?            @db.Timestamptz()
+  lastPolledAt   DateTime?            @db.Timestamptz()
+  settledAt      DateTime?            @db.Timestamptz()
+  createdAt      DateTime             @default(now()) @db.Timestamptz()
+  updatedAt      DateTime             @updatedAt @db.Timestamptz()
+
+  business       Business                @relation(fields: [businessId], references: [id])
+  intent         PaymentIntent           @relation(fields: [intentId], references: [id])
+  connection     ProviderConnection      @relation(fields: [connectionId], references: [id])
+  events         PaymentAttemptEvent[]
+  allocation     PaymentAllocation?
+  refunds        ProviderRefund[]
+  settlementLine ProviderSettlementLine?
+
+  @@unique([provider, externalRef])
+  @@unique([businessId, idempotencyKey])
+  @@index([intentId])
+  @@index([status, nextPollAt])
+}
+
+/// Full status history of an attempt. Append-only.
+model PaymentAttemptEvent {
+  id         String                @id @default(uuid())
+  businessId String
+  attemptId  String
+  fromStatus PaymentAttemptStatus?
+  toStatus   PaymentAttemptStatus
+  source     String // CREATE | CALLBACK | POLL | EXPIRY | ADMIN
+  detail     Json?
+  createdAt  DateTime              @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  attempt  PaymentAttempt @relation(fields: [attemptId], references: [id])
+
+  @@index([attemptId])
+}
+
+enum AllocationState {
+  APPLIED
+  HELD
+  REFUNDED
+}
+
+/// Where a confirmed attempt's money went: onto the order or invoice (APPLIED) or held as an exception (HELD). One per attempt.
+model PaymentAllocation {
+  id             String             @id @default(uuid())
+  businessId     String
+  attemptId      String             @unique
+  intentId       String
+  subjectType    PaymentSubjectType
+  subjectId      String
+  amountMinor    BigInt
+  state          AllocationState
+  storePaymentId String?
+  tradePaymentId String?
+  createdAt      DateTime           @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  attempt  PaymentAttempt @relation(fields: [attemptId], references: [id])
+  intent   PaymentIntent  @relation(fields: [intentId], references: [id])
+
+  @@index([businessId, subjectType, subjectId])
+}
+
+enum ProviderRefundStatus {
+  REQUESTED
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+/// A refund sent back through the provider that collected the money. Bounded by what the attempt captured (guarded UPDATE + CHECK).
+model ProviderRefund {
+  id                   String               @id @default(uuid())
+  businessId           String
+  attemptId            String
+  intentId             String
+  amountMinor          BigInt
+  status               ProviderRefundStatus @default(REQUESTED)
+  externalRef          String?
+  reason               String
+  failureReason        String?
+  idempotencyKey       String
+  storeRefundRequestId String?
+  storeOrderId         String?
+  createdBy            String?
+  createdAt            DateTime             @default(now()) @db.Timestamptz()
+  updatedAt            DateTime             @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  attempt  PaymentAttempt @relation(fields: [attemptId], references: [id])
+  intent   PaymentIntent  @relation(fields: [intentId], references: [id])
+
+  @@unique([businessId, idempotencyKey])
+  @@index([attemptId])
+}
+
+enum SettlementStatus {
+  POSTED
+  MISMATCH
+}
+
+/// The provider paying collected money out to the merchant. A balance-sheet movement (Dr bank + fees, Cr provider clearing), never revenue.
+model ProviderSettlement {
+  id             String               @id @default(uuid())
+  businessId     String
+  connectionId   String
+  provider       String
+  reference      String
+  grossMinor     BigInt
+  feeMinor       BigInt
+  netMinor       BigInt
+  currencyCode   String
+  settledAt      DateTime             @db.Timestamptz()
+  status         SettlementStatus
+  evidence       TradePaymentEvidence
+  journalEntryId String?
+  createdAt      DateTime             @default(now()) @db.Timestamptz()
+
+  business   Business                 @relation(fields: [businessId], references: [id])
+  connection ProviderConnection       @relation(fields: [connectionId], references: [id])
+  lines      ProviderSettlementLine[]
+
+  @@unique([businessId, provider, reference])
+}
+
+model ProviderSettlementLine {
+  id           String @id @default(uuid())
+  businessId   String
+  settlementId String
+  attemptId    String @unique
+  grossMinor   BigInt
+  feeMinor     BigInt
+
+  business   Business           @relation(fields: [businessId], references: [id])
+  settlement ProviderSettlement @relation(fields: [settlementId], references: [id])
+  attempt    PaymentAttempt     @relation(fields: [attemptId], references: [id])
+
+  @@index([settlementId])
+}
+
+enum ProviderExceptionType {
+  UNKNOWN_REFERENCE
+  WRONG_TENANT
+  PURPOSE_MISMATCH
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  DESTINATION_MISMATCH
+  CONTRADICTORY_STATUS
+  UNRESOLVED_ATTEMPT
+  REFUND_FAILED
+  SETTLEMENT_MISMATCH
+  DUPLICATE_COLLECTION
+}
+
+/// Something about provider money that a machine must not decide: an unknown reference, a mismatch, a contradictory status, an attempt
+/// that never resolved, a failed refund, a settlement that does not add up. NOT tenant data (an unknown reference has no tenant);
+/// `businessId` is set when known. The `fingerprint` makes a replayed callback raise the same exception once.
+model ProviderException {
+  id           String                 @id @default(uuid())
+  businessId   String?
+  type         ProviderExceptionType
+  status       PaymentExceptionStatus @default(OPEN)
+  provider     String?
+  attemptId    String?
+  intentId     String?
+  amountMinor  BigInt?
+  currencyCode String?
+  details      Json?
+  fingerprint  String                 @unique
+  resolution   String?
+  resolvedBy   String?
+  resolvedAt   DateTime?              @db.Timestamptz()
+  createdAt    DateTime               @default(now()) @db.Timestamptz()
+
+  @@index([status, createdAt])
+}
+
+/// The SIMULATOR's own side of the world (what a provider would remember). Not tenant data; the simulator is for development and
+/// CI only and is refused whenever NODE_ENV=production.
+model SimulatorPayment {
+  id                String   @id @default(uuid())
+  externalRef       String   @unique
+  merchantReference String
+  amountMinor       BigInt
+  currencyCode      String
+  destinationKey    String
+  status            String   @default("PENDING") // PENDING | SUCCEEDED | FAILED
+  refundedMinor     BigInt   @default(0)
+  feeMinor          BigInt   @default(0)
+  behaviour         String   @default("NORMAL") // NORMAL | REFUND_FAILS | REFUND_PENDING
+  refunds           Json     @default("[]") // [{ key, externalRef, amountMinor, status }]
+  settledReference  String?
+  createdAt         DateTime @default(now()) @db.Timestamptz()
+}
+
+enum MarketplaceStatus {
+  OFF
+  ACTIVE
+  SUSPENDED
+}
+
+enum ListingModeration {
+  VISIBLE
+  UNPUBLISHED
+}
+
+enum ReportReason {
+  PROHIBITED_ITEM
+  COUNTERFEIT
+  MISLEADING_PRICE
+  SCAM
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  ACTIONED
+  DISMISSED
+}
+
+/// A public report about a listing or a seller. Anyone may file one (rate-limited); it proposes, a person decides. NOT tenant data.
+model MarketplaceReport {
+  id             String       @id @default(uuid())
+  businessId     String
+  listingId      String?
+  reason         ReportReason
+  details        String
+  contact        String?
+  status         ReportStatus @default(OPEN)
+  resolvedBy     String?
+  resolutionNote String?
+  resolvedAt     DateTime?    @db.Timestamptz()
+  createdAt      DateTime     @default(now()) @db.Timestamptz()
+
+  @@index([status, createdAt])
+  @@index([businessId])
+}
+
+enum ModerationActionType {
+  UNPUBLISH_LISTING
+  REINSTATE_LISTING
+  SUSPEND_SELLER
+  REINSTATE_SELLER
+}
+
+/// Every moderation decision, with the admin and the reason. Append-only.
+model ModerationAction {
+  id          String               @id @default(uuid())
+  businessId  String
+  listingId   String?
+  reportId    String?
+  type        ModerationActionType
+  reason      String
+  adminUserId String
+  createdAt   DateTime             @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+  appeals  Appeal[]
+
+  @@index([businessId, createdAt])
+}
+
+enum AppealStatus {
+  OPEN
+  UPHELD
+  OVERTURNED
+}
+
+/// A seller's appeal against a moderation action. Decided by a person; overturning reinstates.
+model Appeal {
+  id           String       @id @default(uuid())
+  businessId   String
+  actionId     String
+  text         String
+  status       AppealStatus @default(OPEN)
+  decidedBy    String?
+  decisionNote String?
+  decidedAt    DateTime?    @db.Timestamptz()
+  createdAt    DateTime     @default(now()) @db.Timestamptz()
+
+  business Business         @relation(fields: [businessId], references: [id])
+  action   ModerationAction @relation(fields: [actionId], references: [id])
+
+  @@index([status, createdAt])
 }

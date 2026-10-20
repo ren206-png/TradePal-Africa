@@ -82,6 +82,17 @@ export const TENANT_SCOPED_MODELS = new Set([
   "PaymentException",
   "SupportCase",
   "SupportCaseNote",
+  // Expansion Phase 5: merchant payments through providers, and marketplace moderation as the seller sees it.
+  "ProviderConnection",
+  "PaymentIntent",
+  "PaymentAttempt",
+  "PaymentAttemptEvent",
+  "PaymentAllocation",
+  "ProviderRefund",
+  "ProviderSettlement",
+  "ProviderSettlementLine",
+  "ModerationAction",
+  "Appeal",
   // DeepSeek Integration Phase 3 (INTEGRATION_DESIGN.md §3): carries a
   // required businessId. Deliberately NOT added to APPEND_ONLY_MODELS below —
   // see AiUsageLedger's own schema.prisma docstring for why there is no
