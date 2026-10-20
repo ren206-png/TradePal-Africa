@@ -100,7 +100,7 @@ export function reportText(report: Report<unknown>): string {
       lines.push(`Net sales: ${money(report, d.netSalesMinor)}`, `Cost of goods sold: ${money(report, d.costOfGoodsSoldMinor)}`, d.grossMarginMinor === null ? "Gross margin: not available" : `Gross margin: ${money(report, d.grossMarginMinor)}${d.grossMarginPercent ? ` (${d.grossMarginPercent}%)` : ""}`, `Cost recorded for ${d.completeness.percentComplete ?? "?"}% of stock movements`);
       break;
     case "payment-reconciliation":
-      lines.push(`Captured: ${money(report, d.captured.totalMinor)}; applied: ${money(report, d.captured.allocatedMinor)}; not applied: ${money(report, d.captured.unallocatedMinor)}`, `Settled: ${money(report, d.settlement.settledGrossMinor)}; captured, not yet settled: ${money(report, d.settlement.capturedNotYetSettledMinor)}`);
+      lines.push(`Captured: ${money(report, d.captured.totalMinor)}; applied: ${money(report, d.captured.allocatedMinor)}; not applied: ${money(report, d.captured.unallocatedMinor)} (held in exceptions: ${money(report, d.captured.heldMinor)})`, `Settled: ${money(report, d.settlement.settledGrossMinor)}; captured, not yet settled: ${money(report, d.settlement.capturedNotYetSettledMinor)}`);
       break;
     case "stock-discrepancies":
       lines.push(`Balance mismatches: ${d.balanceMismatches.length}`, `Count variances: ${d.countVariances.length}`, `Chat tracker differs: ${d.legacyDrift.length}`, `Below zero: ${d.negativeStock.length}`);

@@ -292,7 +292,7 @@ export async function grossMarginReport(ctx: ReportContext, range: RangeInput): 
 
 export interface PaymentRecData {
   attempts: { status: string; count: number; capturedMinor: string }[];
-  captured: { totalMinor: string; allocatedMinor: string; unallocatedMinor: string };
+  captured: { totalMinor: string; allocatedMinor: string; unallocatedMinor: string; heldMinor: string };
   refundedMinor: string;
   settlement: { settledGrossMinor: string; settledFeeMinor: string; capturedNotYetSettledMinor: string; providerClearingBalanceMinor: string | null };
   openExceptions: number;
@@ -313,7 +313,9 @@ export async function paymentReconciliationReport(ctx: ReportContext, range: Ran
   }
   const captured = attempts.filter((a) => a.status === "SUCCEEDED");
   const capTotal = sumBig(captured.map((a) => a.capturedMinor));
-  const allocated = sumBig(captured.filter((a) => a.allocation).map((a) => a.allocation!.amountMinor));
+  // only money actually applied to an order or invoice counts; a HELD allocation is money waiting in the exception queue, a REFUNDED one was returned
+  const allocated = sumBig(captured.filter((a) => a.allocation?.state === "APPLIED").map((a) => a.allocation!.amountMinor));
+  const held = sumBig(captured.filter((a) => a.allocation?.state === "HELD").map((a) => a.allocation!.amountMinor));
   const settled = captured.filter((a) => a.settlementLine);
   const grossSettled = sumBig(settled.map((a) => a.settlementLine!.grossMinor));
   const feeSettled = sumBig(settled.map((a) => a.settlementLine!.feeMinor));
@@ -327,7 +329,8 @@ export async function paymentReconciliationReport(ctx: ReportContext, range: Ran
     const tb = await trialBalance(ctx.scoped, { currencyCode: ctx.currencyCode });
     clearing = str(tb.rows.find((r) => r.systemKey === "PROVIDER_CLEARING")?.netMinor ?? 0n);
   }
-  if (capTotal !== allocated) warnings.push({ code: "UNALLOCATED_PAYMENTS", message: `${capTotal - allocated} (minor units) was captured but is not applied to an order or invoice. See the exception queue.` });
+  if (held > 0n) warnings.push({ code: "HELD_PAYMENTS", message: `${held} (minor units) was captured but is HELD in the exception queue (a late, wrong or duplicate payment). It is real money that needs a person to refund or apply it.` });
+  if (capTotal - allocated - held - sumBig(captured.filter((a) => a.allocation?.state === "REFUNDED").map((a) => a.allocation!.amountMinor)) > 0n) warnings.push({ code: "UNALLOCATED_PAYMENTS", message: "Some captured money has no allocation at all. See the exception queue." });
   if (stale > 0) warnings.push({ code: "STALE_ATTEMPTS", message: `${stale} payment attempt(s) are still unresolved more than an hour after they expired.` });
   if (unmatched > 0) warnings.push({ code: "UNMATCHED_ALERTS", message: `${unmatched} mobile-money alert(s) have not been matched to a sale.` });
   if (attempts.length === 0) warnings.push({ code: "NO_PROVIDER_PAYMENTS", message: "No online payments through a provider in this period." });
@@ -336,7 +339,7 @@ export async function paymentReconciliationReport(ctx: ReportContext, range: Ran
     meta: meta(ctx, "payment-reconciliation", "Payment reconciliation", "Provider payment attempts in the period: captured, applied to an order or invoice, settled, and refunded.", range, [{ name: "payment attempts", rows: attempts.length }, { name: "mobile-money alerts", rows: unmatched }], warnings),
     data: {
       attempts: [...byStatus.entries()].map(([status, v]) => ({ status, count: v.n, capturedMinor: str(v.cap) })),
-      captured: { totalMinor: str(capTotal), allocatedMinor: str(allocated), unallocatedMinor: str(capTotal - allocated) },
+      captured: { totalMinor: str(capTotal), allocatedMinor: str(allocated), unallocatedMinor: str(capTotal - allocated), heldMinor: str(held) },
       refundedMinor: str(refunded),
       settlement: { settledGrossMinor: str(grossSettled), settledFeeMinor: str(feeSettled), capturedNotYetSettledMinor: str(notSettled), providerClearingBalanceMinor: clearing },
       openExceptions: exceptions, staleAttempts: stale, unmatchedMobileMoneyAlerts: unmatched,

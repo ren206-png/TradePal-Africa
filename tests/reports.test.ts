@@ -221,7 +221,7 @@ describe("payment reconciliation and stock discrepancies", () => {
   it("compares captured, applied and settled money and warns it is not a provider statement", async () => {
     const s = await seller();
     const r = await paymentReconciliationReport(ctxOf(s), wide());
-    expect(r.data.captured).toEqual({ totalMinor: "0", allocatedMinor: "0", unallocatedMinor: "0" });
+    expect(r.data.captured).toEqual({ totalMinor: "0", allocatedMinor: "0", unallocatedMinor: "0", heldMinor: "0" });
     expect(r.meta.warnings.map((w) => w.code)).toEqual(expect.arrayContaining(["NO_PROVIDER_PAYMENTS", "PROVIDER_STATEMENT_NEEDED"]));
   });
 
