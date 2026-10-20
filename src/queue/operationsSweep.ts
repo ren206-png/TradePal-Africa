@@ -8,6 +8,7 @@ import { expireReservations } from "../domain/stock.js";
 import { expireTradeOrders } from "../domain/trade/orders.js";
 import { expireStoreOrders } from "../domain/store/orders.js";
 import { runIntegrityChecks, type IntegrityReport } from "../ops/integrity.js";
+import { anonymizeOldShopperData } from "../domain/store/retention.js";
 import { escalateUnansweredRequests } from "../domain/store/escalation.js";
 import { reconcilePayments } from "../domain/merchantPayments/outcomes.js";
 import { getAdapterRegistry } from "../payments/registry.js";
@@ -40,6 +41,7 @@ export interface OperationsSweepResult {
   paymentsPolled: number;
   paymentsApplied: number;
   requestsEscalated: number;
+  shopperDataAnonymized: number;
   suggestionsCreated: number;
   forecastsWritten: number;
   forecastsScored: number;
@@ -48,8 +50,8 @@ export interface OperationsSweepResult {
   failures: string[];
 }
 
-export async function runOperationsSweep(prisma: PrismaClient, now: Date = new Date(), opts: { integrity?: boolean } = {}): Promise<OperationsSweepResult> {
-  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, storeOrdersExpired: 0, basketsExpired: 0, requestsEscalated: 0, billingPolled: 0, paymentsPolled: 0, paymentsApplied: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
+export async function runOperationsSweep(prisma: PrismaClient, now: Date = new Date(), opts: { integrity?: boolean; retention?: boolean } = {}): Promise<OperationsSweepResult> {
+  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, storeOrdersExpired: 0, basketsExpired: 0, requestsEscalated: 0, shopperDataAnonymized: 0, billingPolled: 0, paymentsPolled: 0, paymentsApplied: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
   const step = async (name: string, fn: () => Promise<void>) => {
     try {
       await fn();
@@ -88,6 +90,12 @@ export async function runOperationsSweep(prisma: PrismaClient, now: Date = new D
     out.forecastsWritten = Object.values(written).reduce((n, r) => n + r.written, 0);
     out.forecastsScored = (await scoreForecasts(prisma, now)).scored;
   });
+  if (opts.retention) {
+    await step("shopper data retention", async () => {
+      const r = await anonymizeOldShopperData(prisma, now);
+      out.shopperDataAnonymized = r.orders + r.cases;
+    });
+  }
   if (opts.integrity) {
     await step("integrity checks", async () => {
       out.integrity = await runIntegrityChecks(prisma, now);
@@ -110,7 +118,7 @@ export function startOperationsSweep(deps: { prisma: PrismaClient; alerts?: Aler
       if (await isJobPaused(deps.prisma, "operations-sweep")) return;
       // the integrity checks are heavier than the rest, so they run about once a day
       const dueForIntegrity = Date.now() - lastIntegrityAt > 20 * 60 * 60 * 1000;
-      const result = await runOperationsSweep(deps.prisma, new Date(), { integrity: dueForIntegrity });
+      const result = await runOperationsSweep(deps.prisma, new Date(), { integrity: dueForIntegrity, retention: dueForIntegrity });
       if (result.integrity) {
         lastIntegrityAt = Date.now();
         if (result.integrity.findings.length > 0) {
