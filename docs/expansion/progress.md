@@ -10,7 +10,7 @@ Resume from this file across sessions. Update after every slice.
 - **Phase 6: approved.** (`APPROVED: PHASE 6` received.)
 - **Phase 7: approved.** (`APPROVED: PHASE 7` received.)
 - **Phase 8: approved.** (`APPROVED: PHASE 8` received.)
-- **Phase 9 (release package: demo, runbooks, status matrix, handoff): complete, awaiting approval.** Gate line: `AWAITING: APPROVED: PHASE 9`. This is the last phase in the plan.
+- **Phase 9: approved.** (`APPROVED: PHASE 9` received.) **The plan is complete; there is no Phase 10.** The expansion stays local and OFF until the owner works through `handoff.md` section 4.
 - Branch `expansion/phase-1` (local only: **not pushed, not merged, nothing deployed, no migration run against any real database**). A push to `main` would deploy production and run `prisma migrate deploy`.
 - Tests: backend 114 files / 1257 pass; admin-frontend 14 files / 59 pass + build OK. Self-check: `self-check-phase-9.md`; final handoff `handoff.md`. Demo (Phase 3): `npx tsx scripts/demoWholesale.ts`.
 - Production at `86a072d`, untouched.
@@ -98,4 +98,4 @@ Resume from this file across sessions. Update after every slice.
 9. Known gaps: credit-limit check not atomic under concurrent acceptance; no duplicate-payment detection; no dead-letter replay button; quotes/partial receipts/credit notes lack merchant commands; no web surface; FOR UPDATE contention untested on a real server; forecast quality unknown on real data.
 
 ## Next concrete step
-The plan is complete. On `APPROVED: PHASE 9` there is no Phase 10: the next work is the owner's list in `handoff.md` section 4 (first: restore a backup and run `scripts/rehearseMigrations.sh`; choose a merchant-sales provider; get a pawaPay sandbox token). Do not push, merge or deploy this branch without the owner.
+The plan is complete (`APPROVED: PHASE 9` received; there is no Phase 10). The next work is the owner's list in `handoff.md` section 4 (first: restore a backup and run `scripts/rehearseMigrations.sh`; choose a merchant-sales provider; get a pawaPay sandbox token). Do not push, merge or deploy this branch without the owner.
