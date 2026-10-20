@@ -92,5 +92,21 @@ Do not assume affiliation with the separately referenced TradePal AI (tradepalai
 | OPEN-10 | External heartbeat / dead-man's switch (owner action); verified alert sender domain and a second recipient (owner action) | Before any activation |
 | OPEN-11 | Whether to fix `tests/helpers/db.ts` (P10) now | Before Phase 1 |
 
+## C2. Phase 1 application of proposals (provisional, reversible, awaiting owner confirmation)
+
+Phase 1 was started on `APPROVED: PHASE 0` without separate answers to OPEN-1..3 and OPEN-11, so the proposals were implemented **additively and behind safe defaults**. Confirm or reject each; none is irreversible in code.
+
+| Proposal | What was built | How to reverse |
+|---|---|---|
+| P1 quarantine `/collect` | purpose guard; original initiators renamed `...Quarantined`; `/collect` and `/paylink` hard-locked | remove guard (not recommended) |
+| P2 purposes/credentials | `PaymentPurpose` enum + policy table (pawapay/flutterwave: subscription only; simulator: merchant sale); merchant paylinks unreachable | change policy table |
+| P3 DB protection | append-only/delete/TRUNCATE triggers live on migrate; RLS policies present but **inert** until role activation | `DROP TRIGGER`; stop using `enforceRls` |
+| P4 Shop/Membership | `Shop`, `Membership`, `ActiveContext`; `Business` stays the tenant; backfill; legacy `Merchant` unchanged | tables are additive |
+| P10 test path quoting | one-line fix in `tests/helpers/db.ts` | trivial |
+| New: OPERATOR admin role | enum value + permission matrix; existing roles unchanged | do not assign |
+| New: admin step-up and support access | flags `adminStepUp`, `adminSupportAccessRequired`, **default OFF** | leave off |
+| New: heartbeat | `SystemHeartbeat`, `/heartbeat` (404 unless `HEARTBEAT_ENABLED=true`) | leave unset |
+
 ## D. Change log
 - 2026-10-20 — register created in Phase 0; G1-G13 recorded; P1-P10 proposed; OPEN-1..11 listed.
+- 2026-10-20 — Phase 1 completed on branch `expansion/phase-1`; section C2 records the provisional application of P1-P4, P10 and new admin controls.

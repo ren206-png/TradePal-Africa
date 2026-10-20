@@ -1,0 +1,61 @@
+# Database-level protection: runbook
+
+Phase 1 · migrations `20261020000000` … `20261020000400` · status: **implemented, locally tested (PGlite). Not applied to any real database. Not rehearsed on a copy of production.**
+
+## 1. What the database now enforces (without relying on application code)
+
+| Rule | Mechanism | Tables |
+|---|---|---|
+| Rows are never edited | `BEFORE UPDATE` trigger raises | `Transaction`, `InventoryMovement`, `AuditLog`, `ConsentLog`, `DebtPayment`, `AiUsageLedger`, `SupportAccess`; `TransactionItem` (sole exception: one-time `inventoryItemId` NULL → value) |
+| Rows are never deleted | `BEFORE DELETE` trigger raises | the append-only tables above, plus `Debt`, `Subscription`, `PaymentRequest`, `PawaPayDeposit`, `Invoice` |
+| `TRUNCATE` is refused | statement-level trigger | the same tables |
+| A business with a financial trail cannot be deleted | `tradepal_business_guard` | `Business` (delete allowed only if `isSynthetic`, or it has no Transaction/Debt/Subscription/PaymentRequest) |
+| `isSynthetic` can never change | same guard | `Business` |
+| Cross-tenant reads return nothing | RLS policy `tenant_isolation` on `businessId = current_setting('app.current_business_id')` | 24 tenant tables incl. `Shop`, `Membership` |
+| Money-purpose boundary | enum `PaymentPurpose` on `Invoice` / `PaymentRequest`; code guard `assertProviderAllowedForPurpose` | pawaPay: subscription only |
+
+Synthetic (test/demo) businesses are the only ones whose financial rows may be hard-deleted. A real merchant is closed by suspension/anonymisation, never deletion (decision G13).
+
+## 2. RLS is NOT active in production until you activate it
+
+Postgres lets a table **owner** bypass RLS. The app connects as the owner, so the policies are present but **inert**. They have only been proven under a non-owner test role (`tradepal_tenant`). Turning them on is a separate, reversible step:
+
+1. Rehearse on a copy first (see §5).
+2. `CREATE ROLE tradepal_tenant NOLOGIN;` then `GRANT SELECT, INSERT, UPDATE, DELETE` on the tenant tables and `USAGE` on the sequences/types used (the owner keeps its rights). Grant the connecting login role membership: `GRANT tradepal_tenant TO <app_login_role>;`.
+3. Move one code path at a time to `withTenantContext(prisma, businessId, work, { enforceRls: true })` (`src/db/tenantContext.ts`). It sets the setting with `set_config(..., true)` (transaction-local, cannot leak to the next request) and `SET LOCAL ROLE tradepal_tenant`.
+4. Rollback: stop passing `enforceRls`. The policies stay but are inert again. Nothing is dropped.
+
+Known limit: the append-only triggers apply to the owner too, so they **are** live as soon as the migration runs. RLS is the part that needs the role step.
+
+## 3. Break-glass (legitimate corrections the triggers refuse)
+
+Normal corrections never need this: reversals and adjustments are **inserts**, which the triggers allow. Break-glass is only for an owner-approved data repair (e.g. fixing a row written by a bug).
+
+1. Get written owner approval and record the reason in `docs/expansion/decisions.md` or the ticket.
+2. Take a backup/snapshot first.
+3. In one transaction, as the table owner: `ALTER TABLE "<T>" DISABLE TRIGGER USER;` → the narrowest possible `UPDATE`/`DELETE` → `ALTER TABLE "<T>" ENABLE TRIGGER USER;` → verify with `SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = '"<T>"'::regclass AND NOT tgisinternal;` (all `O`).
+4. Insert an `AuditLog` row describing what was changed and why (the table is append-only; inserts work).
+5. Never `DISABLE TRIGGER ALL` (that includes internal FK triggers).
+
+`tests/helpers/db.ts` `backdateTransaction` uses exactly this pattern, for tests only.
+
+## 4. Deleting synthetic data
+
+Set `Business.isSynthetic = true` **at creation** (it cannot be changed later). Only then can its financial rows be deleted. A business created as real can never be converted to synthetic to enable deletion: this is deliberate.
+
+## 5. Before any deploy (required, not yet done)
+
+- Restore a recent production backup into a scratch database and run `prisma migrate deploy` there. Check: migrations apply cleanly; `SELECT count(*)` on every tenant table is unchanged; the Shop/Membership backfill created one default shop and one membership per active merchant; the four production merchants can still onboard/log/undo in a smoke test.
+- Confirm the Railway Postgres role can run `CREATE FUNCTION`, `CREATE TRIGGER`, `ENABLE ROW LEVEL SECURITY`, `ALTER TYPE ... ADD VALUE`. **Unverified**: PGlite is superuser, so privilege problems cannot appear in tests.
+- `/undo` and the dispatcher's welcome-rollback were exercised in tests; confirm on the copy that an undo still works (it inserts a reversal, never deletes).
+- Railway's pre-deploy runs `prisma migrate deploy`: a failing migration blocks the deploy, which is the safe failure.
+
+## 6. Verification state
+
+| Claim | Evidence |
+|---|---|
+| Triggers refuse UPDATE/DELETE/TRUNCATE; synthetic exception works; `isSynthetic` immutable | `tests/dbProtection.test.ts` (18, PGlite direct) |
+| Migrations build the same schema as `schema.prisma` | `tests/migrationDrift.test.ts` |
+| RLS isolates tenants under the non-owner role | `tests/dbProtection.test.ts` (test role only) |
+| Production Postgres accepts these migrations | **not verified** |
+| RLS active in production | **no** (inert by design until §2) |
