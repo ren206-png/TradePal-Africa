@@ -4,6 +4,7 @@ import express from "express";
 import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
+import { createStorefrontRouter } from "./storefront/routes.js";
 import { RedisLoginRateLimiter } from "./admin/rateLimiter.js";
 import {
   buildDeletionResolutionOutboundGatewayFromEnv,
@@ -221,6 +222,16 @@ app.use(
     ...(loginRateLimiter ? { loginRateLimiter } : {}),
   }),
 );
+
+// Public storefront (expansion Phase 4): server-rendered pages for shoppers. Off unless STOREFRONT_ENABLED=true; even then a shop
+// only appears once its owner switches the per-business `storefront` flag on and opens the shop. Behind a proxy set TRUST_PROXY so
+// the per-client rate limits see the shopper's address, not the proxy's. Online "test" payments additionally need the simulator
+// secret and are refused whenever NODE_ENV=production.
+if (process.env["STOREFRONT_ENABLED"] === "true") {
+  if (process.env["TRUST_PROXY"]) app.set("trust proxy", Number(process.env["TRUST_PROXY"]) || process.env["TRUST_PROXY"]);
+  const simulatorSecret = process.env["PAYMENT_SIMULATOR_SECRET"];
+  app.use(createStorefrontRouter(prisma, { ...(simulatorSecret ? { simulatorSecret } : {}) }));
+}
 
 // Centralized error handler — MUST be registered last (after every route,
 // including the /admin mount above), per Express's own rule that a 4-arg
