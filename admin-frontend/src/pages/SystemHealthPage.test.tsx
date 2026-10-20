@@ -24,6 +24,7 @@ describe("SystemHealthPage controls", () => {
       const path = String(args[0]);
       if (path === "/admin/system-health") return health;
       if (path === "/admin/system/jobs") return { jobs };
+      if (path === "/admin/system/integrity") return { ranAt: "2026-10-30T00:00:00Z", businessesChecked: 3, truncated: false, findings: [{ check: "STOCK_BALANCE_MISMATCH", businessId: "abcdef12-0000", count: 2, detail: "2 stock balance(s) differ from the sum of their movements." }] };
       return { note: "The email service accepted the incident." };
     });
   });
@@ -33,6 +34,8 @@ describe("SystemHealthPage controls", () => {
     expect(await screen.findByText(/Needs attention: no alert delivery/)).toBeTruthy();
     expect(screen.getByText(/PAUSED: Template under review/)).toBeTruthy();
     expect(screen.getByText(/never paused/)).toBeTruthy();
+    expect(screen.getByText(/1 finding\(s\)\./)).toBeTruthy();
+    expect(screen.getByText(/stock balance mismatch \(abcdef12\)/)).toBeTruthy();
   });
 
   it("pauses only with a real reason, and says what the synthetic incident did", async () => {

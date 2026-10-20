@@ -12,6 +12,7 @@ interface Health {
   alertChannel?: { lastDeliveredAt: string | null; lastFailedAt: string | null; failedLast7Days: number; needsAttention: boolean };
   generatedAt: string;
 }
+interface IntegrityReport { ranAt: string; businessesChecked: number; truncated: boolean; findings: { check: string; businessId: string | null; count: number; detail: string }[] }
 interface Job { id: string; label: string; paused: boolean; reason: string | null; changedBy: string | null; changedAt: string | null }
 type Action = { kind: "pause" | "resume"; job: Job } | { kind: "incident" };
 
@@ -20,6 +21,7 @@ const yesNo = (v: boolean) => (v ? "Yes" : "No");
 export function SystemHealthPage() {
   const [data, setData] = useState<Health | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [integrity, setIntegrity] = useState<IntegrityReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [action, setAction] = useState<Action | null>(null);
@@ -33,7 +35,9 @@ export function SystemHealthPage() {
       try {
         const h = await apiFetch<Health>("/admin/system-health");
         const j = await apiFetch<{ jobs: Job[] }>("/admin/system/jobs");
+        const i = await apiFetch<IntegrityReport>("/admin/system/integrity");
         if (cancelled) return;
+        setIntegrity(i);
         setData(h);
         setJobs(j.jobs);
       } catch (err) {
@@ -112,6 +116,16 @@ export function SystemHealthPage() {
         </p>
       ) : null}
       <p><button type="button" onClick={() => { setAction({ kind: "incident" }); setReason(""); }}>Send a synthetic incident…</button></p>
+
+      <h2>Data integrity</h2>
+      {integrity ? (
+        <>
+          <p className={integrity.findings.length ? "form-error" : "muted"}>
+            {integrity.findings.length ? `${integrity.findings.length} finding(s).` : "No drift found."} Checked {integrity.businessesChecked} business(es){integrity.truncated ? " (more exist; only the first were checked)" : ""} at {new Date(integrity.ranAt).toLocaleString()}. Read-only: nothing is corrected automatically.
+          </p>
+          {integrity.findings.length ? <ul>{integrity.findings.map((f, n) => <li key={n}>{f.check.toLowerCase().replace(/_/g, " ")}{f.businessId ? ` (${f.businessId.slice(0, 8)})` : ""}: {f.detail}</li>)}</ul> : null}
+        </>
+      ) : null}
 
       <h2>Background jobs</h2>
       <table className="data-table">

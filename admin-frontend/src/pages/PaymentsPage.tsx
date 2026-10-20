@@ -6,7 +6,7 @@ const OUTCOMES = ["NO_ACTION_NEEDED", "CORRECTED_BY_PROVIDER", "SETTLED_OFFLINE"
 const count = (o: Record<string, number>) => Object.entries(o).map(([k, v]) => `${k.toLowerCase()} ${v}`).join(", ") || "none";
 
 interface Dialog {
-  kind: "resolve" | "close";
+  kind: "resolve" | "close" | "reconcile";
   id: string;
   title: string;
 }
@@ -73,6 +73,7 @@ export function PaymentsPage() {
     event.preventDefault();
     if (!dialog) return;
     if (dialog.kind === "resolve") void post(`/admin/payments/exceptions/${dialog.id}/resolve`, { outcome, note: text.trim() }, "Exception resolved.");
+    else if (dialog.kind === "reconcile") void post("/admin/payments/reconcile", { reason: text.trim() }, "Reconciliation ran: every unresolved attempt was checked with its provider.");
     else void post(`/admin/payments/attempts/${dialog.id}/close`, { as: closeAs, reason: text.trim() }, "Attempt closed after the provider confirmed it did not collect.");
   }
 
@@ -101,6 +102,7 @@ export function PaymentsPage() {
       </p>
       {overview.connections.filter((c) => c.circuitOpen).map((c) => <p key={c.id} className="form-error">Provider unavailable for {c.business} ({c.provider}): new payments are paused; reconciliation continues.</p>)}
 
+      <p><button type="button" onClick={() => { setDialog({ kind: "reconcile", id: "all", title: "Re-run reconciliation" }); setText(""); }}>Re-run reconciliation…</button> <span className="muted">Asks each provider about every unresolved attempt and refund that is due, and applies only what the provider confirms. The same pass the hourly sweep makes.</span></p>
       <h2>Exceptions</h2>
       <table className="data-table">
         <thead><tr><th>When</th><th>Shop</th><th>Order</th><th>Type</th><th>Amount (minor)</th><th>Source</th><th /></tr></thead>
@@ -160,7 +162,9 @@ export function PaymentsPage() {
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={dialog.title}>
           <form className="modal" onSubmit={submit}>
             <h2>{dialog.title}</h2>
-            {dialog.kind === "resolve" ? (
+            {dialog.kind === "reconcile" ? (
+              <p>This only asks providers and applies what they confirm. It never marks anything paid by itself.</p>
+            ) : dialog.kind === "resolve" ? (
               <label className="filter-label">Outcome
                 <select value={outcome} onChange={(e) => setOutcome(e.target.value as (typeof OUTCOMES)[number])}>{OUTCOMES.map((o) => <option key={o} value={o}>{o.toLowerCase().replace(/_/g, " ")}</option>)}</select>
               </label>

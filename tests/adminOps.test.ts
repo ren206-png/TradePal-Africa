@@ -126,3 +126,15 @@ describe("sign every phone out of a business", () => {
     delete process.env["OFFLINE_DRAFTS_ENABLED"];
   });
 });
+
+describe("re-run reconciliation from the console", () => {
+  it("asks the providers about everything unresolved, needs a reason and step-up permission, and is audited", async () => {
+    const owner = await loginAs("super@t.test");
+    expect((await request(app).post("/admin/payments/reconcile").set(auth(owner)).send({})).status).toBe(400);
+    const r = await request(app).post("/admin/payments/reconcile").set(auth(owner)).send({ reason: REASON });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ paymentsPolled: expect.any(Number), paymentsApplied: expect.any(Number), billingPolled: expect.any(Number) });
+    expect((await request(app).post("/admin/payments/reconcile").set(auth(await loginAs("analyst@t.test"))).send({ reason: REASON })).status).toBe(403);
+    expect(JSON.stringify(await prisma.auditLog.findFirst({ where: { entityType: "Payment" }, orderBy: { createdAt: "desc" } }))).toContain(REASON);
+  });
+});

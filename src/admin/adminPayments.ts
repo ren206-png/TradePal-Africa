@@ -8,7 +8,8 @@ import { requirePlatformPermission, requireStepUp } from "./platformGuards.js";
 import { replayDeadCallback, getInboxStats } from "../domain/callbackInbox.js";
 import { PaymentsError } from "../domain/merchantPayments/common.js";
 import { registerConnection } from "../domain/merchantPayments/intents.js";
-import { closeAttemptAfterCheck, refreshAttempt } from "../domain/merchantPayments/outcomes.js";
+import { closeAttemptAfterCheck, reconcilePayments, refreshAttempt } from "../domain/merchantPayments/outcomes.js";
+import { reconcileBilling } from "../domain/subscriptions/collection.js";
 import { retryFailedRefund } from "../domain/merchantPayments/refunds.js";
 import { getAdapterRegistry } from "../payments/registry.js";
 import { CapabilityError } from "../payments/adapter.js";
@@ -123,6 +124,17 @@ export function createAdminPaymentsRouter(prisma: PrismaClient, jwtSecret: strin
   }));
 
   // ---- writes
+  // "Re-run reconciliation": the same pass the sweep makes (authenticated status checks of every unresolved attempt and refund that is due, repair
+  // of confirmed payments that never got applied, pawaPay billing charges), triggered by an operator. It only ASKS providers and applies what they confirm.
+  router.post("/payments/reconcile", ...writes, asyncHandler(async (req, res) => {
+    const parsed = z.object({ reason }).safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: "Invalid request body.", details: parsed.error.issues });
+    const now = new Date();
+    const payments = await reconcilePayments(prisma, getAdapterRegistry(prisma), now);
+    const billing = await reconcileBilling(prisma, now);
+    res.json({ paymentsPolled: payments.polled, paymentsApplied: payments.applied, billingPolled: billing.polled });
+  }));
+
   router.post("/payments/attempts/:id/refresh", ...writes, asyncHandler(async (req, res) => {
     try {
       const r = await refreshAttempt(prisma, getAdapterRegistry(prisma), req.params["id"] as string, "ADMIN", new Date(), adminId(req));

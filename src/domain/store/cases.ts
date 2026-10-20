@@ -23,7 +23,7 @@ export const PARTY_LABEL: Record<SupportParty, string> = { SELLER: "the seller",
 
 export async function openSupportCase(
   prisma: PrismaClient,
-  input: { businessId: string; orderId?: string; type: SupportCaseType; openedBy: SupportOpenedBy; summary: string; contactName?: string; contactPhone?: string; authorId?: string },
+  input: { businessId: string; orderId?: string; type: SupportCaseType; openedBy: SupportOpenedBy; summary: string; contactName?: string; contactPhone?: string; authorId?: string; /** TradePal stepping in (e.g. the seller never answered) overrides the usual responsible party. */ handledBy?: SupportParty },
 ): Promise<SupportCase> {
   const summary = input.summary.trim();
   if (summary.length < 10) throw new StoreError("INVALID", "Describe the problem in a sentence or two.");
@@ -38,7 +38,7 @@ export async function openSupportCase(
   if (open >= 5) throw new StoreError("DUPLICATE", "There are already several open reports on this order; the seller will respond.");
   const c = await scoped.supportCase.create({
     data: {
-      businessId: input.businessId, orderId: input.orderId ?? null, type: input.type, handledBy: responsibleParty(input.type, provider), openedBy: input.openedBy, summary,
+      businessId: input.businessId, orderId: input.orderId ?? null, type: input.type, handledBy: input.handledBy ?? responsibleParty(input.type, provider), openedBy: input.openedBy, summary,
       contactName: input.contactName?.trim().slice(0, 80) ?? null, contactPhone: input.contactPhone ?? null,
     },
   });

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { asyncHandler } from "./asyncHandler.js";
 import type { AuthenticatedAdminRequest } from "./authMiddleware.js";
 import { requirePlatformPermission, requireStepUp } from "./platformGuards.js";
+import { runIntegrityChecks } from "../ops/integrity.js";
 import { JOB_CLASSES, isJobClass, setJobPaused } from "../ops/jobControl.js";
 import { reportIncident, type AlertEmailDeps } from "../monitoring/alerts.js";
 import { randomUUID } from "node:crypto";
@@ -34,6 +35,13 @@ export function createAdminOpsRouter(prisma: PrismaClient, jwtSecret: string, op
       }),
       note: "A paused class skips its scheduled runs. Inbound WhatsApp messages and payment callbacks are never paused.",
     });
+  }));
+
+  // Cached for five minutes in this process: the checks read a lot of rows and this page is opened often. `?refresh=1` re-runs them.
+  let cached: { at: number; report: Awaited<ReturnType<typeof runIntegrityChecks>> } | null = null;
+  router.get("/system/integrity", requirePlatformPermission("admin:view_system_health"), asyncHandler(async (req, res) => {
+    if (!cached || req.query["refresh"] === "1" || Date.now() - cached.at > 5 * 60_000) cached = { at: Date.now(), report: await runIntegrityChecks(prisma) };
+    res.json(cached.report);
   }));
 
   for (const action of ["pause", "resume"] as const) {
