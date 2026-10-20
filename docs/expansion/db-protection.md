@@ -108,3 +108,5 @@ Migration `20261025000000_phase6_billing_entitlements` (additive: new columns wi
 - Flags `pawapayBilling` and `subscriptionEntitlements` seeded OFF.
 
 Verification: PGlite only. **Not verified on a real Postgres server.**
+
+Also: `BillingAttempt.refundedMinor <= capturedMinor` (CHECK), so refunds out of one payment can never exceed what was collected.

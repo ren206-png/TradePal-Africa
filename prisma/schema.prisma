@@ -3047,6 +3047,8 @@ model BillingAttempt {
   amountMinor           BigInt
   currencyCode          String
   capturedMinor         BigInt               @default(0)
+  /// Refunded out of this payment (only used for a payment that was HELD, i.e. never allocated; an allocated payment is bounded on its invoice).
+  refundedMinor         BigInt               @default(0)
   payerPhoneLast4       String?
   providerTransactionId String?
   failureCode           String?
@@ -3103,6 +3105,8 @@ model BillingRefund {
   reason            String
   adminUserId       String
   revokeEntitlement Boolean             @default(false)
+  /// True when this refunds a payment that was held (never applied to an invoice), so the funds are reserved on the attempt, not the invoice.
+  heldPayment       Boolean             @default(false)
   failureCode       String?
   pollCount         Int                 @default(0)
   nextPollAt        DateTime?           @db.Timestamptz()

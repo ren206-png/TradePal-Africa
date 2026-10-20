@@ -49,3 +49,5 @@ The consumer's full phone number is shown to an admin only on a case handled by 
 | Billing refund | request a refund of a SUBSCRIPTION charge (owner, reason, audited); optionally revoke entitlement on a full refund | refund anything that is not a subscription charge, exceed what was paid |
 | Billing exception | resolve with an outcome from a fixed list and a note | delete |
 | New-charge switch | turn new charges on or off per provider and country (owner, reason); never affects servicing | create a switch for merchant sales (database refuses) |
+
+An admin (owner) can also refund a payment pawaPay collected but that was never applied to an invoice (a duplicate, a wrong amount, a payment after cancellation) from its billing exception: same rules, audited, the invoice is untouched, and the exception resolves itself when the payment has been returned in full.

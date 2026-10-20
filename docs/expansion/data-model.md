@@ -120,3 +120,5 @@ Subscription -> planVersion (sold) / pendingVersion (scheduled change)
 ```
 
 None of these tables has any link to a journal, store, trade or merchant-payment record. TradePal's subscription revenue is not recorded in any merchant's ledger and merchant money is not recorded here.
+
+`BillingAttempt.refundedMinor` tracks money returned out of one payment (bounded by `capturedMinor`, database CHECK); `BillingRefund.heldPayment` marks a refund of a payment that was collected but never applied to an invoice, whose funds are reserved on the attempt rather than the invoice.

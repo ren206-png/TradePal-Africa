@@ -8,7 +8,7 @@ import { csvNumber, csvRow, csvText } from "./csv.js";
 import { paginate, parsePaginationParams } from "./pagination.js";
 import { recordPlatformAudit, requirePlatformPermission, requireStepUp } from "./platformGuards.js";
 import { DAY_MS, BillingError, getBillingConfig, SWITCH_PROVIDER } from "../domain/subscriptions/common.js";
-import { reconcileBilling, refundSubscriptionCharge, applyBillingDeposit } from "../domain/subscriptions/collection.js";
+import { reconcileBilling, refundHeldBillingPayment, refundSubscriptionCharge, applyBillingDeposit } from "../domain/subscriptions/collection.js";
 import { KNOWN_FEATURES, createPlanVersion, publishPlanVersion, retirePlanVersion, setPlanPrice } from "../domain/subscriptions/plans.js";
 
 
@@ -218,6 +218,16 @@ export function createAdminSubscriptionsRouter(prisma: PrismaClient, jwtSecret: 
     if (!p.success) return void res.status(400).json({ error: "Invalid request body.", details: p.error.issues });
     try {
       const r = await refundSubscriptionCharge(prisma, { invoiceId: req.params["id"] as string, ...(p.data.amountMinor ? { amountMinor: BigInt(p.data.amountMinor) } : {}), reason: p.data.reason, adminUserId: adminId(req), ...(p.data.revokeEntitlement ? { revokeEntitlement: true } : {}) });
+      res.status(202).json({ refundId: r.id, status: r.status });
+    } catch (e) { fail(res, e); }
+  }));
+
+  /** Gives back a payment pawaPay collected that was never applied to an invoice (a duplicate, a wrong amount, a payment after cancellation). */
+  router.post("/subscriptions/attempts/:id/refund", ...manage, asyncHandler(async (req, res) => {
+    const p = z.object({ amountMinor: z.string().regex(/^[1-9]\d{0,15}$/).optional(), reason }).safeParse(req.body);
+    if (!p.success) return void res.status(400).json({ error: "Invalid request body.", details: p.error.issues });
+    try {
+      const r = await refundHeldBillingPayment(prisma, { attemptId: req.params["id"] as string, ...(p.data.amountMinor ? { amountMinor: BigInt(p.data.amountMinor) } : {}), reason: p.data.reason, adminUserId: adminId(req) });
       res.status(202).json({ refundId: r.id, status: r.status });
     } catch (e) { fail(res, e); }
   }));

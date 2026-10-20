@@ -439,6 +439,7 @@ export interface SubscriptionDetail extends SubscriptionRow {
 }
 export interface BillingExceptionRow {
   id: string;
+  attemptId?: string | null;
   type: string;
   business: string | null;
   amountMinor: string | null;

@@ -161,6 +161,22 @@ describe("admin subscriptions panel: interventions", () => {
     expect(await prisma.auditLog.count({ where: { entityType: "Invoice", entityId: invoice.id, action: "SUBSCRIPTION_REFUND_REQUESTED" } })).toBe(1);
   });
 
+  it("gives back a collected-but-unapplied payment through the admin API (owner only)", async () => {
+    const { b, invoice } = await paid();
+    const dup = crypto.randomUUID();
+    await b.scoped.billingAttempt.createMany({ data: [{ id: dup, businessId: b.businessId, invoiceId: invoice.id, environment: "SANDBOX", providerCode: "ORANGE_SLE", amountMinor: 500_000n, currencyCode: "SLE", status: "ACCEPTED" }] });
+    fake.deposits.set(dup, { depositId: dup, amount: "5000.00", currency: "SLE", provider: "ORANGE_SLE", phone: PHONE, status: "COMPLETED", providerTransactionId: "dup-x", refunds: [] });
+    await applyBillingDeposit(prisma, cfg, dup, "CALLBACK", new Date());
+    const body = { reason: "Duplicate payment, returning it" };
+    expect((await request(app).post(`/admin/subscriptions/attempts/${dup}/refund`).set(auth(await loginAs("op@t.test"))).send(body)).status).toBe(403);
+    expect((await request(app).post(`/admin/subscriptions/attempts/${dup}/refund`).set(auth(await loginAs("super@t.test"))).send({ reason: "short" })).status).toBe(400);
+    const r = await request(app).post(`/admin/subscriptions/attempts/${dup}/refund`).set(auth(await loginAs("super@t.test"))).send(body);
+    expect(r.status).toBe(202);
+    await applyBillingRefund(prisma, cfg, r.body.refundId, new Date());
+    expect((await request(app).get("/admin/subscriptions/exceptions?status=RESOLVED").set(auth(await loginAs("op@t.test")))).body.exceptions.some((e: { attemptId: string }) => e.attemptId === dup)).toBe(true);
+    expect((await request(app).post("/admin/subscriptions/attempts/nope/refund").set(auth(await loginAs("super@t.test"))).send(body)).status).toBe(404);
+  });
+
   it("switches stop NEW charges for a country but never stop servicing existing ones", async () => {
     await publishedPlan(prisma, "STARTER");
     const b = await makeSlBusiness(prisma);

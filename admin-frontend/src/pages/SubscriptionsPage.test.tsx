@@ -25,7 +25,7 @@ function mockApi() {
   vi.mocked(apiFetch).mockImplementation(async (...args: unknown[]) => {
     const path = String(args[0]);
     if (path.includes("/overview")) return overview;
-    if (path.startsWith("/admin/subscriptions/exceptions") && !path.includes("resolve")) return { exceptions: [{ id: "e1", type: "AMOUNT_MISMATCH", business: "Ade Foods", amountMinor: "100", createdAt: "2026-10-30T00:00:00Z" }] };
+    if (path.startsWith("/admin/subscriptions/exceptions") && !path.includes("resolve")) return { exceptions: [{ id: "e1", attemptId: "att1", type: "AMOUNT_MISMATCH", business: "Ade Foods", amountMinor: "100", createdAt: "2026-10-30T00:00:00Z" }] };
     if (path === "/admin/subscriptions/sub1") return detail;
     if (path.startsWith("/admin/subscriptions")) return { subscriptions: subs };
     if (path.startsWith("/admin/plan-versions")) return { versions, knownFeatures: ["trade", "marketplace"] };
@@ -61,6 +61,16 @@ describe("SubscriptionsPage", () => {
     await userEvent.type(screen.getByLabelText("Reason"), "Returned the short payment");
     await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/admin/subscriptions/exceptions/e1/resolve", { method: "POST", body: { outcome: "CONTACTED_MERCHANT", note: "Returned the short payment" } }));
+  });
+
+  it("offers to give back a collected-but-unapplied payment from its exception", async () => {
+    mockApi();
+    render(<SubscriptionsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "Refund the payment…" }));
+    expect(screen.getByText(/never applied to an invoice/)).toBeTruthy();
+    await userEvent.type(screen.getByLabelText("Reason"), "Duplicate payment, returning it");
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/admin/subscriptions/attempts/att1/refund", { method: "POST", body: { reason: "Duplicate payment, returning it" } }));
   });
 
   it("opens a subscription, shows its invoices and history, and refunds a paid invoice with a reason", async () => {

@@ -215,10 +215,6 @@ export interface RefundInput {
  * moves to PARTIALLY_REFUNDED or REFUNDED only when pawaPay confirms. Funds are reserved before the call and released on failure.
  */
 export async function refundSubscriptionCharge(prisma: PrismaClient, input: RefundInput) {
-  const now = input.now ?? new Date();
-  const cfgResult = getBillingConfig();
-  if (!cfgResult.ok) throw new BillingError("NOT_CONFIGURED", "pawaPay is not configured in this environment.", { reason: cfgResult.reason });
-  const cfg = cfgResult.config;
   if (input.reason.trim().length < 10) throw new BillingError("INVALID", "Give a reason of at least 10 characters.");
   const invoice = await prisma.invoice.findUnique({ where: { id: input.invoiceId }, include: { subscription: true } });
   if (!invoice) throw new BillingError("NOT_FOUND", "No such invoice.");
@@ -227,12 +223,40 @@ export async function refundSubscriptionCharge(prisma: PrismaClient, input: Refu
   const scoped = getTenantScopedClient(prisma, invoice.subscription.businessId);
   const attempt = await scoped.billingAttempt.findFirst({ where: { invoiceId: invoice.id, status: "COMPLETED", allocation: { isNot: null } } });
   if (!attempt) throw new BillingError("NOT_REFUNDABLE", "There is no collected pawaPay payment behind this invoice.");
+  return startBillingRefund(prisma, { attempt, invoiceId: invoice.id, remaining: invoice.paidMinor - invoice.refundedMinor, held: false, input });
+}
+
+/**
+ * Refunds a payment pawaPay COLLECTED but that was never applied to an invoice (a duplicate, a wrong amount, a payment after cancellation):
+ * the money is real and belongs to the payer, so this is the in-system way to give it back. Same rules as any refund; the invoice is not touched.
+ */
+export async function refundHeldBillingPayment(prisma: PrismaClient, input: { attemptId: string; amountMinor?: bigint; reason: string; adminUserId: string; now?: Date }) {
+  if (input.reason.trim().length < 10) throw new BillingError("INVALID", "Give a reason of at least 10 characters.");
+  const probe = await prisma.billingAttempt.findUnique({ where: { id: input.attemptId }, include: { allocation: true, invoice: true } });
+  if (!probe) throw new BillingError("NOT_FOUND", "No such payment.");
+  if (probe.invoice.purpose !== "PLATFORM_SUBSCRIPTION") throw new BillingError("NOT_ALLOWED", "Only subscription charges can be refunded here.");
+  if (probe.status !== "COMPLETED") throw new BillingError("NOT_REFUNDABLE", "pawaPay has not confirmed this payment as collected.");
+  if (probe.allocation) throw new BillingError("NOT_REFUNDABLE", "This payment was applied to an invoice: refund the invoice instead.");
+  const scoped = getTenantScopedClient(prisma, probe.businessId);
+  const attempt = await scoped.billingAttempt.findUniqueOrThrow({ where: { id: probe.id } });
+  return startBillingRefund(prisma, { attempt, invoiceId: probe.invoiceId, remaining: attempt.capturedMinor - attempt.refundedMinor, held: true, input: { invoiceId: probe.invoiceId, ...(input.amountMinor !== undefined ? { amountMinor: input.amountMinor } : {}), reason: input.reason, adminUserId: input.adminUserId, ...(input.now ? { now: input.now } : {}) } });
+}
+
+async function startBillingRefund(
+  prisma: PrismaClient,
+  ctx: { attempt: BillingAttempt; invoiceId: string; remaining: bigint; held: boolean; input: RefundInput },
+) {
+  const { attempt, input } = ctx;
+  const now = input.now ?? new Date();
+  const cfgResult = getBillingConfig();
+  if (!cfgResult.ok) throw new BillingError("NOT_CONFIGURED", "pawaPay is not configured in this environment.", { reason: cfgResult.reason });
+  const cfg = cfgResult.config;
+  const scoped = getTenantScopedClient(prisma, attempt.businessId);
   if (attempt.environment !== cfg.environment) throw new BillingError("ENV_MISMATCH", "That payment was made in a different pawaPay environment from this server's.");
   if (await scoped.billingRefund.findFirst({ where: { attemptId: attempt.id, status: { in: ["REQUESTED", "ACCEPTED", "PROCESSING"] } } })) throw new BillingError("REFUND_IN_PROGRESS", "A refund for this payment is already in progress.");
 
-  const remaining = invoice.paidMinor - invoice.refundedMinor;
-  const amount = input.amountMinor ?? remaining;
-  if (amount <= 0n || amount > remaining) throw new BillingError("REFUND_LIMIT", "That is more than remains refundable on this invoice.");
+  const amount = input.amountMinor ?? ctx.remaining;
+  if (amount <= 0n || amount > ctx.remaining) throw new BillingError("REFUND_LIMIT", "That is more than remains refundable on this payment.");
   const exp = (await prisma.currency.findUniqueOrThrow({ where: { code: attempt.currencyCode } })).minorUnitExp;
   const unit = 10n ** BigInt(exp);
   const country = getPawaPayCountryForCurrency(attempt.currencyCode);
@@ -241,11 +265,19 @@ export async function refundSubscriptionCharge(prisma: PrismaClient, input: Refu
   const decimals = conf.countries.find((c) => c.country === country.country)?.providers.find((p) => p.provider === attempt.providerCode)?.currencies.find((c) => c.currency === attempt.currencyCode)?.operationTypes.DEPOSIT?.decimalsInAmount;
   if (decimals === "NONE" && amount % unit !== 0n) throw new BillingError("AMOUNT_UNSUPPORTED", "That provider only moves whole amounts, so refund a whole number.");
 
-  const reserved = await prisma.$executeRaw`UPDATE "Invoice" SET "refundedMinor" = "refundedMinor" + ${amount} WHERE "id" = ${invoice.id} AND "status" IN ('PAID', 'PARTIALLY_REFUNDED') AND "refundedMinor" + ${amount} <= "paidMinor"`;
-  if (reserved !== 1) throw new BillingError("REFUND_LIMIT", "That is more than remains refundable on this invoice.");
+  // reserve the funds BEFORE sending: the attempt-level bound always applies; an applied payment is also bounded on its invoice
+  const onAttempt = await prisma.$executeRaw`UPDATE "BillingAttempt" SET "refundedMinor" = "refundedMinor" + ${amount} WHERE "id" = ${attempt.id} AND "status" = 'COMPLETED' AND "refundedMinor" + ${amount} <= "capturedMinor"`;
+  if (onAttempt !== 1) throw new BillingError("REFUND_LIMIT", "That is more than remains refundable on this payment.");
+  if (!ctx.held) {
+    const onInvoice = await prisma.$executeRaw`UPDATE "Invoice" SET "refundedMinor" = "refundedMinor" + ${amount} WHERE "id" = ${ctx.invoiceId} AND "status" IN ('PAID', 'PARTIALLY_REFUNDED') AND "refundedMinor" + ${amount} <= "paidMinor"`;
+    if (onInvoice !== 1) {
+      await prisma.$executeRaw`UPDATE "BillingAttempt" SET "refundedMinor" = "refundedMinor" - ${amount} WHERE "id" = ${attempt.id} AND "refundedMinor" >= ${amount}`;
+      throw new BillingError("REFUND_LIMIT", "That is more than remains refundable on this invoice.");
+    }
+  }
   const refundId = (await import("node:crypto")).randomUUID();
-  await scoped.billingRefund.create({ data: { id: refundId, businessId: attempt.businessId, invoiceId: invoice.id, attemptId: attempt.id, amountMinor: amount, reason: input.reason.trim().slice(0, 300), adminUserId: input.adminUserId, revokeEntitlement: input.revokeEntitlement ?? false } });
-  await recordAuditLog(scoped, { businessId: attempt.businessId, actorType: "ADMIN", actorId: input.adminUserId, action: "SUBSCRIPTION_REFUND_REQUESTED", entityType: "Invoice", entityId: invoice.id, metadata: { refundId, amountMinor: amount.toString(), reason: input.reason.trim().slice(0, 300) } });
+  await scoped.billingRefund.create({ data: { id: refundId, businessId: attempt.businessId, invoiceId: ctx.invoiceId, attemptId: attempt.id, amountMinor: amount, reason: input.reason.trim().slice(0, 300), adminUserId: input.adminUserId, revokeEntitlement: input.revokeEntitlement ?? false, heldPayment: ctx.held } });
+  await recordAuditLog(scoped, { businessId: attempt.businessId, actorType: "ADMIN", actorId: input.adminUserId, action: ctx.held ? "SUBSCRIPTION_HELD_PAYMENT_REFUND_REQUESTED" : "SUBSCRIPTION_REFUND_REQUESTED", entityType: "Invoice", entityId: ctx.invoiceId, metadata: { refundId, depositId: attempt.id, amountMinor: amount.toString(), reason: input.reason.trim().slice(0, 300) } });
 
   const amountText = decimals === "NONE" ? (amount / unit).toString() : formatMoney(amount, exp);
   try {
@@ -268,8 +300,9 @@ async function failRefund(prisma: PrismaClient, refundId: string, code: string):
   const r = await prisma.billingRefund.findUniqueOrThrow({ where: { id: refundId } });
   const moved = await prisma.billingRefund.updateMany({ where: { id: refundId, status: { in: ["REQUESTED", "ACCEPTED", "PROCESSING"] } }, data: { status: "FAILED", failureCode: code } });
   if (moved.count !== 1) return;
-  await prisma.$executeRaw`UPDATE "Invoice" SET "refundedMinor" = "refundedMinor" - ${r.amountMinor} WHERE "id" = ${r.invoiceId} AND "refundedMinor" >= ${r.amountMinor}`;
-  await raiseBillingException(prisma, { type: "REFUND_FAILED", fingerprint: `refund-failed:${refundId}`, businessId: r.businessId, invoiceId: r.invoiceId, amountMinor: r.amountMinor, details: { refundId, code } });
+  await prisma.$executeRaw`UPDATE "BillingAttempt" SET "refundedMinor" = "refundedMinor" - ${r.amountMinor} WHERE "id" = ${r.attemptId} AND "refundedMinor" >= ${r.amountMinor}`;
+  if (!r.heldPayment) await prisma.$executeRaw`UPDATE "Invoice" SET "refundedMinor" = "refundedMinor" - ${r.amountMinor} WHERE "id" = ${r.invoiceId} AND "refundedMinor" >= ${r.amountMinor}`;
+  await raiseBillingException(prisma, { type: "REFUND_FAILED", fingerprint: `refund-failed:${refundId}`, businessId: r.businessId, invoiceId: r.invoiceId, attemptId: r.attemptId, amountMinor: r.amountMinor, details: { refundId, code, heldPayment: r.heldPayment } });
 }
 
 /** Applies pawaPay's word on a refund (always via an authenticated lookup). Idempotent. */
@@ -304,6 +337,17 @@ export async function applyBillingRefund(prisma: PrismaClient, cfg: BillingConfi
   }
   const moved = await prisma.billingRefund.updateMany({ where: { id: refundId, status: { in: ["REQUESTED", "ACCEPTED", "PROCESSING"] } }, data: { status: "COMPLETED" } });
   if (moved.count !== 1) return "NOOP";
+  if (refund.heldPayment) {
+    const a = await prisma.billingAttempt.findUniqueOrThrow({ where: { id: refund.attemptId } });
+    if (a.refundedMinor >= a.capturedMinor) {
+      await prisma.billingException.updateMany({
+        where: { attemptId: a.id, status: "OPEN", type: { in: ["DUPLICATE_PAYMENT", "AMOUNT_MISMATCH", "CURRENCY_MISMATCH", "PAYMENT_AFTER_CANCELLATION"] } },
+        data: { status: "RESOLVED", resolution: `REFUNDED: refund ${refund.id} completed (automatic)`, resolvedBy: refund.adminUserId, resolvedAt: now },
+      });
+    }
+    await recordAuditLog(getTenantScopedClient(prisma, refund.businessId), { businessId: refund.businessId, actorType: "SYSTEM", actorId: "pawapay-billing", action: "SUBSCRIPTION_HELD_PAYMENT_REFUND_COMPLETED", entityType: "Invoice", entityId: refund.invoiceId, metadata: { refundId, amountMinor: refund.amountMinor.toString() } });
+    return "COMPLETED";
+  }
   const inv = await prisma.invoice.findUniqueOrThrow({ where: { id: refund.invoiceId } });
   const completed = (await prisma.billingRefund.aggregate({ where: { invoiceId: inv.id, status: "COMPLETED" }, _sum: { amountMinor: true } }))._sum.amountMinor ?? 0n;
   await prisma.invoice.updateMany({ where: { id: inv.id, status: { in: ["PAID", "PARTIALLY_REFUNDED"] } }, data: { status: completed >= inv.paidMinor ? "REFUNDED" : "PARTIALLY_REFUNDED" } });

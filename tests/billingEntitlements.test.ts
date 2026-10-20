@@ -10,7 +10,7 @@ import { DAY_MS, setBillingConfig, type BillingConfig } from "../src/domain/subs
 import type { PawaPayFake } from "./helpers/pawapayFake.js";
 import { EntitlementError, assertEntitled, getEntitlement, PREMIUM_OPERATIONS, SERVICING_OPERATIONS } from "../src/domain/subscriptions/entitlements.js";
 import { startRenewal } from "../src/domain/subscriptions/renewal.js";
-import { applyBillingDeposit, applyBillingRefund, reconcileBilling, refundSubscriptionCharge } from "../src/domain/subscriptions/collection.js";
+import { applyBillingDeposit, applyBillingRefund, reconcileBilling, refundHeldBillingPayment, refundSubscriptionCharge } from "../src/domain/subscriptions/collection.js";
 import { getEffectivePlan } from "../src/domain/billing.js";
 import { createPurchaseOrder } from "../src/domain/trade/orders.js";
 import { updateStorefront } from "../src/domain/store/storefront.js";
@@ -208,6 +208,36 @@ describe("refunds of subscription charges", () => {
     expect(await applyBillingRefund(prisma, cfg, failed.id, at(3))).toBe("FAILED"); // provider-reported failure
     expect((await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } })).refundedMinor).toBe(100_000n);
     fake.refundFinal = "COMPLETED";
+  });
+
+  it("a payment pawaPay collected but that was never applied (a duplicate) can be given back, in part or in full, without touching the invoice", async () => {
+    const { b, invoice } = await paidBusiness();
+    const dup = crypto.randomUUID();
+    await b.scoped.billingAttempt.createMany({ data: [{ id: dup, businessId: b.businessId, invoiceId: invoice.id, environment: "SANDBOX", providerCode: "ORANGE_SLE", amountMinor: 500_000n, currencyCode: "SLE", status: "ACCEPTED" }] });
+    fake.deposits.set(dup, { depositId: dup, amount: "5000.00", currency: "SLE", provider: "ORANGE_SLE", phone: PHONE, status: "COMPLETED", providerTransactionId: "dup-1", refunds: [] });
+    expect(await applyBillingDeposit(prisma, cfg, dup, "CALLBACK", at(1))).toBe("HELD");
+    const give = (amount: bigint | undefined, reason = "Duplicate payment, returning it") => refundHeldBillingPayment(prisma, { attemptId: dup, ...(amount !== undefined ? { amountMinor: amount } : {}), reason, adminUserId: "admin-1", now: at(2) });
+    await expect(give(100_000n, "short")).rejects.toMatchObject({ code: "INVALID" });
+    await expect(give(600_000n)).rejects.toMatchObject({ code: "REFUND_LIMIT" });
+    const r1 = await give(200_000n);
+    expect(await applyBillingRefund(prisma, cfg, r1.id, at(2))).toBe("COMPLETED");
+    expect(await prisma.billingException.findFirstOrThrow({ where: { attemptId: dup, type: "DUPLICATE_PAYMENT" } })).toMatchObject({ status: "OPEN" }); // only part has gone back
+    fake.refundFinal = "FAILED";
+    const bad = await give(100_000n);
+    expect(await applyBillingRefund(prisma, cfg, bad.id, at(2))).toBe("FAILED");
+    expect((await prisma.billingAttempt.findUniqueOrThrow({ where: { id: dup } })).refundedMinor).toBe(200_000n); // the failed one released its funds
+    fake.refundFinal = "COMPLETED";
+    const r2 = await give(undefined);
+    expect(await applyBillingRefund(prisma, cfg, r2.id, at(3))).toBe("COMPLETED");
+    expect(await prisma.billingException.findFirstOrThrow({ where: { attemptId: dup, type: "DUPLICATE_PAYMENT" } })).toMatchObject({ status: "RESOLVED", resolution: expect.stringContaining("REFUNDED") });
+    expect(await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } })).toMatchObject({ status: "PAID", paidMinor: 500_000n, refundedMinor: 0n }); // the invoice that was legitimately paid is untouched
+    expect((await getEntitlement(b.scoped, b.businessId, at(3))).state).toBe("ACTIVE");
+    await expect(give(1n)).rejects.toMatchObject({ code: "REFUND_LIMIT" });
+    // the payment that WAS applied is refunded through its invoice, not this way
+    const applied = await b.scoped.billingAttempt.findFirstOrThrow({ where: { id: { not: dup } } });
+    await expect(refundHeldBillingPayment(prisma, { attemptId: applied.id, reason: "Trying the wrong door", adminUserId: "a", now: at(3) })).rejects.toMatchObject({ code: "NOT_REFUNDABLE" });
+    expect(await prisma.auditLog.count({ where: { action: "SUBSCRIPTION_HELD_PAYMENT_REFUND_COMPLETED", entityId: invoice.id } })).toBe(2);
+    await expect(testDb.db.query(`UPDATE "BillingAttempt" SET "refundedMinor" = "capturedMinor" + 1 WHERE id='${dup}'`)).rejects.toThrow(/check/i);
   });
 
   it("revoking entitlement is an explicit choice on a full refund; refunds are for subscription charges only", async () => {

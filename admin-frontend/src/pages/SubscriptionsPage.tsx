@@ -9,6 +9,7 @@ type Action =
   | { kind: "switch"; countryCode: string; enable: boolean; title: string }
   | { kind: "resolve"; id: string; title: string }
   | { kind: "refund"; invoiceId: string; title: string }
+  | { kind: "refundHeld"; attemptId: string; title: string }
   | { kind: "adjust"; subscriptionId: string; title: string }
   | { kind: "newVersion"; title: string }
   | { kind: "price"; versionId: string; title: string }
@@ -92,6 +93,7 @@ export function SubscriptionsPage() {
       if (action.kind === "switch") await apiFetch("/admin/billing-switches", { method: "PUT", body: { provider: "pawapay", countryCode: action.countryCode, newAttemptsEnabled: action.enable, reason: r } });
       else if (action.kind === "resolve") await apiFetch(`/admin/subscriptions/exceptions/${action.id}/resolve`, { method: "POST", body: { outcome, note: r } });
       else if (action.kind === "refund") await apiFetch(`/admin/invoices/${action.invoiceId}/refund`, { method: "POST", body: { ...(amount.trim() ? { amountMinor: amount.trim() } : {}), reason: r } });
+      else if (action.kind === "refundHeld") await apiFetch(`/admin/subscriptions/attempts/${action.attemptId}/refund`, { method: "POST", body: { ...(amount.trim() ? { amountMinor: amount.trim() } : {}), reason: r } });
       else if (action.kind === "adjust") await apiFetch(`/admin/subscriptions/${action.subscriptionId}/adjust`, { method: "POST", body: { periodEnd: new Date(date).toISOString(), reason: r } });
       else if (action.kind === "newVersion") await apiFetch(`/admin/plan-versions/${planCode.trim().toUpperCase()}`, { method: "POST", body: { features: chosen, graceDays: Number(grace), reason: r } });
       else if (action.kind === "price") await apiFetch(`/admin/plan-versions/${action.versionId}/prices`, { method: "PUT", body: { countryCode: country.trim().toUpperCase(), priceMinor: amount.trim(), reason: r } });
@@ -194,7 +196,10 @@ export function SubscriptionsPage() {
           {exceptions.map((e) => (
             <tr key={e.id}>
               <td>{new Date(e.createdAt).toLocaleString()}</td><td>{e.business ?? "unknown"}</td><td>{e.type.toLowerCase().replace(/_/g, " ")}</td><td>{e.amountMinor ?? "-"}</td>
-              <td><button type="button" onClick={() => begin({ kind: "resolve", id: e.id, title: `Resolve: ${e.type.toLowerCase().replace(/_/g, " ")}` })}>Resolve…</button></td>
+              <td>
+                {e.attemptId && ["DUPLICATE_PAYMENT", "AMOUNT_MISMATCH", "CURRENCY_MISMATCH", "PAYMENT_AFTER_CANCELLATION"].includes(e.type) ? <><button type="button" onClick={() => begin({ kind: "refundHeld", attemptId: e.attemptId!, title: "Give the payment back" })}>Refund the payment…</button>{" "}</> : null}
+                <button type="button" onClick={() => begin({ kind: "resolve", id: e.id, title: `Resolve: ${e.type.toLowerCase().replace(/_/g, " ")}` })}>Resolve…</button>
+              </td>
             </tr>
           ))}
           {exceptions.length === 0 ? <tr><td colSpan={5}>No open exceptions.</td></tr> : null}
@@ -227,7 +232,7 @@ export function SubscriptionsPage() {
             {action.kind === "resolve" ? (
               <label className="filter-label">Outcome<select value={outcome} onChange={(e) => setOutcome(e.target.value as (typeof RESOLUTIONS)[number])}>{RESOLUTIONS.map((o) => <option key={o} value={o}>{o.toLowerCase().replace(/_/g, " ")}</option>)}</select></label>
             ) : null}
-            {action.kind === "refund" ? <label className="filter-label">Amount in minor units (empty = everything refundable)<input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="numeric" /></label> : null}
+            {action.kind === "refund" || action.kind === "refundHeld" ? <label className="filter-label">Amount in minor units (empty = everything refundable)<input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="numeric" /></label> : null}
             {action.kind === "adjust" ? <label className="filter-label">New paid-until date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label> : null}
             {action.kind === "price" ? (
               <>
@@ -243,6 +248,7 @@ export function SubscriptionsPage() {
               </>
             ) : null}
             {action.kind === "refund" ? <p>This refunds a SUBSCRIPTION charge to the payer through pawaPay. It does not end the subscription.</p> : null}
+            {action.kind === "refundHeld" ? <p>This gives back money pawaPay collected that was never applied to an invoice. The invoice is not touched.</p> : null}
             <textarea rows={3} autoFocus value={reason} onChange={(e) => setReason(e.target.value)} aria-label="Reason" placeholder="Why? At least 10 characters. Recorded in the audit log." />
             <div className="modal-actions">
               <button type="button" onClick={() => setAction(null)} disabled={busy}>Cancel</button>

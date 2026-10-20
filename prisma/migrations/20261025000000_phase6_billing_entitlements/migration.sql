@@ -75,6 +75,7 @@ CREATE TABLE "BillingAttempt" (
     "amountMinor" BIGINT NOT NULL,
     "currencyCode" TEXT NOT NULL,
     "capturedMinor" BIGINT NOT NULL DEFAULT 0,
+    "refundedMinor" BIGINT NOT NULL DEFAULT 0,
     "payerPhoneLast4" TEXT,
     "providerTransactionId" TEXT,
     "failureCode" TEXT,
@@ -114,6 +115,7 @@ CREATE TABLE "BillingRefund" (
     "reason" TEXT NOT NULL,
     "adminUserId" TEXT NOT NULL,
     "revokeEntitlement" BOOLEAN NOT NULL DEFAULT false,
+    "heldPayment" BOOLEAN NOT NULL DEFAULT false,
     "failureCode" TEXT,
     "pollCount" INTEGER NOT NULL DEFAULT 0,
     "nextPollAt" TIMESTAMPTZ,
@@ -285,7 +287,6 @@ ALTER TABLE "BillingRefund" ADD CONSTRAINT "BillingRefund_attemptId_fkey" FOREIG
 -- AddForeignKey
 ALTER TABLE "EntitlementEvent" ADD CONSTRAINT "EntitlementEvent_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
-
 -- ============================================================================================
 -- Phase 6: platform subscriptions through pawaPay, plan versions, entitlement history - hand-written part.
 -- ============================================================================================
@@ -296,7 +297,7 @@ ALTER TABLE "PlanVersion" ADD CONSTRAINT "PlanVersion_values_check" CHECK (
 ALTER TABLE "PlanPrice" ADD CONSTRAINT "PlanPrice_price_check" CHECK ("priceMinor" > 0);
 ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_billing_amounts_check" CHECK ("paidMinor" >= 0 AND "refundedMinor" >= 0 AND "refundedMinor" <= "paidMinor");
 ALTER TABLE "BillingAttempt" ADD CONSTRAINT "BillingAttempt_values_check" CHECK (
-  "amountMinor" > 0 AND "capturedMinor" >= 0 AND "environment" IN ('SANDBOX', 'PRODUCTION') AND ("status" <> 'COMPLETED' OR "capturedMinor" > 0));
+  "amountMinor" > 0 AND "capturedMinor" >= 0 AND "refundedMinor" >= 0 AND "refundedMinor" <= "capturedMinor" AND "environment" IN ('SANDBOX', 'PRODUCTION') AND ("status" <> 'COMPLETED' OR "capturedMinor" > 0));
 ALTER TABLE "BillingAllocation" ADD CONSTRAINT "BillingAllocation_values_check" CHECK ("amountMinor" > 0 AND "periodEnd" > "periodStart");
 ALTER TABLE "BillingRefund" ADD CONSTRAINT "BillingRefund_amount_check" CHECK ("amountMinor" > 0);
 -- TradePal billing money is its own purpose: a billing switch can never be created for merchant sales (scenario 14, in the database).
