@@ -60,7 +60,10 @@ describe("migrations match prisma/schema.prisma", () => {
     expect(b.enums).toEqual(a.enums);
     expect(b.indexes.filter((i) => !MIGRATION_ONLY_INDEXES.has(i))).toEqual(a.indexes);
     for (const only of MIGRATION_ONLY_INDEXES) expect(b.indexes).toContain(only);
-    expect(b.constraints).toEqual(a.constraints);
+    // Hand-written CHECK ('c') and constraint-trigger ('t') constraints exist only in the migrations (Prisma cannot express them).
+    const handWritten = (c: string) => / [ct]$/.test(c);
+    expect(b.constraints.filter((c) => !handWritten(c))).toEqual(a.constraints);
+    expect(b.constraints.filter(handWritten).length).toBeGreaterThan(0);
 
     await fromSchema.close();
     await fromMigrations.close();

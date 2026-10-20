@@ -32,6 +32,25 @@ export const TENANT_SCOPED_MODELS = new Set([
   // Expansion Phase 1: shops and memberships belong to one business.
   "Shop",
   "Membership",
+  // Expansion Phase 2: catalog, stock, journals, daily close.
+  "Product",
+  "ProductVariant",
+  "VariantAlias",
+  "PackConversion",
+  "PriceList",
+  "PriceRule",
+  "StockMovement",
+  "StockBalance",
+  "StockReservation",
+  "StockPolicy",
+  "StockCount",
+  "StockCountLine",
+  "StockTransfer",
+  "StockTransferLine",
+  "Account",
+  "JournalEntry",
+  "JournalLine",
+  "DailyClose",
   // DeepSeek Integration Phase 3 (INTEGRATION_DESIGN.md §3): carries a
   // required businessId. Deliberately NOT added to APPEND_ONLY_MODELS below —
   // see AiUsageLedger's own schema.prisma docstring for why there is no

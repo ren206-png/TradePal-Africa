@@ -27,9 +27,11 @@ model Country {
 }
 
 model Currency {
-  code         String @id // ISO 4217, e.g. NGN, KES, GHS, SLE, TZS
-  name         String
-  minorUnitExp Int // decimal places of the minor unit; TZS documented as 0 (whole shilling treated as minor unit)
+  priceLists     PriceList[]
+  journalEntries JournalEntry[]
+  code           String         @id // ISO 4217, e.g. NGN, KES, GHS, SLE, TZS
+  name           String
+  minorUnitExp   Int // decimal places of the minor unit; TZS documented as 0 (whole shilling treated as minor unit)
 
   countries       Country[]
   businesses      Business[]
@@ -76,26 +78,44 @@ enum BusinessStatus {
 }
 
 model Business {
-  id               String         @id @default(uuid())
-  name             String
-  countryCode      String
-  currencyCode     String
-  languageCode     String
-  timezone         String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
+  products           Product[]
+  productVariants    ProductVariant[]
+  variantAliases     VariantAlias[]
+  packConversions    PackConversion[]
+  priceLists         PriceList[]
+  priceRules         PriceRule[]
+  stockMovements     StockMovement[]
+  stockBalances      StockBalance[]
+  stockReservations  StockReservation[]
+  stockCounts        StockCount[]
+  stockCountLines    StockCountLine[]
+  stockTransfers     StockTransfer[]
+  stockTransferLines StockTransferLine[]
+  accounts           Account[]
+  journalEntries     JournalEntry[]
+  journalLines       JournalLine[]
+  dailyCloses        DailyClose[]
+  stockPolicy        StockPolicy?
+  id                 String              @id @default(uuid())
+  name               String
+  countryCode        String
+  currencyCode       String
+  languageCode       String
+  timezone           String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
   // Phase 29: platform-moderation suspension (src/domain/businessModeration.ts),
   // distinct from Merchant.removedAt's per-staff soft-deactivation — this cuts
   // off every merchant on the business at once, for a platform-rules
   // violation. suspendedAt/suspensionReason are null whenever status is
   // ACTIVE (reinstateBusiness clears them). Enforced in the live message path
   // by messageDispatcher.ts's own gate, not just by hiding admin UI.
-  status           BusinessStatus @default(ACTIVE)
-  suspendedAt      DateTime?      @db.Timestamptz()
+  status             BusinessStatus      @default(ACTIVE)
+  suspendedAt        DateTime?           @db.Timestamptz()
   /// True only for synthetic/test/demo organizations. The ONLY businesses whose financial rows may ever be hard-deleted
   /// (database triggers enforce this); set at creation and immutable afterwards. See docs/expansion/db-protection.md.
-  isSynthetic      Boolean        @default(false)
-  suspensionReason String?
-  createdAt        DateTime       @default(now()) @db.Timestamptz()
-  updatedAt        DateTime       @updatedAt @db.Timestamptz()
+  isSynthetic        Boolean             @default(false)
+  suspensionReason   String?
+  createdAt          DateTime            @default(now()) @db.Timestamptz()
+  updatedAt          DateTime            @updatedAt @db.Timestamptz()
 
   country  Country  @relation(fields: [countryCode], references: [code])
   currency Currency @relation(fields: [currencyCode], references: [code])
@@ -153,12 +173,18 @@ enum MembershipStatus {
 /// A physical or logical shop inside a business (tenant). Every business has exactly one default shop; more can be added
 /// in later phases. Additive: no existing table references Shop yet.
 model Shop {
-  id         String   @id @default(uuid())
-  businessId String
-  name       String
-  isDefault  Boolean  @default(false)
-  createdAt  DateTime @default(now()) @db.Timestamptz()
-  updatedAt  DateTime @updatedAt @db.Timestamptz()
+  stockMovements    StockMovement[]
+  stockBalances     StockBalance[]
+  stockReservations StockReservation[]
+  stockCounts       StockCount[]
+  transfersFrom     StockTransfer[]    @relation("TransferFrom")
+  transfersTo       StockTransfer[]    @relation("TransferTo")
+  id                String             @id @default(uuid())
+  businessId        String
+  name              String
+  isDefault         Boolean            @default(false)
+  createdAt         DateTime           @default(now()) @db.Timestamptz()
+  updatedAt         DateTime           @updatedAt @db.Timestamptz()
 
   business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
   memberships Membership[]
@@ -359,13 +385,14 @@ enum RiskLabel {
 /// WhatsApp/phone number for a merchant's customer, since that person has not consented to TradePal
 /// processing their data. Only the merchant-given label is stored.
 model Customer {
-  id           String    @id @default(uuid())
+  priceLists   PriceList[]
+  id           String      @id @default(uuid())
   businessId   String
   name         String // merchant-given label, e.g. "John the tailor" — anonymized to a placeholder on deletion request
-  riskLabel    RiskLabel @default(UNKNOWN) // derived only from payment history (src/domain/riskLabel.ts), never from AI inference
-  isAnonymized Boolean   @default(false)
-  createdAt    DateTime  @default(now()) @db.Timestamptz()
-  updatedAt    DateTime  @updatedAt @db.Timestamptz()
+  riskLabel    RiskLabel   @default(UNKNOWN) // derived only from payment history (src/domain/riskLabel.ts), never from AI inference
+  isAnonymized Boolean     @default(false)
+  createdAt    DateTime    @default(now()) @db.Timestamptz()
+  updatedAt    DateTime    @updatedAt @db.Timestamptz()
 
   business        Business         @relation(fields: [businessId], references: [id])
   transactions    Transaction[]
@@ -441,7 +468,8 @@ model DebtPayment {
 // ─────────────────────────────────────────────────────────────────────────
 
 model InventoryItem {
-  id                String   @id @default(uuid())
+  variant           ProductVariant?
+  id                String          @id @default(uuid())
   businessId        String
   name              String
   // Phase 17: lowercased/trimmed mirror of `name`, maintained by the application layer
@@ -454,12 +482,12 @@ model InventoryItem {
   // index, so the app computes this column itself on every write.
   normalizedName    String
   unit              String? // e.g. "bottle", "bag", "kg"
-  estimatedStockQty Int      @default(0) // an estimate; a sale is never blocked by this reaching zero
+  estimatedStockQty Int             @default(0) // an estimate; a sale is never blocked by this reaching zero
   lowStockThreshold Int?
   // Phase 24: set via /setprice. Nullable — most items still have no price, same as lowStockThreshold.
   priceMinor        BigInt?
-  createdAt         DateTime @default(now()) @db.Timestamptz()
-  updatedAt         DateTime @updatedAt @db.Timestamptz()
+  createdAt         DateTime        @default(now()) @db.Timestamptz()
+  updatedAt         DateTime        @updatedAt @db.Timestamptz()
 
   business  Business            @relation(fields: [businessId], references: [id])
   items     TransactionItem[]
@@ -1059,4 +1087,456 @@ model SystemHeartbeat {
   service    String   @id
   lastSeenAt DateTime @db.Timestamptz()
   meta       Json?
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 2: catalog, price lists, stock, journals, daily close.
+// Every table below is new and carries businessId (tenant scoping + RLS). Quantities are integers in the
+// variant's BASE unit; money is integer minor units with the currency stated on the parent row.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// A thing the business sells or stocks. Variants carry SKU, unit and stock; the product is the shared name/description.
+model Product {
+  id          String        @id @default(uuid())
+  businessId  String
+  name        String
+  description String?
+  category    String?
+  imageUrls   String[]
+  status      ProductStatus @default(DRAFT)
+  createdAt   DateTime      @default(now()) @db.Timestamptz()
+  updatedAt   DateTime      @updatedAt @db.Timestamptz()
+
+  business Business         @relation(fields: [businessId], references: [id])
+  variants ProductVariant[]
+
+  @@index([businessId, status])
+}
+
+model ProductVariant {
+  id                String        @id @default(uuid())
+  businessId        String
+  productId         String
+  sku               String
+  barcode           String?
+  name              String // e.g. "500 ml", "Red / L"; the product name is on Product
+  baseUnit          String // smallest tracked quantum: piece, bottle, gram. Pack sizes convert to this explicitly.
+  trackStock        Boolean       @default(true)
+  lowStockThreshold Int? // in base units
+  status            ProductStatus @default(DRAFT)
+  inventoryItemId   String?       @unique // bridge to the legacy InventoryItem this variant adopted (Phase 2 adoption)
+  createdAt         DateTime      @default(now()) @db.Timestamptz()
+  updatedAt         DateTime      @updatedAt @db.Timestamptz()
+
+  business      Business           @relation(fields: [businessId], references: [id])
+  product       Product            @relation(fields: [productId], references: [id])
+  inventoryItem InventoryItem?     @relation(fields: [inventoryItemId], references: [id])
+  aliases       VariantAlias[]
+  packs         PackConversion[]
+  priceRules    PriceRule[]
+  balances      StockBalance[]
+  movements     StockMovement[]
+  reservations  StockReservation[]
+
+  @@unique([businessId, sku])
+  @@unique([businessId, barcode])
+  @@index([businessId, productId])
+}
+
+/// Names a merchant (or a customer) actually uses for a variant: "sugar 1kg", "ndiyo". Normalized for lookup.
+model VariantAlias {
+  id              String   @id @default(uuid())
+  businessId      String
+  variantId       String
+  alias           String
+  normalizedAlias String
+  createdAt       DateTime @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([businessId, normalizedAlias])
+  @@index([variantId])
+}
+
+/// A declared pack size: "1 carton = 24 pieces". Without a row here a carton is NOT convertible to pieces.
+model PackConversion {
+  id             String   @id @default(uuid())
+  businessId     String
+  variantId      String
+  name           String // carton, bag, box, dozen
+  normalizedName String
+  baseQuantity   Int // how many base units one pack holds (>= 2, enforced by a CHECK)
+  createdAt      DateTime @default(now()) @db.Timestamptz()
+
+  business   Business       @relation(fields: [businessId], references: [id])
+  variant    ProductVariant @relation(fields: [variantId], references: [id])
+  priceRules PriceRule[]
+
+  @@unique([variantId, normalizedName])
+  @@index([businessId])
+}
+
+enum PriceListKind {
+  RETAIL
+  WHOLESALE
+  CUSTOMER
+}
+
+enum PriceStatus {
+  ACTIVE
+  RETIRED
+}
+
+model PriceList {
+  id           String        @id @default(uuid())
+  businessId   String
+  name         String
+  kind         PriceListKind
+  currencyCode String
+  customerId   String? // CUSTOMER lists: the one customer these approved prices apply to
+  status       PriceStatus   @default(ACTIVE)
+  validFrom    DateTime?     @db.Timestamptz()
+  validTo      DateTime?     @db.Timestamptz()
+  createdAt    DateTime      @default(now()) @db.Timestamptz()
+
+  business Business    @relation(fields: [businessId], references: [id])
+  currency Currency    @relation(fields: [currencyCode], references: [code])
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  rules    PriceRule[]
+
+  @@index([businessId, kind, status])
+}
+
+/// One price point: "from minQuantity units (of this pack, or base unit when packConversionId is null) the unit price is X".
+/// Several rules for the same variant/unit form quantity breaks.
+model PriceRule {
+  id               String      @id @default(uuid())
+  businessId       String
+  priceListId      String
+  variantId        String
+  packConversionId String?
+  minQuantity      Int         @default(1)
+  unitPriceMinor   BigInt
+  status           PriceStatus @default(ACTIVE)
+  validFrom        DateTime?   @db.Timestamptz()
+  validTo          DateTime?   @db.Timestamptz()
+  createdAt        DateTime    @default(now()) @db.Timestamptz()
+
+  business       Business        @relation(fields: [businessId], references: [id])
+  priceList      PriceList       @relation(fields: [priceListId], references: [id])
+  variant        ProductVariant  @relation(fields: [variantId], references: [id])
+  packConversion PackConversion? @relation(fields: [packConversionId], references: [id])
+
+  @@index([priceListId, variantId])
+  @@index([businessId])
+}
+
+enum StockMovementKind {
+  OPENING_BALANCE // migrated/declared starting stock, labelled as such
+  RECEIPT
+  SALE_FULFILLMENT
+  RETURN_RESTOCK
+  COUNT_ADJUSTMENT
+  SPOILAGE
+  OWNER_WITHDRAWAL
+  DAMAGE_QUARANTINE
+  TRANSFER_DISPATCH
+  TRANSFER_RECEIPT
+  MANUAL_ADJUSTMENT
+  LEGACY_MIRROR // mirrored from the legacy InventoryItem path
+  REVERSAL
+}
+
+enum Provenance {
+  MERCHANT_ENTERED
+  DOCUMENT_SUPPORTED
+  PROVIDER_CONFIRMED
+  RECONCILED
+  MIGRATED_OPENING
+  SYSTEM_DERIVED
+}
+
+/// Append-only. The balance is the sum of these; a correction is a new REVERSAL/adjustment row.
+model StockMovement {
+  id                   String            @id @default(uuid())
+  businessId           String
+  shopId               String
+  variantId            String
+  kind                 StockMovementKind
+  onHandDelta          Int               @default(0)
+  damagedDelta         Int               @default(0)
+  inTransitDelta       Int               @default(0)
+  unitCostMinor        BigInt? // per base unit, when known (receipts, restocks); null = cost unknown
+  costCurrency         String?
+  costIncomplete       Boolean           @default(false) // a SALE_FULFILLMENT whose cost could not be fully determined
+  cogsMinor            BigInt? // SALE_FULFILLMENT: cost of goods released, computed at posting time
+  occurredAt           DateTime          @default(now()) @db.Timestamptz()
+  createdAt            DateTime          @default(now()) @db.Timestamptz()
+  provenance           Provenance        @default(MERCHANT_ENTERED)
+  sourceType           String?
+  sourceId             String?
+  actorType            ActorType         @default(SYSTEM)
+  actorId              String?
+  note                 String?
+  idempotencyKey       String?
+  reversalOfMovementId String?           @unique
+
+  business   Business       @relation(fields: [businessId], references: [id])
+  shop       Shop           @relation(fields: [shopId], references: [id])
+  variant    ProductVariant @relation(fields: [variantId], references: [id])
+  reversalOf StockMovement? @relation("StockMovementReversal", fields: [reversalOfMovementId], references: [id])
+  reversedBy StockMovement? @relation("StockMovementReversal")
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, variantId, createdAt])
+  @@index([sourceType, sourceId])
+}
+
+/// Running balance per variant per shop. The conditional updates that touch it (see src/domain/stock) are what
+/// stop two concurrent orders taking the last unit; stockReconcile compares it with the movement sums.
+model StockBalance {
+  id           String   @id @default(uuid())
+  businessId   String
+  shopId       String
+  variantId    String
+  onHand       Int      @default(0)
+  reserved     Int      @default(0)
+  damaged      Int      @default(0)
+  inTransit    Int      @default(0)
+  avgCostMinor BigInt? // moving weighted average over COSTED units only; null until a costed receipt
+  uncostedQty  Int      @default(0) // on-hand units that arrived without a cost
+  costCurrency String?
+  updatedAt    DateTime @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([shopId, variantId])
+  @@index([businessId, variantId])
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+  EXPIRED
+}
+
+model StockReservation {
+  id             String                 @id @default(uuid())
+  businessId     String
+  shopId         String
+  variantId      String
+  quantity       Int
+  status         StockReservationStatus @default(ACTIVE)
+  expiresAt      DateTime               @db.Timestamptz()
+  reference      String // what holds it: "order:<id>", "basket:<id>"
+  idempotencyKey String
+  createdAt      DateTime               @default(now()) @db.Timestamptz()
+  settledAt      DateTime?              @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([businessId, idempotencyKey])
+  @@index([status, expiresAt])
+  @@index([businessId, variantId])
+}
+
+enum NegativeStockPolicy {
+  ALLOW // a sale is never blocked by an estimate reaching zero (legacy behaviour, the default)
+  BLOCK // reservations/fulfilments beyond available stock are refused unless an approver is named
+}
+
+model StockPolicy {
+  id             String              @id @default(uuid())
+  businessId     String              @unique
+  negativeStock  NegativeStockPolicy @default(ALLOW)
+  allowBackorder Boolean             @default(false)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+}
+
+enum StockCountStatus {
+  OPEN
+  APPROVED
+  CANCELLED
+}
+
+model StockCount {
+  id         String           @id @default(uuid())
+  businessId String
+  shopId     String
+  status     StockCountStatus @default(OPEN)
+  note       String?
+  openedBy   String?
+  approvedBy String?
+  createdAt  DateTime         @default(now()) @db.Timestamptz()
+  approvedAt DateTime?        @db.Timestamptz()
+
+  business Business         @relation(fields: [businessId], references: [id])
+  shop     Shop             @relation(fields: [shopId], references: [id])
+  lines    StockCountLine[]
+
+  @@index([businessId, status])
+}
+
+model StockCountLine {
+  id          String   @id @default(uuid())
+  businessId  String
+  countId     String
+  variantId   String
+  expectedQty Int // on-hand when the count was opened (snapshot)
+  countedQty  Int
+  discrepancy Int // countedQty - expectedQty
+  reason      String? // required to approve a non-zero discrepancy
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+
+  business Business   @relation(fields: [businessId], references: [id])
+  count    StockCount @relation(fields: [countId], references: [id])
+
+  @@unique([countId, variantId])
+}
+
+enum StockTransferStatus {
+  DRAFT
+  DISPATCHED
+  RECEIVED
+  CANCELLED
+}
+
+model StockTransfer {
+  id           String              @id @default(uuid())
+  businessId   String
+  fromShopId   String
+  toShopId     String
+  status       StockTransferStatus @default(DRAFT)
+  note         String?
+  createdAt    DateTime            @default(now()) @db.Timestamptz()
+  dispatchedAt DateTime?           @db.Timestamptz()
+  receivedAt   DateTime?           @db.Timestamptz()
+
+  business Business            @relation(fields: [businessId], references: [id])
+  fromShop Shop                @relation("TransferFrom", fields: [fromShopId], references: [id])
+  toShop   Shop                @relation("TransferTo", fields: [toShopId], references: [id])
+  lines    StockTransferLine[]
+
+  @@index([businessId, status])
+}
+
+model StockTransferLine {
+  id               String  @id @default(uuid())
+  businessId       String
+  transferId       String
+  variantId        String
+  quantitySent     Int
+  quantityReceived Int?
+  unitCostMinor    BigInt? // cost carried from the source shop at dispatch
+
+  business Business      @relation(fields: [businessId], references: [id])
+  transfer StockTransfer @relation(fields: [transferId], references: [id])
+
+  @@unique([transferId, variantId])
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+model Account {
+  id         String      @id @default(uuid())
+  businessId String
+  code       String
+  name       String
+  type       AccountType
+  systemKey  String? // stable key the posting rules use: CASH, MOBILE_MONEY, AR, ...
+  active     Boolean     @default(true)
+  createdAt  DateTime    @default(now()) @db.Timestamptz()
+
+  business Business      @relation(fields: [businessId], references: [id])
+  lines    JournalLine[]
+
+  @@unique([businessId, code])
+  @@unique([businessId, systemKey])
+}
+
+/// Append-only. Balanced per entry (deferred constraint trigger). One currency per entry.
+model JournalEntry {
+  id                String     @id @default(uuid())
+  businessId        String
+  currencyCode      String
+  occurredAt        DateTime   @db.Timestamptz()
+  postedAt          DateTime   @default(now()) @db.Timestamptz()
+  kind              String // SALE, EXPENSE, STOCK_PURCHASE, DEBT_PAYMENT, REFUND, OWNER_WITHDRAWAL, FEE, SETTLEMENT, CASH_ADJUSTMENT, ...
+  memo              String?
+  sourceType        String?
+  sourceId          String?
+  provenance        Provenance @default(MERCHANT_ENTERED)
+  evidenceRef       String?
+  actorType         ActorType  @default(SYSTEM)
+  actorId           String?
+  idempotencyKey    String
+  reversalOfEntryId String?    @unique
+
+  business   Business      @relation(fields: [businessId], references: [id])
+  currency   Currency      @relation(fields: [currencyCode], references: [code])
+  lines      JournalLine[]
+  reversalOf JournalEntry? @relation("JournalReversal", fields: [reversalOfEntryId], references: [id])
+  reversedBy JournalEntry? @relation("JournalReversal")
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, occurredAt])
+  @@index([sourceType, sourceId])
+}
+
+model JournalLine {
+  id          String  @id @default(uuid())
+  businessId  String
+  entryId     String
+  accountId   String
+  debitMinor  BigInt  @default(0)
+  creditMinor BigInt  @default(0)
+  memo        String?
+
+  business Business     @relation(fields: [businessId], references: [id])
+  entry    JournalEntry @relation(fields: [entryId], references: [id])
+  account  Account      @relation(fields: [accountId], references: [id])
+
+  @@index([entryId])
+  @@index([businessId, accountId])
+}
+
+/// The end-of-day cash count for one business day. Append-only once written: a difference is explained by a
+/// CASH_ADJUSTMENT journal entry, never by editing the row.
+model DailyClose {
+  id                String   @id @default(uuid())
+  businessId        String
+  businessDate      DateTime @db.Date
+  currencyCode      String
+  expectedCashMinor BigInt
+  countedCashMinor  BigInt
+  differenceMinor   BigInt
+  summary           Json // snapshot of the day: sales by method, credit sales, collections, refunds, fees, wallet matching
+  note              String?
+  closedBy          String?
+  closedAt          DateTime @default(now()) @db.Timestamptz()
+  adjustmentEntryId String?
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, businessDate, currencyCode])
 }
