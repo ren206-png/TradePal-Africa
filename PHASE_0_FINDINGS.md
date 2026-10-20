@@ -1065,3 +1065,193 @@ Both providers are reached exclusively through a hand-rolled interface (`AiProvi
 **Explicitly out of scope for this phase** (unchanged from the approved plan): verifying/updating real DeepSeek pricing in `modelRegistry.ts` (still placeholder, already disclosed at Phase 0); flipping `AI_BUDGET_ENFORCEMENT_ENABLED`; building the D-2 redaction/PII-scrubbing layer; setting real `DEEPSEEK_API_KEY`/`AI_DEEPSEEK_MODEL`/`AI_PROVIDER_DEEPSEEK_ENABLED=true` on Railway or enabling the `aiProviderDeepseek` flag for any real business — those remain the user's own follow-up actions once this phase's code is reviewed, and are not part of what this phase shipped. Nothing in this phase was pushed to `origin/main` without a separate, explicit go-ahead, per the plan's own verification section.
 
 **End of DeepSeek Integration — Phase 8.**
+
+
+---
+
+# Expansion Audit — Phase 0 (read-only), 2026-10-20
+
+*Scope: B2B + B2C expansion master prompt v2. Read-only: no code, schema, config or dependency changes. Evidence base: repository at commit `86a072d` (repo now lives at `~/Desktop/Renco Technologies/tradepal-africa`), production read-only queries run 2026-10-20 (counts and env-var **names** only, never values), and provider documentation fetched 2026-10-20. Companion files: `docs/expansion/{decisions,pawapay-audit,merchant-provider-matrix,phase-plan,progress}.md`.*
+
+*Status vocabulary (§0.11 of the prompt): implemented / locally tested / sandbox verified / partner approved / production configured / production activated. "Working" below means implemented + locally tested unless stated; nothing in this audit is sandbox verified, partner approved, or production activated for any payment path.*
+
+## E.1 Stack as found (cited)
+
+| Item | Found | Evidence |
+|---|---|---|
+| Language / runtime | TypeScript 5.7, Node ≥20 (image `node:20-slim`), ESM | `package.json` (`engines`, `type`), `Dockerfile:14,34` |
+| HTTP | Express 4.21 (+ helmet, cors) | `package.json`; `src/server.ts` |
+| ORM / DB | Prisma 6.19.3 on PostgreSQL; 13 additive migrations (2026-07-10 → 2026-08-21), 34 models + 22 enums | `prisma/schema.prisma`, `prisma/migrations/*` |
+| Queue / cache | BullMQ 5 on Redis (ioredis) | `package.json`; `src/queue/*`, `src/worker.ts` |
+| Validation | zod 3.24 (AI output schemas) | `src/ai/schema.ts` |
+| AI | Anthropic SDK 0.68 (`claude-haiku-4-5` default) + DeepSeek provider (`deepseek-v4-flash`) behind a provider abstraction, model registry, per-call usage ledger | `src/ai/provider.ts:69-76`, `src/ai/deepseekProvider.ts`, `src/ai/modelRegistry.ts`, `prisma` `AiUsageLedger` |
+| Tests | vitest 2.1 + PGlite (in-process Postgres over the wire protocol) | `tests/helpers/db.ts`; 61 files / 677 tests |
+| Hosting | Railway project `noble-dedication`: 5 app services (`TradePal-Africa` web, `worker`, `subscription-expiry-worker`, `business-digest-worker`, `payment-request-expiry-worker`) + Postgres + Redis; one `Dockerfile`, command per service | `docker-compose.yml`, `Dockerfile:51`, `railway list` |
+| Web | Astro landing (Vercel, git-deployed); React/Vite admin SPA (Vercel, **not** git-connected; manual `vercel deploy`) | `landing/`, `admin-frontend/` |
+| WhatsApp | Meta WhatsApp Cloud API called directly (`graph.facebook.com/v21.0`), single shared business number; no BSP | `src/whatsapp/outboundGateway.ts:106`, `src/whatsapp/mediaGateway.ts:24` |
+| LOC | ~13.5k src, ~13.7k tests | `wc -l` |
+
+## E.2 "Known facts" verification
+
+| Owner-reported fact | Verdict | Evidence / divergence |
+|---|---|---|
+| Prisma/Postgres with tenant-isolation helpers | **Confirmed, app-layer only** | `src/db/tenantScope.ts:10-44` (Prisma client extension). No Postgres RLS, triggers or DB-level immutability anywhere (`grep` of all 13 migrations: none). See E.6. |
+| Railway, five services | **Confirmed** | plus Postgres and Redis = 7 Railway services |
+| AI abstraction, Anthropic + DeepSeek, routing, metering, quotas, cost controls | **Confirmed with a nuance** | DeepSeek is the **live primary** (worker has `DEEPSEEK_API_KEY`, `AI_PROVIDER_DEEPSEEK_ENABLED`; flag `aiProviderDeepseek` default on; `AiUsageLedger`: 4 COMMIT rows to 2026-10-18), Anthropic is fallback. Budgets are **record-only** (`recordAiBudgetObservation`, `enforcementEnabled` hard-coded `false`, `src/messageDispatcher.ts`), so "cost controls" observe and alert but do not enforce. |
+| Slash commands + free-text AI parse + onboarding | **Confirmed** | `src/commands/commandRouter.ts`, `src/messageDispatcher.ts`, `src/onboarding/onboardingFlow.ts`. Also added 2026-10-18: list entry (`src/ai/listEntry.ts`), typo-tolerant command words (`src/commands/bareCommands.ts`). |
+| Append-only ledger; webhook idempotency | **Confirmed at app layer** | `tenantScope.ts:44,96` blocks Transaction update/delete in the Prisma extension; reversal via `reversalOfTransactionId` (`schema.prisma` Transaction). Idempotency: `WebhookEvent.waMessageId @unique` + re-drive sweep (`src/whatsapp/redrive.ts`, `src/queue/webhookRedrive.ts`). **Not DB-enforced**: on 2026-10-18 raw SQL `DELETE` on Transaction/TransactionItem/InventoryMovement succeeded in production (test-shop cleanup, see E.14). |
+| Meta-policy fix for customer reminders; African data-protection compliance | **Confirmed** | KQ2 in this file (lines 26-34, 162): outbound gateway refuses any non-registered-merchant number (`src/whatsapp/outboundGateway.ts` `assertRegisteredMerchant`); `/remind` returns text for the merchant to forward. Deletion lifecycle: `DeletionRequest`, `/forgetcustomer`, admin resolve routes. |
+| pawaPay code exists, disabled pending tests | **Confirmed, but it is the wrong flow** | `src/pawapay/*`, `src/domain/pawapayCollection.ts`. It implements **merchant → customer sales collection** (`/collect`), not subscriptions. See `docs/expansion/pawapay-audit.md`. `PAWAPAY_API_TOKEN` is set on **no** production service. |
+| `PHASE_0_FINDINGS.md` has a standing policy against inventing unreviewed Krio/Pidgin/Sheng/Twi strings | **Partly** | The file has Krio/Pidgin ASR findings and ADR-3 (KQ4, lines 64-72, 128) but no explicit rule about inventing UI strings. The code has **no** Krio/Pidgin strings and **no** localization framework: every bot reply is a hard-coded English constant (e.g. `CLARIFICATION_REPLY`, `HELP_ENTRIES` in `commandRouter.ts`/`messageDispatcher.ts`). |
+| Commit `dfe8bb6` classifies AI billing/auth errors as non-retryable | **Confirmed** | `git show dfe8bb6`: `src/ai/provider.ts` (+37, `isAiProviderConfigurationError`), `src/messageDispatcher.ts`, tests. |
+| Thin production corpus (~41 inbound, ~1 free-text attempt) | **Stale** | 2026-10-20: **111** inbound webhook events (2026-07-24 → 2026-10-18), 59 from `232…` numbers, 4 merchants, 18 AI-parse rows across 3 shops. |
+
+## E.3 Production health gate (answers)
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Is the live AI key funded; last successful production free-text parse? | **Yes.** Last successful parse (validated, non-rejected) **2026-10-18 21:01:55Z**; DeepSeek `COMMIT` rows through 2026-10-18; Anthropic key present on all 5 services. Transaction-creating (`AUTO_LOGGED`) parses in the current data: **1** (2026-08-21); 15 of 18 rows are `REJECTED`. (Rows from my own 2026-10-18 test shops were deleted, so they are not in these counts.) | prod `AiParseLog`, `AiUsageLedger` |
+| Are `ALERT_EMAIL_API_KEY/FROM/TO` set on all Railway services? | **Yes, 3/3 on all 5 services.** A test alert was delivered 2026-10-09. Caveats: sender is Resend's shared `onboarding@resend.dev` (delivers only to the Resend account owner's address) → **single recipient, no verified domain**. | `railway variables` names; `src/config/monitoringEnv.ts` |
+| External heartbeat / dead-man's switch independent of Railway and Anthropic? | **No.** No uptime monitor, heartbeat or dead-man's switch in the repo or config; only Railway's `/` health check. **Pre-activation dependency, owner action.** | `grep` (heartbeat/uptime/healthchecks/betterstack): no hits |
+
+**Blocker 1 (silent failure) status:** *closed for email alerts to one inbox*; *open* for outage detection (no external heartbeat).
+
+## E.4 Capability matrix
+
+`W` working (implemented + locally tested) · `P` partial · `M` missing · `U` unknown · `X` implemented but disabled / not activated
+
+| Area | Capability | St. | Evidence / note |
+|---|---|---|---|
+| Identity | Business = tenant; merchant identified by WhatsApp number (1 business per phone) | W | `Merchant.phoneNumber @unique` |
+| Identity | Organization with multiple shops; one user in many orgs; explicit active org/shop | M | Business is org and shop at once; no Shop/Membership tables |
+| Identity | Consumer identity / merchant-private customer records | P | `Customer` is a name-only private record (no phone, `riskLabel`, anonymize flag); no consumer identity |
+| Authz | Merchant roles | P | `MerchantRole` OWNER/STAFF only (`schema.prisma`); no permission matrix |
+| Authz | Admin roles | W | `AdminRole` SUPER_ADMIN/ANALYST/SUPPORT, `requireAdminRole` on write routes (`adminRoutes.ts`) |
+| Authz | Step-up auth for sensitive admin writes | M | none found; login rate limiter only (`adminRoutes.ts:166-199`) |
+| Tenancy | Prisma extension scopes 22 models by `businessId` | W | `tenantScope.ts:10-34`, `tests/tenantScope.test.ts` |
+| Tenancy | Postgres RLS / DB-level immutability | M | none (no RLS, triggers or policies in migrations) |
+| Catalog | Products, variants, units, pack conversions, price lists | M | `InventoryItem` = name, optional unit, `estimatedStockQty`, `lowStockThreshold`, `priceMinor` |
+| Inventory | Movement rows with source | P | `InventoryMovement` exists, but `estimatedStockQty` is a mutable counter incremented in place (`src/domain/inventory.ts` `applyStockMovement`), not derived |
+| Inventory | Reservations, available vs on-hand, transfers, counts, in-transit, costing | M | none |
+| Inventory | Undo restores stock | W | `reverseTransaction` (fixed 2026-10-18, `93f5a3e`) |
+| Inventory | Negative-stock policy | P | negative counts allowed silently; displayed as "no stock recorded yet (N sold)" (`commandRouter.ts` `handleStock`) |
+| Ledger | Append-only single-entry `Transaction` with reversals | W (app layer) | `tenantScope.ts:44`; reversal in `src/domain/ledger.ts` |
+| Ledger | Double-entry journals, accounts, balances | M | none |
+| Money | BigInt minor units + currency on every amount | W | `src/domain/money.ts`, `Transaction.amountMinor BigInt` |
+| Debts | Debts, payments, FIFO allocation, `/debts` overview, due dates | W | `src/domain/debtBook.ts`, `/debt … due YYYY-MM-DD` (fixed 2026-10-18) |
+| Payables | Supplier payables / AP | M | `Supplier` = name + note only |
+| Accounting | Daily summary | W | `/today` (`src/domain/dailySummary.ts`) |
+| Accounting | Cash close, reconciliation, statement import | M | none; SMS-alert matching exists (`MobileMoneyAlert`, `/momo`), flag off |
+| Reports | AR aging, inventory valuation, margin, exports | M | only `/today`, `/debts`, weekly digest (flag off, template env unset) |
+| B2B | Quotes, POs, receipts, invoices, linked buyer/seller records | M | none |
+| B2C | Storefront, checkout, orders, marketplace, moderation | M | none (landing page only; marketing copy marks several features "coming soon") |
+| Reorder | Rules, suggestions, forecasting, scoring | M | `grep` reorder/forecast/demand: no code |
+| Payments | Flutterwave hosted checkout for **TradePal subscriptions** (`/upgrade`) | X | `src/domain/payments.ts:103,219`; flag `paymentCollection` off; no keys in prod |
+| Payments | Flutterwave payment links **merchant → customer** (`/paylink`) | X | `src/domain/paymentRequests.ts:60,86`; flag `customerPaymentLinks` off; no keys in prod |
+| Payments | pawaPay collections **merchant → customer** (`/collect`) | X | `src/domain/pawapayCollection.ts`, `commandRouter.ts:829`; no token in prod. **Conflicts with decision 5.** |
+| Payments | pawaPay **subscription** billing | M | no pawaPay code touches `Subscription`/`Invoice` |
+| Billing | Plans, subscriptions, invoices, expiry worker, quota | P | single price/currency per `Plan` (STARTER ₦5,000 NGN, FREE); no plan versions or per-country prices; quota flag off; 0 subscriptions, 0 invoices in prod |
+| Messaging | WhatsApp Cloud API ingress with HMAC (`x-hub-signature-256`) + dedupe + re-drive | W | `src/whatsapp/signature.ts`, `webhookRoute.ts:38`, `WebhookEvent` |
+| Messaging | Outbound limited to registered merchants (Standard #9) | W | `outboundGateway.ts` `assertRegisteredMerchant`; one narrow exception: unsupported-country notice (`sendUnsupportedCountryNotice`, added 2026-10-18) |
+| Messaging | Templates | P | 6 optional env-driven template names (`WHATSAPP_*_TEMPLATE_NAME`); Meta account has `subscription_lapse_notice`, `hello_world`, `merchant_check_in` approved; weekly-digest/staff/deletion/payment templates not created |
+| Consent | Merchant terms + data-processing consent log | W | `ConsentType` ONBOARDING_TERMS, DATA_PROCESSING (`schema.prisma:834`) |
+| Consent | Consumer messaging consent, opt-out/STOP handling, marketing vs transactional | M | no opt-out handling anywhere (`grep`) |
+| AI | Zod-validated parse → deterministic apply; AI never writes SQL | W | `src/ai/parse.ts`, `applyParsedIntent.ts` |
+| AI | Confirmation bound to exact action/amount/actor/expiry before consequential change | M | high-confidence (≥0.7) entries are applied immediately; safety is `/undo`, not a pre-confirm |
+| AI | Clarification dialogue | P | rejection reply only; multi-line help added 2026-10-18 |
+| i18n | Localization framework | M | English constants only |
+| Country | Country configuration | P | hard-coded array `src/config/countries.ts` (6 countries) *and* DB `Country/CountryConfig/Currency` seeded by migrations; both must be edited to add a country |
+| Admin | Console | P | 8 pages, ~26 routes (E.10) |
+| Ops | Incident email alerting | W | `src/monitoring/alerts.ts` |
+| Ops | Dashboards, dead-letter replay UI, external heartbeat, audit trail coverage | P/M | `AuditLog` table + `recordAuditLog` in 12 domain modules, but **0 rows in prod**; no health panel |
+| Offline/PWA | Offline drafts, storefront performance budgets | M | none |
+| Tests | Unit + PGlite integration | W | 677 pass. DB-concurrency, provider contract and sandbox tests: **U/M** (PGlite is single-session; concurrent-client tests are flaky by design, noted in earlier phases) |
+
+## E.5 Data model reality vs §7 entities
+
+Existing models (34 models, 22 enums; models listed): Country, Currency, Language, CountryConfig, Business, Merchant, User, AdminUser, RevokedAdminToken, Transaction, TransactionItem, Customer, Supplier, Debt, DebtPayment, InventoryItem, InventoryMovement, Reminder, WhatsAppMessage, WebhookEvent, MobileMoneyAlert, AiParseLog, AiUsageLedger, Plan, Subscription, Invoice, PaymentProvider, PaymentRequest, PawaPayDeposit, AuditLog, FeatureFlag, BusinessFeatureFlag, ConsentLog, DeletionRequest.
+
+| §7 entity | Reality |
+|---|---|
+| Organization, Shop, Membership, Permission | **Gap.** `Business` plays organization+shop; `Merchant` row = (phone, role) for one business. |
+| ConsumerIdentity, MerchantCustomer | `Customer` (merchant-private, name only). ConsumerIdentity missing. |
+| SupplierRelationship | `Supplier` (name, note). No cross-tenant link. |
+| Product, Variant, UnitDefinition, PackConversion, Listing, PriceList, PriceRule | **Gap.** `InventoryItem` only. |
+| Quote, PurchaseOrder, SalesOrder, OrderLine, Invoice, CreditNote, GoodsReceipt, Fulfillment, Return | **Gap.** Existing `Invoice` = TradePal subscription invoice only. `Transaction`+`TransactionItem` = a posted sale/purchase. |
+| StockMovement, StockReservation, StockCount, Transfer, CostLayer | `InventoryMovement` only. |
+| JournalEntry, JournalLine, Account, PaymentAllocation, CashSession, ReconciliationItem | **Gap.** `DebtPayment` allocates debt payments; `MobileMoneyAlert` proposes SMS matches. |
+| MerchantProviderConnection/PaymentIntent/Attempt/Refund/Settlement | **Gap.** `PaymentRequest` (+`PawaPayDeposit`) is the closest, and it is not merchant-scoped credentials. |
+| SubscriptionPlanVersion, Subscription, BillingInvoice, BillingPaymentAttempt, BillingRefund, EntitlementEvent | `Plan`, `Subscription`, `Invoice` exist; no plan versions, attempts, refunds or entitlement events. |
+| MessageInbox, ConversationContext, ConsentRecord, ProposedAction, AuditEvent, OutboxEvent | `WebhookEvent` (inbox), `WhatsAppMessage`, `ConsentLog`, `AuditLog` exist. No ConversationContext, ProposedAction or outbox. |
+| CountryConfiguration, CapabilityRecord, FeatureFlag, SupportCase, ListingModerationCase | `CountryConfig`, `FeatureFlag`/`BusinessFeatureFlag` exist; others missing. |
+
+Invariants (§7): minor units ✓ (BigInt); UTC `timestamptz` ✓; snapshotting accepted documents ✗ (no documents); balanced journals ✗ (no journals); provenance labels ✗ (only `rawMerchantText`, `whatsappMessageId` on Transaction); constraint-level concurrency guards partial (unique indexes on `waMessageId`, `reversalOfTransactionId`, `InventoryItem(businessId, normalizedName)`).
+
+## E.6 Tenancy and authorization audit
+
+- Isolation is a **Prisma client extension** (`getTenantScopedClient`): 22 models get `businessId` merged into `where`, creates are validated, `Transaction` update/delete throws (`tenantScope.ts:44-110`). Code that holds the raw `PrismaClient` (admin routes, workers, scripts) is **not** protected by it.
+- **No database-level backstop.** No RLS, no triggers, no `CHECK`s on append-only tables. Evidence that this is real, not theoretical: production test data was deleted with plain SQL on 2026-10-18. Scenario 29 (§20: hard delete rejected at DB level) cannot pass today.
+- Not in the scoped set: `Business` (the tenant itself), `Plan`, reference data, `AdminUser`. `Invoice` has no `businessId` (reached through `Subscription`), so it is not mechanically scoped.
+- Phone numbers are normalized only to digits (`replace(/\D/g, "")`); country is inferred from calling-code prefix (`getCountryByPhoneNumber`), which §6 says must not be treated as proof of country/currency/operator. Today that prefix inference *is* the onboarding country decision (with a documented operator override `ONBOARDING_TEST_NUMBER_COUNTRIES`).
+
+## E.7 Ledger, inventory and accounting audit
+
+See matrix. Key gaps against §7-§8, §11: single-entry ledger (no balanced journals), mutable stock counter, no costing, no reservations/available, no daily cash close, no provenance taxonomy, profit is not computed (good: the bot reports sales/expenses/net only, `dailySummary.ts`, and `Net` is sales minus expenses — label risk noted for §11 "never present sales minus cash expenses as profit"; the reply currently says "Net").
+
+## E.8 Payments audit (summary)
+
+Full detail in `docs/expansion/pawapay-audit.md`. Headlines:
+
+1. **pawaPay is used only for merchant → customer collection (`/collect`)**: the exact use decision 5 forbids. 0 `PawaPayDeposit` rows in production; no token set; disabled by `customerPaymentLinks` flag (off) and missing credentials.
+2. **pawaPay is not used for subscriptions at all.** Subscription checkout is Flutterwave (`payments.ts`), also disabled (flag `paymentCollection` off, no keys).
+3. **Flutterwave serves both purposes with one account/credential set** (`FLUTTERWAVE_SECRET_KEY`, `paymentsEnv.ts:17`): `payments.ts` (subscriptions) and `paymentRequests.ts` (merchant → customer links). No sub-account, split or settlement-to-merchant logic exists (`grep`), so a paid customer link would credit **TradePal's** account and only post a ledger row for the merchant. That violates decisions 6-7 in spirit and would have no payout path.
+4. pawaPay callback handling does **not** implement the documented RFC 9421 signature/content-digest verification; it re-fetches the deposit from pawaPay's authenticated API instead (`pawapayCollection.ts:295`, `webhookRoute.ts:18`). That is acceptable under the prompt's "if weak, query an authenticated status endpoint" clause but is not the documented signed-callback model, and the route returns 500 on failure so pawaPay retries (matches the documented 8 retries / ~25 min).
+5. Flutterwave's own docs show **no Sierra Leone mobile-money collections** (bank payouts only); pawaPay lists **Orange** for Sierra Leone (not Afrimoney, although `src/pawapay/client.ts:7-9` comments claim `AFRIMONEY_SLE`). See `merchant-provider-matrix.md`.
+
+## E.9 WhatsApp, consent and templates
+
+- Single shared number (+1 825-823-9920, WABA "TradePal Africa", `1334282442244975`); merchant resolved from `from` phone (`findMerchantByPhoneNumber`), not from a shop context link. There is no consumer entry path.
+- Unsupported-country senders get one fixed notice (once per number per day; in-memory, hashed key; `src/whatsapp/unsupportedCountryNotice.ts`).
+- Message classes governed today: reactive replies in the 24h window (free text); template sends via `sendWhatsAppTemplateMessage` only to registered merchants. No consumer-directed class exists, no marketing class, no opt-out record.
+- Existing consent/template layer to reuse for §14: `ConsentLog` (+ `textVersion`, `channel`), `assertRegisteredMerchant`, `sendWithRetry`, template env names, `FeatureFlag`. **It does not model consumer consent**; extending it is new work, not reuse.
+
+## E.10 Existing admin surfaces
+
+React SPA (`admin-frontend`): Login, Businesses (+detail), Deletion requests, Audit logs, Mobile-money alerts, Plans, Feature flags. API (`src/admin/adminRoutes.ts`): login/logout, businesses, subscription set/cancel, suspend/reinstate, per-business flag overrides, global flag defaults, invoices, payment requests, deletion-request resolve, inventory backfill, merchant phone-number change, maintenance sweeps. Roles: `SUPER_ADMIN`, `ANALYST` (read-only), `SUPPORT`. 2 admin users in prod. Gaps vs §18: no overview/health panel, no transactions/orders panel, no step-up auth, support-access reason logging absent, no DB-level delete protection, `AuditLog` empty in prod (feature-flag changes made by script were not audited either).
+
+## E.11 Promises in copy that expansion changes
+
+| Where | Text | Needed change |
+|---|---|---|
+| `landing/src/components/FAQ.astro:16` | "Never. TradePal only ever replies to you, the merchant…" | must be revised before any consumer-facing messaging |
+| `src/ai/applyParsedIntent.ts:197` | "Forward this receipt to your customer yourself — TradePal cannot message customers directly." | revise once consumer messaging exists |
+| `landing/src/pages/privacy.astro` | data shared only "when it's necessary to deliver a feature" | needs consumer data, payment-provider and marketplace disclosures |
+| `landing/src/components/Features.astro`, `Pricing.astro` | "Coming soon" tags on payment links, catalog, momo, team, Starter | reconcile with the phase plan |
+| `Plan` STARTER ₦5,000 and landing price copy | NGN only | per-country plan prices not modelled |
+
+## E.12 Release 1 reconciliation (§2.11)
+
+Exists and reusable: `STOCK_ADJUSTMENT` AI intent; low-stock thresholds (`/lowstock`, `InventoryItem.lowStockThreshold`); itemised sale receipts; weekly business-health digest worker (`businessDigest.ts`, flag off); inventory backfill (`/admin/.../inventory/backfill`); AI usage ledger. **Does not exist:** any intelligence engine, reorder rule, forecast, days-of-cover or demand code. Reorder (§9) is therefore a net-new build; the digest and low-stock alert are the only adjacent code to reuse.
+
+## E.13 Baseline test results
+
+| Suite | Command | Result |
+|---|---|---|
+| Typecheck | `npx tsc --noEmit -p .` | exit 0 |
+| API tests | `npx vitest run` (from a space-free copy, see below) | **61 files / 677 tests pass** |
+| Admin tests | `cd admin-frontend && npx vitest run` | 5 files / 26 tests pass |
+
+**Pre-existing defect found (not introduced by anyone in this audit):** `tests/helpers/db.ts:8,14-15` interpolates `SCHEMA_PATH` unquoted into an `execSync` shell command (`prisma migrate diff … --to-schema-datamodel ${SCHEMA_PATH}`). When the repo path contains a space, every database-backed test fails to start with "Could not load `--to-schema-datamodel` from provided path `../../Renco`". The repo moved on 2026-10-19/20 into `Desktop/Renco Technologies/`, which exposed it. Baseline above was taken from a space-free scratch copy so it reflects code health, not the path problem. **Fix is a one-line quoting change, outside Phase 0's read-only scope; proposed as pre-Phase-1 hygiene.**
+
+## E.14 Corrections to my own earlier statements (full transparency)
+
+1. **AI calibration.** On 2026-10-18 I set the auto-log confidence bar to 0.7 after measuring 14 messages × 3 against the **Anthropic** model and called it "the production model". Production's primary parser is **DeepSeek**; the real production confidences I had seen (0.82 accepted, 0.7, 0.55, 0.4) came from DeepSeek. 0.7 still separates those observed samples correctly, but the evidence is 18 rows, not a calibration. Recommend re-running the same measurement through the DeepSeek provider before any further threshold changes.
+2. **`/collect`.** I built pawaPay merchant-to-customer collection earlier in this engagement (commits `7b6c70b` scaffold and `adbe872` finish, 2026-10-09; migration `20260820000000_pawapay_deposits`). It conflicts with the owner's decision 5 (pawaPay = TradePal subscriptions only). It is disabled in production and holds no data, but it should be quarantined, not activated (see audit).
+3. **Message text.** I said message text is not stored. It is (`WebhookEvent.payload`, `AiParseLog.rawInput`); corrected 2026-10-18.
+4. **Raw SQL in production.** On 2026-10-18 I deleted two test shops (and their rows) from production with direct SQL, inside transactions, after listing the rows first and with your instruction. Those deletes bypassed the Prisma append-only guard, which is exactly the DB-level gap flagged in E.6.
+
+## E.15 Blockers and decisions needed before Phase 1
+
+See `docs/expansion/phase-plan.md` §"Owner decisions required". Summary: (1) approve quarantining pawaPay `/collect`; (2) decide Flutterwave's role (subscriptions? retire?) and quarantine merchant paylinks until proceeds settle to merchants; (3) approve Organization/Shop/Membership direction; (4) approve DB-level immutability + RLS as part of Phase 1; (5) approve the one-line test-helper path fix; (6) owner action: external heartbeat; (7) owner action: verified alert sender/domain and a second recipient; (8) relink the Railway CLI for the new folder location (local config only).
+
+**End of Expansion Audit — Phase 0.**
