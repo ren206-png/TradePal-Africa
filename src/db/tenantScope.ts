@@ -7,7 +7,7 @@ import type { PrismaClient } from "@prisma/client";
  * Reference/master data (Country, Currency, Language, Plan, ...) and
  * AdminUser are deliberately excluded: they are not tenant data.
  */
-const TENANT_SCOPED_MODELS = new Set([
+export const TENANT_SCOPED_MODELS = new Set([
   "Merchant",
   "User",
   "Transaction",

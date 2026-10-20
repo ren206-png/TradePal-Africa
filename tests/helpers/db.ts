@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
@@ -18,8 +19,27 @@ function getDdl(): string {
   return cachedDdl;
 }
 
+/**
+ * The database-level protection (append-only triggers, delete protection, RLS policies) lives in a migration so
+ * production gets it; the test DB is built from the schema, so tests apply that same SQL on top. It is ON by
+ * default so every suite exercises application code against the real triggers; set TEST_DB_PROTECTION=0 to
+ * compare against an unprotected database.
+ */
+export const DB_PROTECTION_MIGRATION = "20261020000100_phase1_db_protection";
+export function dbProtectionSql(): string {
+  const full = fs.readFileSync(path.resolve(process.cwd(), "prisma/migrations", DB_PROTECTION_MIGRATION, "migration.sql"), "utf8");
+  // Drop the generated ALTER TABLE (the schema DDL already has the column); keep everything from the hand-written section on.
+  return full.slice(full.indexOf("-- ====="));
+}
+
 export interface TestDb {
   prisma: PrismaClient;
+  /**
+   * The underlying in-process Postgres. Use it to PROVOKE a database error on purpose (a trigger or policy
+   * rejection): through the socket the test server drops the connection after an error and Prisma's pool then
+   * fails later statements, while calling the instance directly leaves everything usable.
+   */
+  db: PGlite;
   teardown: () => Promise<void>;
 }
 
@@ -45,6 +65,7 @@ export async function createTestDb(): Promise<TestDb> {
   const raw = new pg.Client({ connectionString: url });
   await raw.connect();
   await raw.query(getDdl());
+  if (process.env["TEST_DB_PROTECTION"] !== "0") await raw.query(dbProtectionSql());
   await raw.end();
 
   const prisma = new PrismaClient({ datasourceUrl: url });
@@ -55,5 +76,18 @@ export async function createTestDb(): Promise<TestDb> {
     await db.close();
   };
 
-  return { prisma, teardown };
+  return { prisma, db, teardown };
+}
+
+/**
+ * TEST SETUP ONLY: moves a Transaction's createdAt into the past (e.g. "last month's sale") for date-window tests.
+ * Production code can never do this: the database rejects any UPDATE on Transaction. The trigger is disabled for
+ * this one statement inside a transaction and re-enabled before it commits.
+ */
+export async function backdateTransaction(prisma: PrismaClient, transactionId: string, createdAt: Date): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe('ALTER TABLE "Transaction" DISABLE TRIGGER USER');
+    await tx.$executeRaw`UPDATE "Transaction" SET "createdAt" = ${createdAt} WHERE id = ${transactionId}`;
+    await tx.$executeRawUnsafe('ALTER TABLE "Transaction" ENABLE TRIGGER USER');
+  });
 }

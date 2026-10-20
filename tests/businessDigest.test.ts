@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
-import { createTestDb, type TestDb } from "./helpers/db.js";
+import { createTestDb, type TestDb, backdateTransaction } from "./helpers/db.js";
 import {
   sendWeeklyBusinessDigests,
   computeWeeklyDigest,
@@ -74,7 +74,7 @@ describe("computeWeeklyDigest / buildWeeklyDigestMessage", () => {
       currencyCode: "NGN",
       paymentStatus: "PAID",
     });
-    await prisma.transaction.update({ where: { id: sale.id }, data: { createdAt: withinWeek } });
+    await backdateTransaction(prisma, sale.id, withinWeek);
 
     const expense = await recordTransaction(scoped, {
       businessId,
@@ -83,7 +83,7 @@ describe("computeWeeklyDigest / buildWeeklyDigestMessage", () => {
       currencyCode: "NGN",
       paymentStatus: "PAID",
     });
-    await prisma.transaction.update({ where: { id: expense.id }, data: { createdAt: withinWeek } });
+    await backdateTransaction(prisma, expense.id, withinWeek);
 
     // Outside the week entirely — must not be counted.
     await recordTransaction(scoped, {
@@ -157,7 +157,7 @@ describe("computeWeeklyDigest / buildWeeklyDigestMessage", () => {
       currencyCode: "NGN",
       paymentStatus: "PAID",
     });
-    await prisma.transaction.update({ where: { id: lastWeekSale.id }, data: { createdAt: withinPreviousWeek } });
+    await backdateTransaction(prisma, lastWeekSale.id, withinPreviousWeek);
 
     const thisWeekSale = await recordTransaction(scoped, {
       businessId,
@@ -166,7 +166,7 @@ describe("computeWeeklyDigest / buildWeeklyDigestMessage", () => {
       currencyCode: "NGN",
       paymentStatus: "PAID",
     });
-    await prisma.transaction.update({ where: { id: thisWeekSale.id }, data: { createdAt: withinCurrentWeek } });
+    await backdateTransaction(prisma, thisWeekSale.id, withinCurrentWeek);
 
     const digest = await computeWeeklyDigest(scoped, "Africa/Lagos", NOW);
 
@@ -193,7 +193,7 @@ describe("computeWeeklyDigest / buildWeeklyDigestMessage", () => {
       currencyCode: "NGN",
       paymentStatus: "PAID",
     });
-    await prisma.transaction.update({ where: { id: thisWeekSale.id }, data: { createdAt: withinCurrentWeek } });
+    await backdateTransaction(prisma, thisWeekSale.id, withinCurrentWeek);
 
     const digest = await computeWeeklyDigest(scoped, "Africa/Lagos", NOW);
     expect(digest.previousWeekSummary.transactionCount).toBe(0);

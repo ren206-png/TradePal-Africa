@@ -90,6 +90,9 @@ model Business {
   // by messageDispatcher.ts's own gate, not just by hiding admin UI.
   status           BusinessStatus @default(ACTIVE)
   suspendedAt      DateTime?      @db.Timestamptz()
+  /// True only for synthetic/test/demo organizations. The ONLY businesses whose financial rows may ever be hard-deleted
+  /// (database triggers enforce this); set at creation and immutable afterwards. See docs/expansion/db-protection.md.
+  isSynthetic      Boolean        @default(false)
   suspensionReason String?
   createdAt        DateTime       @default(now()) @db.Timestamptz()
   updatedAt        DateTime       @updatedAt @db.Timestamptz()
