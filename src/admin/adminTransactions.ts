@@ -187,6 +187,72 @@ export function createAdminTransactionsRouter(prisma: PrismaClient, jwtSecret: s
     }),
   );
 
+  // Expansion Phase 3: B2B documents of one business, as that business holds them (its own rows only).
+  router.get(
+    "/businesses/:id/trade-orders",
+    requirePlatformPermission("admin:view_merchant_financials"),
+    gate,
+    asyncHandler(async (req, res) => {
+      const businessId = req.params["id"] as string;
+      if (!(await businessOr404(businessId))) {
+        res.status(404).json({ error: "Business not found." });
+        return;
+      }
+      const pagination = parsePaginationParams(req.query as Record<string, unknown>);
+      const rows = await prisma.tradeOrder.findMany({
+        where: { businessId }, orderBy: { createdAt: "desc" }, take: pagination.take + 1, skip: pagination.skip,
+        include: { lines: { orderBy: { lineNo: "asc" } }, shipments: { select: { number: true, status: true } } },
+      });
+      const partners = await prisma.tradePartner.findMany({ where: { businessId, id: { in: rows.map((r) => r.partnerId) } }, select: { id: true, name: true, linkStatus: true } });
+      const { items, pagination: meta } = paginate(rows, pagination);
+      res.json({
+        orders: items.map((o) => {
+          const p = partners.find((x) => x.id === o.partnerId);
+          return {
+            id: o.id, reference: o.reference, side: o.side, partner: p?.name ?? null, linked: p?.linkStatus === "LINKED", acceptance: o.acceptance, movement: o.movement,
+            totalMinor: o.totalMinor.toString(), currencyCode: o.currencyCode, validUntil: o.validUntil, acceptedAt: o.acceptedAt, createdAt: o.createdAt, counterpartOrderId: o.counterpartOrderId,
+            lines: o.lines.map((l) => ({ lineNo: l.lineNo, sku: l.sku, unit: l.unit, quantity: l.quantity, baseQuantity: l.baseQuantity, shippedBase: l.shippedBase, receivedBase: l.receivedBase, unitPriceMinor: l.unitPriceMinor.toString(), lineTotalMinor: l.lineTotalMinor.toString() })),
+            shipments: o.shipments,
+          };
+        }),
+        pagination: meta,
+      });
+    }),
+  );
+
+  router.get(
+    "/businesses/:id/trade-invoices",
+    requirePlatformPermission("admin:view_merchant_financials"),
+    gate,
+    asyncHandler(async (req, res) => {
+      const businessId = req.params["id"] as string;
+      if (!(await businessOr404(businessId))) {
+        res.status(404).json({ error: "Business not found." });
+        return;
+      }
+      const pagination = parsePaginationParams(req.query as Record<string, unknown>);
+      const rows = await prisma.tradeInvoice.findMany({
+        where: { businessId }, orderBy: { issuedAt: "desc" }, take: pagination.take + 1, skip: pagination.skip,
+        include: { payments: { orderBy: { createdAt: "asc" } }, credits: true, order: { select: { reference: true } } },
+      });
+      const { items, pagination: meta } = paginate(rows, pagination);
+      const now = new Date();
+      res.json({
+        invoices: items.map((i) => {
+          const outstanding = i.totalMinor - i.creditedMinor - i.paidMinor;
+          return {
+            id: i.id, number: i.number, externalNumber: i.externalNumber, side: i.side, order: i.order.reference, totalMinor: i.totalMinor.toString(), creditedMinor: i.creditedMinor.toString(),
+            paidMinor: i.paidMinor.toString(), outstandingMinor: outstanding.toString(), currencyCode: i.currencyCode, dueDate: i.dueDate, issuedAt: i.issuedAt,
+            paymentStatus: outstanding === 0n ? "PAID" : i.paidMinor > 0n ? "PARTIALLY_PAID" : "UNPAID", overdue: outstanding > 0n && i.dueDate !== null && i.dueDate < now,
+            payments: i.payments.map((p) => ({ id: p.id, direction: p.direction, amountMinor: p.amountMinor.toString(), method: p.method, evidence: p.evidence, state: p.state, reference: p.reference, provider: p.provider, reason: p.reason, createdAt: p.createdAt })),
+            creditNotes: i.credits.map((c) => ({ number: c.number, amountMinor: c.amountMinor.toString(), reason: c.reason })),
+          };
+        }),
+        pagination: meta,
+      });
+    }),
+  );
+
   // Void = reverse. Creates a reversal transaction, reverses the stock it moved and (flag on) a balanced reversal journal.
   router.post(
     "/businesses/:id/transactions/:txnId/reverse",

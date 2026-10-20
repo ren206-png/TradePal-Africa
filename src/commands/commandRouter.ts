@@ -141,6 +141,8 @@ const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
   { flag: FLAG_CATALOG, line: "/pack <sku> <pack name> <how many> - say how many pieces are in a carton, bag or box" },
   { flag: FLAG_STOCK_V2, line: "/receive <sku> <quantity> [pack] [cost <price>] - record stock that arrived" },
   { flag: FLAG_STOCK_V2, line: "/count <sku> <how many> - count your stock, then /count approve" },
+  { flag: "reorderRules", line: "/reorder - see what to reorder and why; /reorder accept <number> makes a draft order (never sent by itself)" },
+  { flag: "tradeOrders", line: "/orders - your purchase and sales orders; /sendorder, /acceptorder, /shiporder, /receiveorder <order number>" },
   { line: "/help - show this message" },
 ];
 

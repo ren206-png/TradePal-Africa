@@ -7,6 +7,7 @@ import { platformPermissionsFor } from "../auth/permissions.js";
 import { evaluateHeartbeats, heartbeatEnabled, requiredHeartbeatServices } from "../monitoring/heartbeat.js";
 import { asyncHandler } from "./asyncHandler.js";
 import { createAdminTransactionsRouter } from "./adminTransactions.js";
+import { createAdminReorderRouter } from "./adminReorder.js";
 import { correlationIdOf } from "./adminAudit.js";
 import { verifyAdminPassword } from "./auth.js";
 import type { AuthenticatedAdminRequest } from "./authMiddleware.js";
@@ -46,6 +47,7 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
   const clock = options.now ?? (() => new Date());
 
   router.use(createAdminTransactionsRouter(prisma, jwtSecret));
+  router.use(createAdminReorderRouter(prisma, jwtSecret));
 
   router.get("/me/permissions", (req, res) => {
     const admin = (req as AuthenticatedAdminRequest).adminUser;

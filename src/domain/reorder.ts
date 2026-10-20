@@ -6,7 +6,7 @@ import { ensureDefaultShopFor } from "./shops.js";
 import { getStockLevel } from "./stock.js";
 import { TradeError } from "./trade/common.js";
 import { createPurchaseOrder } from "./trade/orders.js";
-import { resolveSharedPrice } from "./trade/partners.js";
+import { getSharedCatalog, resolveSharedPrice } from "./trade/partners.js";
 
 /**
  * Reorder suggestions, Tier 1 (expansion Phase 3, flag `reorderRules`). Deterministic and explainable: no model, no
@@ -251,7 +251,7 @@ export async function listOpenSuggestions(scoped: TenantScopedClient): Promise<(
  */
 export async function acceptSuggestion(
   prisma: PrismaClient,
-  input: { businessId: string; suggestionId: string; partnerId?: string; counterpartVariantId?: string; actor?: string; now?: Date },
+  input: { businessId: string; suggestionId: string; partnerId?: string; counterpartVariantId?: string; /** The supplier's own item code, for a linked supplier, when it cannot be worked out from earlier orders. */ supplierSku?: string; actor?: string; now?: Date },
 ) {
   const now = input.now ?? new Date();
   const scoped = getTenantScopedClient(prisma, input.businessId);
@@ -270,19 +270,32 @@ export async function acceptSuggestion(
   const pack = [...variant.packs].sort((a, b) => b.baseQuantity - a.baseQuantity).find((p) => p.baseQuantity <= s.suggestedBaseQty);
   const tries = pack ? [{ unit: pack.name, quantity: Math.ceil(s.suggestedBaseQty / pack.baseQuantity) }, { unit: undefined, quantity: s.suggestedBaseQty }] : [{ unit: undefined, quantity: s.suggestedBaseQty }];
 
+  let counterpartVariantId = input.counterpartVariantId;
+  if (partner.linkStatus === "LINKED" && !counterpartVariantId) {
+    // reuse what an earlier order with this supplier already established for this product
+    const earlier = await scoped.tradeOrderLine.findFirst({ where: { variantId: s.variantId, counterpartVariantId: { not: null }, order: { partnerId: partner.id, side: "BUY" } }, orderBy: { createdAt: "desc" } });
+    counterpartVariantId = earlier?.counterpartVariantId ?? undefined;
+    if (!counterpartVariantId && input.supplierSku && partner.linkId) {
+      const catalog = await getSharedCatalog(prisma, { buyerBusinessId: input.businessId, linkId: partner.linkId, at: now });
+      counterpartVariantId = catalog.find((c) => c.sku.toLowerCase() === input.supplierSku!.toLowerCase())?.sellerVariantId;
+      if (!counterpartVariantId) throw new TradeError("NOT_FOUND", `${partner.name} does not list an item with code ${input.supplierSku}.`);
+    }
+    if (!counterpartVariantId) throw new TradeError("INVALID", `Say which of ${partner.name}'s items this is: add "sku <their code>".`);
+  }
+
   let line: { unit: string | undefined; quantity: number; counterpartVariantId?: string; unitPriceMinor?: bigint } = tries[tries.length - 1]!;
-  if (partner.linkStatus === "LINKED" && input.counterpartVariantId) {
+  if (partner.linkStatus === "LINKED" && counterpartVariantId) {
     const active = partner.linkId ? await prisma.businessLink.findUnique({ where: { id: partner.linkId } }) : null;
     for (const t of tries) {
       try {
-        if (active) await resolveSharedPrice(prisma, { buyerBusinessId: input.businessId, linkId: active.id, sellerVariantId: input.counterpartVariantId, quantity: t.quantity, unit: t.unit ?? null, at: now, currencyCode: currency });
-        line = { ...t, counterpartVariantId: input.counterpartVariantId };
+        if (active) await resolveSharedPrice(prisma, { buyerBusinessId: input.businessId, linkId: active.id, sellerVariantId: counterpartVariantId, quantity: t.quantity, unit: t.unit ?? null, at: now, currencyCode: currency });
+        line = { ...t, counterpartVariantId };
         break;
       } catch {
         /* try the next unit */
       }
     }
-    if (!line.counterpartVariantId) line = { ...tries[tries.length - 1]!, counterpartVariantId: input.counterpartVariantId };
+    if (!line.counterpartVariantId) line = { ...tries[tries.length - 1]!, counterpartVariantId };
   }
   const order = await createPurchaseOrder(prisma, {
     businessId: input.businessId, partnerId: partner.id, currencyCode: currency, now,

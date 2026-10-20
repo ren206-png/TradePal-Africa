@@ -32,6 +32,11 @@ export const MERCHANT_PERMISSIONS = [
   "staff:manage",
   "settings:manage",
   "business:manage", //     org settings, shops, deletion
+  "trade:buy", //           purchase orders, goods receipts, reorder suggestions
+  "trade:sell", //          accept, quote and ship sales orders
+  "trade:payments", //      record and confirm payments on trade invoices
+  "trade:partners", //      trade partners, links, shared price lists, credit terms
+  "trade:credit_override", // go ahead despite a credit block (with a reason)
 ] as const;
 export type MerchantPermission = (typeof MERCHANT_PERMISSIONS)[number];
 
@@ -43,13 +48,14 @@ const MERCHANT_MATRIX: Readonly<Record<MembershipRole, ReadonlySet<MerchantPermi
     "sales:create", "sales:void", "expenses:create", "customers:manage", "debts:record", "debts:view",
     "inventory:view", "inventory:receive", "inventory:adjust", "prices:manage", "reports:view",
     "finance:close_day", "finance:export", "finance:reconcile", "payments:view", "staff:manage",
+    "trade:buy", "trade:sell", "trade:payments", "trade:partners",
   ]),
   SALES_CLERK: new Set<MerchantPermission>([
     "sales:create", "expenses:create", "customers:manage", "debts:record", "debts:view", "inventory:view", "reports:view",
   ]),
-  INVENTORY_OPERATOR: new Set<MerchantPermission>(["inventory:view", "inventory:receive", "inventory:adjust", "prices:manage"]),
+  INVENTORY_OPERATOR: new Set<MerchantPermission>(["inventory:view", "inventory:receive", "inventory:adjust", "prices:manage", "trade:buy"]),
   FINANCE_OPERATOR: new Set<MerchantPermission>([
-    "expenses:create", "debts:view", "reports:view", "finance:close_day", "finance:export", "finance:reconcile", "payments:view",
+    "expenses:create", "debts:view", "reports:view", "finance:close_day", "finance:export", "finance:reconcile", "payments:view", "trade:payments",
   ]),
   // Read-only: for a helper or an auditor who must see but never change anything.
   RESTRICTED_SUPPORT: new Set<MerchantPermission>(["debts:view", "inventory:view", "reports:view", "payments:view"]),
@@ -83,6 +89,8 @@ export const PLATFORM_PERMISSIONS = [
   "admin:resolve_support_case",
   "admin:delete_synthetic_org", //       hard delete, synthetic/test organizations only (typed confirmation)
   "admin:flip_forecast_gate", //         promote forecasting to live for one merchant (owner only)
+  "admin:set_forecast_thresholds", //    the platform-wide promotion thresholds (owner only)
+  "admin:view_reorder", //               reorder suggestions, forecasts and their scores
   "admin:manage_admins", //              create/disable platform admins
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
@@ -92,7 +100,7 @@ const PLATFORM_MATRIX: Readonly<Record<AdminRole, ReadonlySet<PlatformPermission
   OPERATOR: new Set<PlatformPermission>([
     "admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log",
     "admin:view_merchant_financials", "admin:manage_flags", "admin:resolve_exception", "admin:replay_dead_letter",
-    "admin:pause_job_class", "admin:reverse_transaction", "admin:resolve_support_case",
+    "admin:pause_job_class", "admin:reverse_transaction", "admin:resolve_support_case", "admin:view_reorder",
   ]),
   SUPPORT: new Set<PlatformPermission>([
     "admin:view_overview", "admin:view_orgs", "admin:view_audit_log", "admin:view_merchant_financials",
@@ -126,6 +134,7 @@ export const PLATFORM_STEP_UP_PERMISSIONS: ReadonlySet<PlatformPermission> = new
   "admin:resolve_support_case",
   "admin:delete_synthetic_org",
   "admin:flip_forecast_gate",
+  "admin:set_forecast_thresholds",
   "admin:manage_admins",
 ]);
 

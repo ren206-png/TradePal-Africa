@@ -16,6 +16,7 @@ import { getRedisConnectionOptions } from "./queue/connection.js";
 import { getInboundMessageQueue, INBOUND_MESSAGE_QUEUE_NAME } from "./queue/inboundMessageQueue.js";
 import { startWebhookRedriveSweep } from "./queue/webhookRedrive.js";
 import { outboxSweepEnabled, startOutboxSweep } from "./queue/outboxSweep.js";
+import { operationsSweepEnabled, startOperationsSweep } from "./queue/operationsSweep.js";
 import { buildCallbackHandlers, buildOutboxHandlers } from "./domain/eventHandlers.js";
 import { heartbeatEnabled, startHeartbeat } from "./monitoring/heartbeat.js";
 import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
@@ -249,6 +250,9 @@ const outboxSweep = outboxSweepEnabled()
   ? startOutboxSweep({ prisma, outboxHandlers: buildOutboxHandlers(prisma), callbackHandlers: buildCallbackHandlers(prisma), alerts })
   : undefined;
 
+// Expansion Phase 2-3: reservation/trade-order expiry, reorder suggestions, shadow forecasts and their scoring. OFF unless OPERATIONS_SWEEP_ENABLED=true.
+const operationsSweep = operationsSweepEnabled() ? startOperationsSweep({ prisma, alerts }) : undefined;
+
 // Expansion Phase 1: liveness heartbeat (OFF unless HEARTBEAT_ENABLED=true).
 const heartbeat = heartbeatEnabled() ? startHeartbeat(prisma, SERVICE_NAME) : undefined;
 
@@ -266,6 +270,7 @@ const webhookRedrive = startWebhookRedriveSweep({
 installGracefulShutdown(SERVICE_NAME, [
   { name: "webhook-redrive", close: async () => webhookRedrive.stop() },
   ...(heartbeat ? [{ name: "heartbeat", close: async () => heartbeat.stop() }] : []),
+  ...(operationsSweep ? [{ name: "operations-sweep", close: async () => operationsSweep.stop() }] : []),
   ...(outboxSweep ? [{ name: "outbox-sweep", close: async () => outboxSweep.stop() }] : []),
   { name: "bullmq-worker", close: () => worker.close() },
   { name: "prisma", close: () => prisma.$disconnect() },

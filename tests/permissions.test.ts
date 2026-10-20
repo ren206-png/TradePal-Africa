@@ -16,7 +16,7 @@ const PLATFORM_ROLES = ["SUPER_ADMIN", "OPERATOR", "SUPPORT", "ANALYST"] as cons
 describe("merchant permission matrix", () => {
   it("gives the owner everything and keeps owner-only powers owner-only", () => {
     expect(merchantPermissionsFor("OWNER")).toEqual(MERCHANT_PERMISSIONS);
-    for (const owned of ["payments:connect_provider", "settings:manage", "business:manage"] as const) {
+    for (const owned of ["payments:connect_provider", "settings:manage", "business:manage", "trade:credit_override"] as const) {
       const holders = MERCHANT_ROLES.filter((r) => canMerchant(r, owned));
       expect(holders, owned).toEqual(["OWNER"]);
     }
@@ -54,7 +54,7 @@ describe("platform-admin permission matrix", () => {
   });
 
   it("reserves the sharpest tools for the platform owner", () => {
-    for (const sharp of ["admin:flip_forecast_gate", "admin:manage_admins", "admin:delete_synthetic_org", "admin:manage_global_flags"] as const) {
+    for (const sharp of ["admin:flip_forecast_gate", "admin:set_forecast_thresholds", "admin:manage_admins", "admin:delete_synthetic_org", "admin:manage_global_flags"] as const) {
       expect(PLATFORM_ROLES.filter((r) => canPlatform(r, sharp)), sharp).toEqual(["SUPER_ADMIN"]);
     }
   });

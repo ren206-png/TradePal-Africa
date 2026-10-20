@@ -6,6 +6,7 @@ import { isFeatureEnabled } from "../domain/featureFlags.js";
 import { InvalidAmountError, formatMoney, parseAmountToMinorUnits } from "../domain/money.js";
 import { divRoundHalfUp } from "../domain/rounding.js";
 import { ensureDefaultShopFor } from "../domain/shops.js";
+import { handleTradeCommand, TRADE_COMMANDS } from "./tradeCommands.js";
 import { StockError, approveStockCount, cancelStockCount, getStockLevel, openStockCount, postAdoptionOpening, receiveStock, recordCountLine, setCountLineReason } from "../domain/stock.js";
 
 /**
@@ -14,7 +15,7 @@ import { StockError, approveStockCount, cancelStockCount, getStockLevel, openSto
  * "Unrecognized command" text), so existing behaviour is unchanged. Permissions come from the permission matrix, never
  * from role-name comparisons.
  */
-export const OPERATIONS_COMMANDS = new Set(["/close", "/products", "/addproduct", "/pack", "/receive", "/count", "/adopt"]);
+export const OPERATIONS_COMMANDS = new Set(["/close", "/products", "/addproduct", "/pack", "/receive", "/count", "/adopt", ...TRADE_COMMANDS]);
 
 export const FLAG_DAILY_CLOSE = "dailyClose";
 export const FLAG_CATALOG = "catalogV2";
@@ -55,7 +56,7 @@ export async function handleOperationsCommand(ctx: CommandContext, command: stri
       if (!(await on(ctx, FLAG_STOCK_V2))) return null;
       return command === "/receive" ? handleReceive(ctx, args) : handleCount(ctx, args);
     default:
-      return null;
+      return handleTradeCommand(ctx, command, args);
   }
 }
 

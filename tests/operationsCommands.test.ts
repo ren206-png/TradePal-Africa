@@ -54,7 +54,7 @@ describe("all new flags OFF: existing behaviour is identical (scenario 25)", () 
 
   it("the new commands answer like any unknown command and write nothing", async () => {
     const env = await makeBusiness(prisma);
-    for (const cmd of ["/close", "/close 500", "/products", "/addproduct A b c", "/pack A carton 12", "/receive A 5", "/count A 3", "/count approve", "/adopt"]) {
+    for (const cmd of ["/close", "/close 500", "/products", "/addproduct A b c", "/pack A carton 12", "/receive A 5", "/count A 3", "/count approve", "/adopt", "/reorder", "/reorder accept 1", "/orders", "/sendorder PO-000001", "/acceptorder SO-000001", "/shiporder SO-000001", "/receiveorder PO-000001"]) {
       const first = cmd.split(" ")[0];
       const reply = await handleCommand(ctxFor(env), cmd);
       expect(reply).toContain(`Unrecognized command "${first}".`);
