@@ -101,7 +101,7 @@ async function assertRegisteredMerchant(deps: OutboundGatewayDeps, phoneNumber: 
   }
 }
 
-async function postToGraphApi(deps: OutboundGatewayDeps, body: Record<string, unknown>): Promise<void> {
+async function postToGraphApi(deps: OutboundGatewayDeps, body: Record<string, unknown>): Promise<string | undefined> {
   const fetchFn = deps.fetchImpl ?? fetch;
   const url = `https://graph.facebook.com/${deps.apiVersion ?? "v21.0"}/${deps.phoneNumberId}/messages`;
 
@@ -117,6 +117,13 @@ async function postToGraphApi(deps: OutboundGatewayDeps, body: Record<string, un
   if (!response.ok) {
     const errorBody = await response.text();
     throw new Error(`WhatsApp send failed (${response.status}): ${errorBody}`);
+  }
+  // The provider's message id, when the response carries one. Tolerant: a response without a JSON body is still a success.
+  try {
+    const json = (await response.json()) as { messages?: { id?: string }[] };
+    return json.messages?.[0]?.id;
+  } catch {
+    return undefined;
   }
 }
 
@@ -201,4 +208,34 @@ export async function sendUnsupportedCountryNotice(deps: OutboundGatewayDeps, to
     type: "text",
     text: { body: UNSUPPORTED_COUNTRY_NOTICE_BODY },
   });
+}
+
+/**
+ * Sends WITHOUT the registered-merchant guard. This exists for exactly one caller: `messaging/send.ts`, which has already
+ * checked the message class, template approval, the recipient's consent, the block list, the 24-hour window and the platform
+ * switch before it gets here. Anything else that imports these two functions defeats Standard #9; a test searches the source
+ * tree and fails if another file does.
+ */
+export async function sendTextUnchecked(deps: OutboundGatewayDeps, message: OutboundTextMessage): Promise<{ providerMessageId?: string }> {
+  const id = await postToGraphApi(deps, {
+    messaging_product: "whatsapp",
+    to: applyTestRecipientTrunkPrefixWorkaround(message.toPhoneNumber, deps.testRecipientTrunkPrefixCallingCodes),
+    type: "text",
+    text: { body: message.body },
+  });
+  return id ? { providerMessageId: id } : {};
+}
+
+export async function sendTemplateUnchecked(deps: OutboundGatewayDeps, message: OutboundTemplateMessage): Promise<{ providerMessageId?: string }> {
+  const components =
+    message.bodyParams && message.bodyParams.length > 0
+      ? [{ type: "body", parameters: message.bodyParams.map((text) => ({ type: "text", text })) }]
+      : [];
+  const id = await postToGraphApi(deps, {
+    messaging_product: "whatsapp",
+    to: applyTestRecipientTrunkPrefixWorkaround(message.toPhoneNumber, deps.testRecipientTrunkPrefixCallingCodes),
+    type: "template",
+    template: { name: message.templateName, language: { code: message.templateLanguageCode }, ...(components.length > 0 ? { components } : {}) },
+  });
+  return id ? { providerMessageId: id } : {};
 }

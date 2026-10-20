@@ -1,3 +1,6 @@
+import { emitOrderStatusEvent } from "../../messaging/orderEvents.js";
+import { recordOrderUpdatesConsent } from "../../messaging/consent.js";
+import { FLAG_CONSUMER_MESSAGING, consumerMessagingSwitchOn } from "../../messaging/send.js";
 import { timingSafeEqual } from "node:crypto";
 import type { Basket, BasketLine, Prisma, PrismaClient, StoreFulfilment, StoreOrder, StoreOrderLine, StorePaymentMethod, TradePaymentMethod } from "@prisma/client";
 import { getTenantScopedClient, withScopedTransaction, type TenantScopedClient } from "../../db/tenantScope.js";
@@ -72,6 +75,8 @@ export interface BuyerInput {
   phone: string;
   note?: string;
   contactConsent: boolean;
+  /** The shopper ticked the separate "WhatsApp order updates from TradePal" box (Phase 7). Recorded only when consumer messaging is on for that seller. */
+  orderUpdatesConsent?: boolean;
 }
 
 export interface SellerCheckoutInput {
@@ -153,7 +158,7 @@ async function placeForSeller(
 
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      return await withScopedTransaction(scoped, async (tx) => {
+      const placed = await withScopedTransaction(scoped, async (tx) => {
         const reference = await nextStoreReference(tx);
         const order = await tx.storeOrder.create({
           data: {
@@ -179,6 +184,16 @@ async function placeForSeller(
         }
         return { order: await loadStoreOrder(tx, order.id), accessToken };
       });
+      // Phase 7: the separate order-updates tick is recorded as consent only when consumer messaging is live for this seller.
+      if (buyer.orderUpdatesConsent && consumerMessagingSwitchOn() && (await isFeatureEnabled(scoped, businessId, FLAG_CONSUMER_MESSAGING))) {
+        // Never allowed to disturb the placement (a failure here would otherwise reach the retry loop below).
+        try {
+          await recordOrderUpdatesConsent(prisma, { businessId, phone, sourceRef: placed.order.id });
+        } catch (consentError) {
+          console.error("[messaging] could not record order-updates consent:", (consentError as Error).message);
+        }
+      }
+      return placed;
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
     }
@@ -306,7 +321,7 @@ async function transition(
   work: (tx: TenantScopedClient, order: StoreOrderFull) => Promise<Prisma.StoreOrderUpdateInput>,
 ): Promise<StoreOrderFull> {
   const scoped = getTenantScopedClient(prisma, businessId);
-  return withScopedTransaction(scoped, async (tx) => {
+  const result = await withScopedTransaction(scoped, async (tx) => {
     const order = await loadStoreOrder(tx, orderId);
     if (!from.includes(order.status)) throw new StoreError("WRONG_STATE", `This order is ${order.status.toLowerCase().replace(/_/g, " ")}; that action is not available.`);
     const data = await work(tx, order);
@@ -319,6 +334,9 @@ async function transition(
     }
     return loadStoreOrder(tx, order.id);
   });
+  // After the change has committed. A no-op unless consumer messaging is wired; never affects the order.
+  await emitOrderStatusEvent({ businessId, orderId, status: result.status });
+  return result;
 }
 
 /** The seller accepts the order. Extends the stock hold; an online order must already be paid in full. */

@@ -38,6 +38,9 @@ import { reportIncident } from "./monitoring/alerts.js";
 import type { CircuitBreaker } from "./monitoring/circuitBreaker.js";
 import type { SttProvider } from "./stt/provider.js";
 import { downloadWhatsAppMedia } from "./whatsapp/mediaGateway.js";
+import { applyStart, applyStop, consentKeyword, hasConsentHistory } from "./messaging/consent.js";
+import { sendMessage } from "./messaging/send.js";
+import { whatsappTransport } from "./messaging/transport.js";
 import { sendWhatsAppTextMessage, type OutboundGatewayDeps } from "./whatsapp/outboundGateway.js";
 import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
 import { maybeSendUnsupportedCountryNotice } from "./whatsapp/unsupportedCountryNotice.js";
@@ -845,12 +848,39 @@ async function dispatchCommandOrParse(
  * retry a job just because a reply failed, per this doc comment's own
  * long-standing rule above).
  */
+/**
+ * STOP / START from a number that is NOT a registered merchant and has a consent history with us (Phase 7). Handled before the
+ * onboarding path so a shopper who replies STOP is never signed up as a merchant. The only message sent back is the one
+ * confirmation, and it is allowed even though the number is now blocked. Returns false (untouched) for anything else, including
+ * a STOP from a number we have no consent record for, so the older behaviour for strangers is unchanged.
+ */
+async function handleConsentKeyword(deps: DispatcherDeps, job: InboundMessageJob, text: string): Promise<boolean> {
+  const keyword = consentKeyword(text);
+  if (!keyword || !(await hasConsentHistory(deps.prisma, job.fromNumber))) return false;
+  const transport = whatsappTransport({ prisma: deps.prisma, ...deps.outboundGateway });
+  const now = new Date();
+  if (keyword === "STOP") {
+    await applyStop(deps.prisma, job.fromNumber);
+    await sendMessage(deps.prisma, transport, { classId: "CONSUMER_OPT_OUT_CONFIRMATION", toPhone: job.fromNumber, idempotencyKey: `stop:${job.waMessageId}`, lastInboundAt: now, now });
+  } else {
+    const result = await applyStart(deps.prisma, job.fromNumber);
+    // Only say "on again" when something was actually turned back on; an operator block, or a number whose consents were never
+    // withdrawn by STOP, gets no claim it cannot keep (and no reply).
+    if (result.restored > 0) {
+      await sendMessage(deps.prisma, transport, { classId: "CONSUMER_OPT_IN_CONFIRMATION", toPhone: job.fromNumber, idempotencyKey: `start:${job.waMessageId}`, lastInboundAt: now, now });
+    }
+  }
+  return true;
+}
+
 export async function dispatchInboundMessage(deps: DispatcherDeps, job: InboundMessageJob): Promise<void> {
   try {
     const text = await extractMessageText(deps.prisma, job);
     const merchant = await findMerchantByPhoneNumber(deps.prisma, job.fromNumber);
 
-    if (!merchant) {
+    if (!merchant && text !== null && (await handleConsentKeyword(deps, job, text))) {
+      // A shopper's STOP / START: recorded and answered. Never treated as a sign-up.
+    } else if (!merchant) {
       try {
         const started = await startOnboarding(deps.prisma, job.fromNumber);
         try {

@@ -14,6 +14,7 @@ import { installCrashReporting, installGracefulShutdown } from "./monitoring/pro
 import { WhisperSttProvider } from "./stt/provider.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { getInboundMessageQueue, INBOUND_MESSAGE_QUEUE_NAME } from "./queue/inboundMessageQueue.js";
+import { wireConsumerMessaging } from "./messaging/wire.js";
 import { startWebhookRedriveSweep } from "./queue/webhookRedrive.js";
 import { outboxSweepEnabled, startOutboxSweep } from "./queue/outboxSweep.js";
 import { operationsSweepEnabled, startOperationsSweep } from "./queue/operationsSweep.js";
@@ -251,6 +252,7 @@ const outboxSweep = outboxSweepEnabled()
   : undefined;
 
 // Expansion Phase 2-3: reservation/trade-order expiry, reorder suggestions, shadow forecasts and their scoring. OFF unless OPERATIONS_SWEEP_ENABLED=true.
+wireConsumerMessaging(prisma);
 const operationsSweep = operationsSweepEnabled() ? startOperationsSweep({ prisma, alerts }) : undefined;
 
 // Expansion Phase 1: liveness heartbeat (OFF unless HEARTBEAT_ENABLED=true).

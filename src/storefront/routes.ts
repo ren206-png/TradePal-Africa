@@ -12,6 +12,9 @@ import {
 import { requestRefund } from "../domain/store/refunds.js";
 import { publicCatalog } from "../domain/store/storefront.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
+import { isFeatureEnabled } from "../domain/featureFlags.js";
+import { ORDER_UPDATES_NOTICE } from "../messaging/consent.js";
+import { FLAG_CONSUMER_MESSAGING, consumerMessagingSwitchOn } from "../messaging/send.js";
 import { esc, money, notFoundPage, page } from "./html.js";
 import type { AdapterRegistry } from "../payments/adapter.js";
 import { SimulatorAdapter } from "../payments/simulatorAdapter.js";
@@ -65,7 +68,7 @@ function privateHeaders(res: Response): void {
 }
 
 const text = (max: number) => z.string().trim().max(max);
-const checkoutSchema = z.object({ buyerName: text(80), buyerPhone: text(30), buyerNote: text(500).optional(), consent: z.string().optional() });
+const checkoutSchema = z.object({ buyerName: text(80), buyerPhone: text(30), buyerNote: text(500).optional(), consent: z.string().optional(), updates: z.string().optional() });
 
 export function createStorefrontRouter(prisma: PrismaClient, options: StorefrontOptions = {}): Router {
   const router = Router();
@@ -202,12 +205,20 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
           <input type="hidden" name="seller" value="${id}"></fieldset>` : `<p class="err">This part of your basket cannot be ordered yet. Fix the items marked above.</p>`}</div>`;
     }).join("");
     const ready = view.sellers.some((s) => s.checkoutReady);
+    // The order-updates box is offered only when the platform switch is on and at least one seller in the basket has consumer messaging on.
+    let offerUpdates = false;
+    if (consumerMessagingSwitchOn()) {
+      for (const sl of view.sellers) {
+        if (await isFeatureEnabled(getTenantScopedClient(prisma, sl.businessId), sl.businessId, FLAG_CONSUMER_MESSAGING)) { offerUpdates = true; break; }
+      }
+    }
     res.type("html").send(page("Your basket", `<h1>Your basket</h1><p class="muted">Each seller prepares and charges for their own order. Nothing is pooled.</p>
       <form method="post" action="/basket/checkout">${sections}
       ${ready ? `<div class="card"><h2>Your details</h2><label for="buyerName">Your name</label><input id="buyerName" name="buyerName" maxlength="80" required autocomplete="name">
         <label for="buyerPhone">Phone number the seller can call</label><input id="buyerPhone" name="buyerPhone" inputmode="tel" maxlength="30" required autocomplete="tel">
         <label for="buyerNote">Note for the seller (optional)</label><textarea id="buyerNote" name="buyerNote" maxlength="500" rows="2"></textarea>
         <label><input type="checkbox" name="consent" value="yes"> The seller may contact me about this order</label>
+        ${offerUpdates ? `<label><input type="checkbox" name="updates" value="yes"> ${esc(ORDER_UPDATES_NOTICE)}</label>` : ""}
         <p><button type="submit">Place order${view.sellers.length > 1 ? "s" : ""}</button></p></div>` : ""}</form><p><a href="/orders">Your orders</a></p>`));
   }));
 
@@ -231,7 +242,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
     try {
       const result = await checkoutBasket(prisma, {
         basketToken: token, allowOnline: allowOnline(), now: clock(), sellers,
-        buyer: { name: parsed.data.buyerName, phone: parsed.data.buyerPhone, ...(parsed.data.buyerNote ? { note: parsed.data.buyerNote } : {}), contactConsent: parsed.data.consent === "yes" },
+        buyer: { name: parsed.data.buyerName, phone: parsed.data.buyerPhone, ...(parsed.data.buyerNote ? { note: parsed.data.buyerNote } : {}), contactConsent: parsed.data.consent === "yes", orderUpdatesConsent: parsed.data.updates === "yes" },
       });
       if (result.alreadyPlaced) {
         res.redirect(303, "/orders");

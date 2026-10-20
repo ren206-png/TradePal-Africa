@@ -4,6 +4,7 @@ import express from "express";
 import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
+import { wireConsumerMessaging } from "./messaging/wire.js";
 import { sendWhatsAppTextMessage } from "./whatsapp/outboundGateway.js";
 import { createStorefrontRouter } from "./storefront/routes.js";
 import { getAdapterRegistry } from "./payments/registry.js";
@@ -65,6 +66,7 @@ installCrashReporting("server", alerts);
 // subscription-lapse notification (see adminRoutes.ts, subscriptionExpiry.ts);
 // when absent, that route still runs the sweep, just without notifications.
 const outboundGateway = buildSubscriptionExpiryOutboundGatewayFromEnv();
+wireConsumerMessaging(prisma);
 
 // Same optionality as outboundGateway above, for the Phase 18 deletion-request
 // resolution notification (see adminRoutes.ts, domain/deletion.ts) instead of
