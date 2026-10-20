@@ -1,4 +1,4 @@
-# Requirement traceability (Phases 1-2)
+# Requirement traceability (Phases 1-3)
 
 Status vocabulary: implemented / locally tested / sandbox verified / partner approved / production configured / production activated. Nothing here is above "locally tested". Rows for later phases are added as they are built.
 
@@ -31,3 +31,17 @@ Status vocabulary: implemented / locally tested / sandbox verified / partner app
 | 20 scenario 5 cash/wallet/fee/refund/withdrawal/purchase + daily close | posting rules, `dailyClose.ts` | `accounting.test.ts`, `dailyClose.test.ts` | locally tested |
 | 20 scenario 25 flags off = unchanged | flag-gated hooks; commands return null | `operationsCommands.test.ts` + the full pre-existing suite | locally tested |
 | 20 scenario 28/30 admin audit, void keeps original | `adminAudit.ts`, void route | `adminTransactions.test.ts` | locally tested |
+| 9 linked buyer/seller records with separate tenant ownership | `domain/trade/*` (own row per business, outbox sync) | `tradeFlow.test.ts`, `tradeRules.test.ts` | locally tested |
+| 9 supplier publishes listings; buyer orders against valid pricing and minimums | `partners.ts` shared catalog, `pricing.ts` | `tradeFlow.test.ts`, `tradeRules.test.ts` | locally tested |
+| 9 acceptance freezes terms; quote validity; separate acceptance/goods/invoice/payment states | `orders.ts`, DB triggers, `fulfilment.ts`, `payments.ts` | `tradeRules.test.ts` | locally tested |
+| 9 partial fulfilment, receipt, discrepancies; PO does not raise stock, receipt does | `shipOrder`, `receiveShipment` | `tradeFlow.test.ts` | locally tested |
+| 9 invoice, receivable/payable, partial payments, external payments are not a second sale | `TradeInvoice`, `TradePayment` | `tradeFlow.test.ts` | locally tested |
+| 9 trade credit recorded by the seller; no lending/scoring/AI | `credit.ts` | `tradeRules.test.ts` | locally tested |
+| 9 reorder Tier 1 deterministic, draft only | `reorder.ts` | `reorderTier1.test.ts` | locally tested |
+| 9 reorder Tier 2 shadow, scoring, promotion gate | `forecast.ts`, `forecastGate.ts` | `forecast.test.ts`, `adminReorder.test.ts` | locally tested |
+| 12 simulator, signed callbacks, durable inbox, purpose boundary, forged purpose refused | `payments/simulator.ts` | `tradeFlow.test.ts` | locally tested |
+| 18 admin: reorder and forecasting panel, flip gate (owner only), thresholds | `admin/adminReorder.ts`, `ReorderPage` | `adminReorder.test.ts`, `ReorderPage.test.tsx` | locally tested |
+| 20 scenario 1 wholesaler to retailer, partial receipt, isolation | as above | `tradeFlow.test.ts` | locally tested |
+| 20 scenario 31 Tier 1 arithmetic, draft only | `reorder.ts` | `reorderTier1.test.ts` | locally tested |
+| 20 scenario 32 Tier 2 shadow invisible, scored vs actual and Tier 1, gate rejected below / audited above | `forecast.ts`, `forecastGate.ts` | `forecast.test.ts`, `adminReorder.test.ts` | locally tested |
+| 22 demo: wholesaler -> retailer with simulator; forecast rows and scores in admin | `scripts/demoWholesale.ts` | `demoPath.test.ts` | locally tested (consumer step and pawaPay renewal belong to later phases) |

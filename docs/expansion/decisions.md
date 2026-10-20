@@ -126,7 +126,28 @@ Phase 1 was started on `APPROVED: PHASE 0` without separate answers to OPEN-1..3
 
 Not decided here (still OPEN): tax treatment, retention periods, which payment-method capture UX (Phase 7), whether to let bulk catalog editing live in a web/PWA surface (planned for a later phase; Phase 2 delivers WhatsApp commands and the admin panel only).
 
+## C4. Phase 3 decisions (built additively, flags default OFF; confirm or change)
+
+| # | Decision | Alternatives | Why / consequence | Reverse by |
+|---|---|---|---|---|
+| E1 | Each business owns its OWN row of each trade document; counterpart rows are kept in step by outbox events that copy agreed fields only; no foreign key across tenants | one shared cross-tenant document; direct cross-tenant reads | tenant isolation by construction (scenarios 1, 18). Cost: eventual consistency (seconds). The trade flow therefore **needs `OUTBOX_SWEEP_ENABLED=true` in production**; the merchant commands also deliver inline as a fast path | n/a |
+| E2 | Linking is an explicit, one-time, reversible invitation (token hashed at rest, 7-day expiry); a link shares nothing except a published wholesale price list the seller chooses to share | auto-link by phone number | "invitation does not share books" | revoke |
+| E3 | Acceptance freezes terms, enforced by the database (no change to qty/pack/price after ACCEPTED; cannot accept an unpriced order) | application-only | invariant 3 and 9 | n/a |
+| E4 | Seller stock is HELD (reserved) when the seller commits (accept or quote), in the same transaction; default hold 14 days (a parameter, renewable). A quote holds stock until its validity | hold only on acceptance | no overselling across B2B/B2C (scenario 2). The 14-day default is an operational parameter, not a promotion threshold; change in `orders.ts` | `DEFAULT_HOLD_DAYS` |
+| E5 | One invoice per shipment; revenue recognised at shipment/invoice; invoice and receipt values use cumulative rounding | one invoice per order; recognise on payment | totals reconcile exactly (invariant 4); collection alone is not revenue | n/a |
+| E6 | Buyer books Dr Inventory / Cr Payables at goods RECEIPT, for what arrived (accepted + damaged); short units are not booked | book at invoice | "purchase orders do not increase stock; confirmed receipts do". Consequence: credit notes limited to short delivery (derived from the buyer's receipt) in this phase | extend credit-note types later |
+| E7 | A payment a business records is mirrored to the other side only as a PROPOSAL; it counts there only when confirmed. Authenticated evidence (simulator now, provider later) applies directly and is labelled | trust the counterparty's report | "a forwarded SMS or screenshot proposes, never confirms" | n/a |
+| E8 | The merchant-payment SIMULATOR is allowed for MERCHANT_SALE only; signed callbacks (HMAC-SHA256), durable inbox, applied once per (provider, externalId); collected money sits in Provider clearing until settlement (Phase 5) | skip the simulator | section 12 | n/a |
+| E9 | Trade credit: limits and overdue cut-offs are the SELLER's own recorded rules; a block can be overridden by the owner with a reason (audited). No scoring, no lending, no AI | automatic scoring | section 9 | n/a |
+| E10 | Reorder Tier 1: FIXED and DAYS_OF_COVER rules, position = on hand - reserved + incoming open orders; arithmetic stored and shown; accepting makes a DRAFT purchase order only | automatic ordering | section 9; scenario 31 | n/a |
+| E11 | Tier 2 method `ses-v1`: simple exponential smoothing on 12 weekly buckets, alpha 0.30, 7-day horizon, integer fixed-point; needs 4+ weeks of history; shadow only. alpha and window are STARTING values to be judged by scoring, not tuned | moving average; ARIMA; an LLM (forbidden) | simple, documented, reproducible | edit `forecast.ts` and bump the method version |
+| E12 | Scoring: actual units in the period vs forecast and vs the Tier 1 baseline for the same period; MAPE (undefined when actual is 0) and WAPE; stock-out periods are flagged and excluded from the headline metric. "Scored weeks" = distinct 7-day epoch buckets (overlapping daily runs do not inflate it) | count predictions | honest evidence | n/a |
+| E13 | Promotion thresholds (minimum scored weeks, minimum improvement over Tier 1 in basis points) are NULL until the owner sets them: **no defaults were invented** (open item OPEN-6). The gate opens only through one function and a database trigger refuses any other route (generic flag tools return 409) | default thresholds | section 9 | n/a |
+| E14 | Known forecasting limits: few weeks of history at pilot scale; intermittent demand leaves few measurable periods (many zero weeks make MAPE undefined); no seasonality/price/promotion modelling; a legacy-sale reversal is not linked back to its sale; merchant wording says "based on your recent weekly sales", never "AI" | | | n/a |
+| E15 | New merchant permissions `trade:buy`, `trade:sell`, `trade:payments`, `trade:partners`, `trade:credit_override` (owner only); platform `admin:view_reorder`, `admin:set_forecast_thresholds` (owner only) | | see `permission-matrix.md` | n/a |
+
 ## D. Change log
 - 2026-10-20 — register created in Phase 0; G1-G13 recorded; P1-P10 proposed; OPEN-1..11 listed.
 - 2026-10-20 — Phase 1 completed on branch `expansion/phase-1`; section C2 records the provisional application of P1-P4, P10 and new admin controls.
 - 2026-10-20 — Phase 2 built on branch `expansion/phase-1` (continuing the same local branch); section C3 records the Phase 2 decisions.
+- 2026-10-20 — Phase 3 built on the same local branch; section C4 records the Phase 3 decisions. OPEN-6 (promotion thresholds) remains open on purpose.

@@ -1,6 +1,6 @@
 # Database-level protection: runbook
 
-Phase 1-2 · migrations `20261020000000` … `20261021000000` · status: **implemented, locally tested (PGlite). Not applied to any real database. Not rehearsed on a copy of production.**
+Phase 1-3 · migrations `20261020000000` … `20261022000000` · status: **implemented, locally tested (PGlite). Not applied to any real database. Not rehearsed on a copy of production.**
 
 ## 1. What the database now enforces (without relying on application code)
 
@@ -17,6 +17,12 @@ Phase 1-2 · migrations `20261020000000` … `20261021000000` · status: **imple
 | Stock/journal/daily-close history is append-only and cannot be truncated | triggers (same as Phase 1) | `StockMovement`, `JournalEntry`, `JournalLine`, `DailyClose` |
 | Counts, transfers, reservations, accounts cannot be deleted | no-delete triggers | `StockCount(Line)`, `StockTransfer(Line)`, `StockReservation`, `Account` |
 | Value sanity (pack >= 2, price > 0, validity windows, non-negative buckets, count discrepancy = counted - expected, close difference = counted - expected) | CHECK constraints | catalog/stock/close tables |
+| Accepted trade orders are frozen (qty, pack, unit, price, variant); an order cannot become ACCEPTED unless it has priced lines | triggers `tradepal_order_accept_guard`, `tradepal_order_line_frozen` | `TradeOrder`, `TradeOrderLine` |
+| Order lines are deletable only while the order is DRAFT | `tradepal_order_line_no_delete` | `TradeOrderLine` |
+| Goods receipts, forecast predictions, scores and gate events are append-only; partners, links, orders, shipments, invoices, payments, credit notes, suggestions cannot be deleted | triggers | Phase 3 tables |
+| Invoice amounts (paid + credited <= total), shipped <= ordered, received <= shipped, accepted + damaged + short <= shipped, line totals = qty x price | CHECK constraints | `TradeInvoice`, `TradeOrderLine`, `ShipmentLine`, `GoodsReceiptLine` |
+| One open reorder suggestion per (shop, variant, method) | partial unique index | `ReorderSuggestion` |
+| The per-merchant forecast gate can only be turned on through the promotion function; the global default can never be on | triggers on `BusinessFeatureFlag` and `FeatureFlag` (these two guards are the only change to existing tables) | flags |
 | Money-purpose boundary | enum `PaymentPurpose` on `Invoice` / `PaymentRequest`; code guard `assertProviderAllowedForPurpose` | pawaPay: subscription only |
 
 Synthetic (test/demo) businesses are the only ones whose financial rows may be hard-deleted. A real merchant is closed by suspension/anonymisation, never deletion (decision G13).
@@ -64,6 +70,7 @@ Set `Business.isSynthetic = true` **at creation** (it cannot be changed later). 
 | RLS isolates tenants under the non-owner role | `tests/dbProtection.test.ts` (test role only) |
 | Phase 2 tables are covered by RLS and the tenant scope | same test (the two lists must match exactly) |
 | Migrations apply on a REAL Postgres server | **not verified**: no Postgres server or Docker daemon was available. `scripts/rehearseMigrations.sh` is provided for the owner to run on a restored backup (written, not yet run) |
+| The forecast-gate trigger is an integrity guard, not a security boundary against someone with database superuser access who knows its transaction-local marker | by design; the application-level and admin controls are the policy |
 | True concurrent lock contention (`FOR UPDATE`) | **not verified**: PGlite serializes sessions; the logic and atomic checks are tested, interleaving is not |
 | Production Postgres accepts these migrations | **not verified** |
 | RLS active in production | **no** (inert by design until §2) |
