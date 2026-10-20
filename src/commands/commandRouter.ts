@@ -148,6 +148,7 @@ const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
   { flag: "catalogV2", line: "/wholesale <sku> <price> [per <pack>] [from <qty>], /publish <sku>, /unpublish <sku> - wholesale prices for your partners" },
   { flag: "storefront", line: "/store - your online shop: set it up, see and move orders, deal with cancellations, refunds and problems (/store help)" },
   { flag: "pawapayBilling", line: "/plans, /billing, /renew <mobile-money number> [plan], /changeplan <plan>, /cancelplan - your TradePal subscription" },
+  { flag: "offlineDrafts", line: "/connect [shared], /disconnect - link a phone to write sales and expenses as drafts without a connection" },
   { line: "/help - show this message" },
 ];
 
@@ -157,6 +158,8 @@ async function buildHelpText(ctx: CommandContext): Promise<string> {
   const flags = new Set(HELP_ENTRIES.flatMap((entry) => (entry.flag ? [entry.flag] : [])));
   const enabledFlags = new Set<string>();
   for (const flag of flags) {
+    // offline drafts also need the platform switch, so help never advertises a command that would answer "Unrecognized"
+    if (flag === "offlineDrafts" && process.env["OFFLINE_DRAFTS_ENABLED"] !== "true") continue;
     if (await isFeatureEnabled(ctx.scopedPrisma, ctx.businessId, flag)) enabledFlags.add(flag);
   }
   const lines = HELP_ENTRIES.filter((entry) => !entry.flag || enabledFlags.has(entry.flag)).map((entry) => entry.line);

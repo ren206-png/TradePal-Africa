@@ -7,6 +7,7 @@ import { InvalidAmountError, formatMoney, parseAmountToMinorUnits } from "../dom
 import { divRoundHalfUp } from "../domain/rounding.js";
 import { ensureDefaultShopFor } from "../domain/shops.js";
 import { handleBillingCommand, BILLING_COMMANDS } from "./billingCommands.js";
+import { handleOfflineCommand, OFFLINE_COMMANDS } from "./offlineCommands.js";
 import { handleStoreCommand, STORE_COMMANDS } from "./storeCommands.js";
 import { handleTradeCommand, TRADE_COMMANDS } from "./tradeCommands.js";
 import { StockError, approveStockCount, cancelStockCount, getStockLevel, openStockCount, postAdoptionOpening, receiveStock, recordCountLine, setCountLineReason } from "../domain/stock.js";
@@ -17,7 +18,7 @@ import { StockError, approveStockCount, cancelStockCount, getStockLevel, openSto
  * "Unrecognized command" text), so existing behaviour is unchanged. Permissions come from the permission matrix, never
  * from role-name comparisons.
  */
-export const OPERATIONS_COMMANDS = new Set(["/close", "/products", "/addproduct", "/pack", "/receive", "/count", "/adopt", ...TRADE_COMMANDS, ...STORE_COMMANDS, ...BILLING_COMMANDS]);
+export const OPERATIONS_COMMANDS = new Set(["/close", "/products", "/addproduct", "/pack", "/receive", "/count", "/adopt", ...TRADE_COMMANDS, ...STORE_COMMANDS, ...BILLING_COMMANDS, ...OFFLINE_COMMANDS]);
 
 export const FLAG_DAILY_CLOSE = "dailyClose";
 export const FLAG_CATALOG = "catalogV2";
@@ -61,6 +62,8 @@ export async function handleOperationsCommand(ctx: CommandContext, command: stri
       return handleStoreCommand(ctx, command, args);
     case "/plans": case "/billing": case "/renew": case "/changeplan": case "/cancelplan":
       return handleBillingCommand(ctx, command, args);
+    case "/connect": case "/disconnect":
+      return handleOfflineCommand(ctx, command, args);
     default:
       return handleTradeCommand(ctx, command, args);
   }

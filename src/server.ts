@@ -4,6 +4,7 @@ import express from "express";
 import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
+import { createOfflineRouter } from "./offline/routes.js";
 import { wireConsumerMessaging } from "./messaging/wire.js";
 import { sendWhatsAppTextMessage } from "./whatsapp/outboundGateway.js";
 import { createStorefrontRouter } from "./storefront/routes.js";
@@ -257,6 +258,13 @@ if (process.env["STOREFRONT_ENABLED"] === "true") {
         : {}),
     }),
   );
+}
+
+// Offline drafts page and API (expansion Phase 7). Off unless OFFLINE_DRAFTS_ENABLED=true; every request is also checked against the
+// per-business `offlineDrafts` flag. Behind a proxy set TRUST_PROXY so rate limits see the phone's address.
+if (process.env["OFFLINE_DRAFTS_ENABLED"] === "true") {
+  if (process.env["TRUST_PROXY"]) app.set("trust proxy", Number(process.env["TRUST_PROXY"]) || process.env["TRUST_PROXY"]);
+  app.use(createOfflineRouter(prisma));
 }
 
 // Centralized error handler — MUST be registered last (after every route,
