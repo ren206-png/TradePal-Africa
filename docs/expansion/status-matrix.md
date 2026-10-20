@@ -94,3 +94,7 @@ Levels, in increasing strength, **not interchangeable**: `implemented` (code exi
 | Demo: wholesaler -> retailer -> consumer -> simulator payment -> fulfilment -> reports + subscription renewal (fake) | locally tested | `scripts/demoRelease.ts` |
 | Product measurement events (section 23) | **specified, not instrumented** | `measurement-plan.md` |
 | Revised truthful product/help copy | implemented (repo only; not deployed) | `product-copy.md` |
+
+## Z. Decisions pass additions (2026-10-20) — all `locally tested`
+
+Verified (double opt-in) shopper consent; escalation of unanswered shopper requests; scheduled data-integrity checks and admin view; "re-run reconciliation" admin control (removed from "not built"); shopper-data retention (24 months); duplicate trade-payment detection; atomic credit decision; support-access gating; FREE plan includes the storefront; forecast thresholds seeded. Evidence: `escalation`, `integrity`, `retention`, `messaging`, `adminOps`, `tradeFlow`, `billingEntitlements` tests. See `decisions-final.md` and `self-check-addendum-decisions.md`.

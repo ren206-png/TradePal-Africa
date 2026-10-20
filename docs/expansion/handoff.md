@@ -2,6 +2,8 @@
 
 Branch `expansion/phase-1` (local only: **not pushed, not merged, nothing deployed, no migration run against any real database**). Production is untouched. Date of this handoff: 2026-10-20.
 
+> **Update 2026-10-20 (decisions pass):** every open decision was settled on the owner's behalf in `decisions-final.md`; remaining blockers are owner actions only (provider choice, pawaPay sandbox, templates, real Postgres). Added always-on behaviour is listed in `self-check-addendum-decisions.md`.
+
 ## 1. What changed (one paragraph per area; details in the documents named)
 
 TradePal was a WhatsApp bookkeeping bot. It is now also, behind default-OFF flags: a multi-tenant merchant operating system (shops, memberships, permission matrices, catalog, packs, price lists, one stock system with reservations and counts, balanced journals, daily close); B2B trading (linked buyer/seller, quote to order to shipment to receipt to invoice, payments, credit notes, reorder suggestions, shadow demand forecasting); a consumer storefront and marketplace (split baskets, stock holds, hand-over code, returns/refunds, held-payment exceptions, support cases, moderation); a payment layer for merchant sales (provider adapter contract, simulator, reconciliation, exceptions); pawaPay billing of TradePal's own subscriptions with versioned plans and an entitlement matrix; messaging and consent (template register, opt-in/out, enforced send pipeline, STOP/START, shopper order updates), bound confirmations for AI-read entries, offline drafts, English-only localization framework, AI-provider failure alerts with verified delivery; bookkeeping reports with completeness warnings and formula-safe CSV; and a platform admin console with 12 panels. Documents: `decisions.md` (C1-C10), `data-model.md`, `money-flow.md`, `state-transitions.md`, `accounting-postings.md`, `permission-matrix.md`, `db-protection.md`, `admin-delete-void-rules.md`, `refund-cancellation-rules.md`, `reports.md`, `message-template-register.md`, `localization.md`, `country-configuration-guide.md`, `merchant-provider-matrix.md`, `pawapay-audit.md`, `traceability.md`, `product-copy.md`.
@@ -12,7 +14,7 @@ TradePal was a WhatsApp bookkeeping bot. It is now also, behind default-OFF flag
 |---|---|
 | production activated | only the pre-expansion WhatsApp features, unchanged behind OFF flags |
 | production configured / partner approved / sandbox verified | **nothing** |
-| locally tested | everything the expansion built: 114 backend test files / 1257 tests, 14 admin-console files / 59 tests, a build, a release demo, a migration rehearsal on legacy data, route-table security walks, byte budgets |
+| locally tested | everything the expansion built: 117 backend test files / 1273 tests, 14 admin-console files / 59 tests, a build, a release demo, a migration rehearsal on legacy data, route-table security walks, byte budgets |
 | implemented only | localization (English only), runbooks and other documents, a few admin script-level controls |
 | not built | see section 5 |
 
@@ -32,7 +34,7 @@ Evidence with real command output: `test-evidence.md`. Self-checks with the fail
 1. Review and decide how to merge the branch (a push to `main` deploys and migrates production).
 2. Set up an external heartbeat monitor on `/heartbeat` with a second alert channel; verify the alert sender domain and add a second recipient; run the alert channel check and a synthetic incident (System health).
 3. Restore a production backup into a scratch Postgres and run `scripts/rehearseMigrations.sh` (or authorise a local Postgres so it can be done here). Record timings.
-4. Decide OPEN-2, 4, 5, 6, 7, 12, 14, 15, 17 (`decisions.md`).
+4. Review the decisions in `decisions-final.md` (all OPEN items now have a decision); you still must: choose and contract the merchant-sales provider (OPEN-4), set plan prices (OPEN-5), get legal review of the seller terms and notices (OPEN-7, OPEN-8), submit the templates (OPEN-13), and run the confidence calibration (OPEN-14).
 5. Assign someone to each local-review item in `country-configuration-guide.md` and to the tax/legal review (OPEN-8).
 6. Have an accountant compare one real merchant's reports with their books; test the phone page on a real low-end phone over a throttled connection.
 7. Deploy the landing FAQ and privacy edits **at the time** shop orders and shopper messages are activated, not before.

@@ -97,5 +97,8 @@ Resume from this file across sessions. Update after every slice.
 8. Phase 4 known gaps: no courier integration; no outbound messages to shoppers (Phase 7); online payment is the simulator only (real provider Phase 5); no marketplace discovery or moderation (Phase 5); a shopper who loses the order link cannot look the order up; low-end-device measurements are Phase 8; the web layer was exercised with supertest, not on real phones.
 9. Known gaps: credit-limit check not atomic under concurrent acceptance; no duplicate-payment detection; no dead-letter replay button; quotes/partial receipts/credit notes lack merchant commands; no web surface; FOR UPDATE contention untested on a real server; forecast quality unknown on real data.
 
+## Decisions pass (2026-10-20)
+All OPEN-1..17 and the gaps in the self-checks were decided in `decisions-final.md`. Built: verified (double opt-in) shopper consent, escalation of unanswered requests, scheduled integrity checks, re-run reconciliation button, honest digest label, audit-failure alert, FREE plan storefront, forecast thresholds, support-access gating, duplicate payment detection, credit lock, shopper-data retention. Credit-limit atomicity and duplicate-payment detection from "Known gaps" item 9 are now closed.
+
 ## Next concrete step
 The plan is complete (`APPROVED: PHASE 9` received; there is no Phase 10). The next work is the owner's list in `handoff.md` section 4 (first: restore a backup and run `scripts/rehearseMigrations.sh`; choose a merchant-sales provider; get a pawaPay sandbox token). Do not push, merge or deploy this branch without the owner.

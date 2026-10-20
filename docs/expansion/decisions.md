@@ -258,6 +258,8 @@ Open: **OPEN-16** run `scripts/rehearseMigrations.sh` on a restored backup (or a
 | L6 | Not built, recorded as such: console control to hard-delete a synthetic org, anonymize an org, force a password reset, "re-run reconciliation" button; tax-category infrastructure; statement import; a real merchant-sales provider; product-measurement instrumentation (specified only) | scope and honesty; each is listed in `handoff.md` |
 | L7 | Landing/privacy copy is edited in the repository only and is deployed by the owner at activation, in the order set out in `runbooks/production-activation.md` | nothing public changes without the owner |
 
+> **All OPEN items above were decided on 2026-10-20: see `decisions-final.md`.**
+
 ## D. Change log
 - 2026-10-20 — register created in Phase 0; G1-G13 recorded; P1-P10 proposed; OPEN-1..11 listed.
 - 2026-10-20 — Phase 1 completed on branch `expansion/phase-1`; section C2 records the provisional application of P1-P4, P10 and new admin controls.
@@ -269,3 +271,4 @@ Open: **OPEN-16** run `scripts/rehearseMigrations.sh` on a restored backup (or a
 - 2026-10-20 — Phase 7 built on the same local branch; section C8 records the Phase 7 decisions; `message-template-register.md` records the outbound classes.
 - 2026-10-20 — Phase 8 built on the same local branch; section C9 records the Phase 8 decisions; `reports.md`, `performance-baseline.md`, `security-checks.md`, `migration-rehearsal.md` are new.
 - 2026-10-20 — Phase 9 built on the same local branch; section C10 records the Phase 9 decisions; the release package is `handoff.md`, `status-matrix.md`, `runbooks/`, `test-evidence.md`.
+- 2026-10-20 — decisions pass: `decisions-final.md` settles OPEN-1..17 and the self-check gaps.
