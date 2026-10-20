@@ -1,3 +1,5 @@
+import { gzipSelected } from "../http/gzip.js";
+import { rejectNulBytes } from "../http/rejectNul.js";
 import express, { Router, type NextFunction, type Request, type Response } from "express";
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
@@ -23,6 +25,8 @@ const CSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; c
 
 export function createOfflineRouter(prisma: PrismaClient, opts: OfflineRouterOptions = {}): Router {
   const router = Router();
+  router.use(rejectNulBytes);
+  router.use(gzipSelected((req) => req.method === "GET" && ["/m/", "/m/app.js", "/m/sw.js"].includes(req.path)));
   const clock = opts.now ?? (() => new Date());
   const exchangeLimiter = opts.limiters?.exchange ?? new InMemoryLoginRateLimiter(10, 15 * 60_000);
   const apiLimiter = opts.limiters?.api ?? new InMemoryLoginRateLimiter(300, 60_000);
@@ -40,6 +44,7 @@ export function createOfflineRouter(prisma: PrismaClient, opts: OfflineRouterOpt
 
   const api = Router();
   api.use(express.json({ limit: "100kb" }));
+  api.use(rejectNulBytes);
   api.use((_req, res, next) => {
     res.set({ "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
     next();

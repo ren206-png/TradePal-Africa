@@ -1,3 +1,4 @@
+import { rejectNulBytes } from "../http/rejectNul.js";
 import type { PrismaClient } from "@prisma/client";
 import { Router, type Request } from "express";
 import { asyncHandler } from "../admin/asyncHandler.js";
@@ -16,6 +17,7 @@ export interface RawBodyRequest extends Request {
 
 export function createMerchantPaymentWebhookRouter(prisma: PrismaClient, registry: () => AdapterRegistry): Router {
   const router = Router();
+  router.use(rejectNulBytes);
   router.post(
     "/webhooks/merchant-payments/:provider",
     asyncHandler(async (req: RawBodyRequest, res) => {

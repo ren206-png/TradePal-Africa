@@ -44,7 +44,14 @@ export function requireAdminAuth(prisma: PrismaClient, jwtSecret: string) {
       return;
     }
 
-    req.adminUser = payload;
+    // Re-read the account on every request (Phase 8): a signature-valid token for an admin who was disabled, removed or demoted since it
+    // was issued must not keep its old power for the rest of its 12 hours. The role comes from the database, not from the token.
+    const account = await prisma.adminUser.findUnique({ where: { id: payload.adminUserId }, select: { role: true, disabledAt: true } });
+    if (!account || account.disabledAt) {
+      res.status(401).json({ error: "This account is no longer active." });
+      return;
+    }
+    req.adminUser = { ...payload, role: account.role };
     next();
   });
 }

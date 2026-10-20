@@ -100,7 +100,8 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
     });
   }
   function refresh() { return allLocal().then(render); }
-  function loadServer() { if (!meta.token || !navigator.onLine) return refresh(); return api("/drafts").then(function (x) { serverRows = (x.body.drafts || []).filter(function (r) { return r.status !== "DISCARDED"; }); return refresh(); }).catch(function (e) { say(e.message, "err"); }); }
+  // Local drafts are always shown, even when the server cannot be reached (a phone can report "online" with no working connection).
+  function loadServer() { if (!meta.token || !navigator.onLine) return refresh(); return api("/drafts").then(function (x) { serverRows = (x.body.drafts || []).filter(function (r) { return r.status !== "DISCARDED"; }); return refresh(); }).catch(function (e) { say(e.message === "Failed to fetch" ? "Cannot reach TradePal right now. Your drafts are safe on this phone." : e.message, "err"); return refresh(); }); }
   function show() {
     $("net").textContent = navigator.onLine ? "Online" : "Offline: drafts are kept on this phone until you reconnect.";
     getMeta("session").then(function (s) {
@@ -138,15 +139,22 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
       });
     }).catch(function (e) { say(e.message, "err"); });
   };
-  $("out").onclick = function () { (meta.token ? api("/logout", {}).catch(function () {}) : Promise.resolve()).then(wipe); };
+  // Disconnecting deletes everything on the phone, including drafts that were never sent, so it asks first when any exist.
+  $("out").onclick = function () {
+    allLocal().then(function (local) {
+      if (local.length && !window.confirm(local.length + " draft(s) have not been sent to TradePal and will be DELETED from this phone. Disconnect anyway?")) return;
+      return (meta.token ? api("/logout", {}).catch(function () {}) : Promise.resolve()).then(wipe);
+    });
+  };
   function reportQuery() { var f = $("rfrom").value, t = $("rto").value; return f && t ? "?from=" + f + "&to=" + t : ""; }
   function showReport(r) {
     var out = $("rout"); out.textContent = "";
     line(out, r.meta.title + " (" + r.meta.currencyCode + ", " + r.meta.timezone + ")", "muted");
     line(out, r.meta.basis, "muted");
     var d = r.data, rows = d.rows || d.days || d.attempts || d.buckets || [];
-    if (d.totals) { Object.keys(d.totals).forEach(function (k) { line(out, k + ": " + (/Minor$/.test(k) ? money(Number(d.totals[k])) : d.totals[k])); }); }
-    ["netSalesMinor", "costOfGoodsSoldMinor", "grossMarginMinor", "totalMinor"].forEach(function (k) { if (d[k] !== undefined && d[k] !== null) line(out, k.replace(/Minor$/, "") + ": " + money(Number(d[k]))); });
+    function label(k) { return k.replace(/Minor$/, "").replace(/([A-Z])/g, " $1").toLowerCase().replace(/^./, function (c) { return c.toUpperCase(); }); }
+    if (d.totals) { Object.keys(d.totals).forEach(function (k) { line(out, label(k) + ": " + (/Minor$/.test(k) ? money(Number(d.totals[k])) : d.totals[k])); }); }
+    ["netSalesMinor", "costOfGoodsSoldMinor", "grossMarginMinor", "totalMinor"].forEach(function (k) { if (d[k] !== undefined && d[k] !== null) line(out, label(k) + ": " + money(Number(d[k]))); });
     line(out, rows.length + " row(s). Download the CSV for the full table.", "muted");
     r.meta.warnings.forEach(function (w) { line(out, "Note: " + w.message, "warn"); });
     line(out, r.meta.notice, "muted");

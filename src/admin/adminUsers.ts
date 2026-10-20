@@ -24,3 +24,12 @@ export async function createAdminUser(prisma: PrismaClient, input: CreateAdminUs
 export async function findAdminUserByEmail(prisma: PrismaClient, email: string): Promise<AdminUser | null> {
   return prisma.adminUser.findUnique({ where: { email } });
 }
+
+/**
+ * Disables an admin: they cannot log in, and a token they already hold stops working on its very next request (the auth middleware
+ * re-reads the account every time). Nothing is deleted: audit rows point at the account. Idempotent.
+ */
+export async function disableAdminUser(prisma: PrismaClient, email: string): Promise<boolean> {
+  const r = await prisma.adminUser.updateMany({ where: { email, disabledAt: null }, data: { disabledAt: new Date() } });
+  return r.count === 1;
+}

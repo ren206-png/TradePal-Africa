@@ -1,4 +1,5 @@
--- Phase 8: the per-business flag for the bookkeeping reports. Data only (no schema change); OFF by default.
+-- Phase 8: a nullable column on AdminUser (an admin can be disabled), and the per-business flag for the bookkeeping reports (OFF by default).
+ALTER TABLE "AdminUser" ADD COLUMN "disabledAt" TIMESTAMPTZ;
 
 -- ============================================================================================
 INSERT INTO "FeatureFlag" ("key", "description", "enabledByDefault")

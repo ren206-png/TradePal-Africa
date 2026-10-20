@@ -67,7 +67,7 @@ const MERCHANT_MATRIX: Readonly<Record<MembershipRole, ReadonlySet<MerchantPermi
 };
 
 export function canMerchant(role: MembershipRole, permission: MerchantPermission): boolean {
-  return MERCHANT_MATRIX[role].has(permission);
+  return MERCHANT_MATRIX[role]?.has(permission) ?? false; // an unknown role (e.g. a platform role name) has no merchant permission
 }
 
 export function merchantPermissionsFor(role: MembershipRole): readonly MerchantPermission[] {
@@ -126,7 +126,7 @@ const PLATFORM_MATRIX: Readonly<Record<AdminRole, ReadonlySet<PlatformPermission
 };
 
 export function canPlatform(role: AdminRole, permission: PlatformPermission): boolean {
-  return PLATFORM_MATRIX[role].has(permission);
+  return PLATFORM_MATRIX[role]?.has(permission) ?? false;
 }
 
 export function platformPermissionsFor(role: AdminRole): readonly PlatformPermission[] {

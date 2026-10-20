@@ -1,3 +1,4 @@
+import { rejectNulBytes } from "../http/rejectNul.js";
 import type { Plan, PrismaClient } from "@prisma/client";
 import { Router, type Response } from "express";
 import { z } from "zod";
@@ -170,6 +171,7 @@ export interface CreateAdminRouterOptions {
 
 export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, options: CreateAdminRouterOptions = {}): Router {
   const router = Router();
+  router.use(rejectNulBytes);
   const loginRateLimiter = options.loginRateLimiter ?? new InMemoryLoginRateLimiter();
 
   router.post(
@@ -197,7 +199,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
       // Deliberately identical response whether the email doesn't exist or the password is wrong,
       // so this endpoint can't be used to enumerate valid admin email addresses.
-      if (!admin || !passwordValid) {
+      if (!admin || !passwordValid || admin.disabledAt) {
         res.status(401).json({ error: "Invalid email or password." });
         return;
       }

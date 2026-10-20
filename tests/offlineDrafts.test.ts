@@ -276,6 +276,8 @@ describe("what the phone is served", () => {
     expect(OFFLINE_SCRIPT).toContain("indexedDB.deleteDatabase");
     expect(OFFLINE_SCRIPT).toContain("caches.delete");
     expect(OFFLINE_SCRIPT).toContain("unregister()");
+    expect(OFFLINE_SCRIPT).toContain("will be DELETED from this phone"); // never silently throws away unsent drafts
+    expect(OFFLINE_SCRIPT).toContain("Your drafts are safe on this phone"); // and says so when the server cannot be reached
     expect(OFFLINE_SCRIPT).not.toMatch(/localStorage|sessionStorage|document\.cookie/);
     // the token lives in the local database that logout deletes, and a 401 wipes it too
     expect(OFFLINE_SCRIPT).toMatch(/status === 401\) \{ return wipe\(\)/);

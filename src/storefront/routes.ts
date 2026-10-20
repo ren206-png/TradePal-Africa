@@ -1,3 +1,5 @@
+import { gzipSelected } from "../http/gzip.js";
+import { rejectNulBytes } from "../http/rejectNul.js";
 import express, { Router, type NextFunction, type Request, type Response } from "express";
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
@@ -81,6 +83,9 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
   const allowOnline = () => simulator() !== null && simulatedPaymentsAllowed();
 
   router.use(express.urlencoded({ extended: false, limit: "20kb", parameterLimit: 200 }));
+  router.use(rejectNulBytes);
+  // Public catalogue pages only (no order link, pickup code or token ever appears on them): see http/gzip.ts for why nothing else is compressed.
+  router.use(gzipSelected((req) => req.method === "GET" && /^\/(shop\/[^/]+|marketplace|listing\/[^/]+)\/?$/.test(req.path)));
 
   // The label keeps read, write and order counters apart even when they share one backing store (Redis).
   const limit = (kind: LoginRateLimiter, label: string) =>

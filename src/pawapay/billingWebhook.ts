@@ -1,3 +1,4 @@
+import { rejectNulBytes } from "../http/rejectNul.js";
 import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { Router, type Request } from "express";
@@ -23,6 +24,7 @@ export interface RawBodyRequest extends Request {
 
 export function createPawaPayBillingWebhookRouter(prisma: PrismaClient, now: () => number = () => Date.now()): Router {
   const router = Router();
+  router.use(rejectNulBytes);
   router.post(
     BILLING_CALLBACK_PATH,
     asyncHandler(async (req: RawBodyRequest, res) => {

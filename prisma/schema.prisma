@@ -340,6 +340,8 @@ model AdminUser {
   role            AdminRole
   passwordHash    String // bcrypt hash (see src/admin/auth.ts) — never stores or logs the raw password
   createdAt       DateTime        @default(now()) @db.Timestamptz()
+  /// Phase 8: a disabled admin cannot log in and any token they already hold stops working on its next request. Never deleted (audit rows point at them).
+  disabledAt      DateTime?       @db.Timestamptz()
 }
 
 /// Revocation list for admin JWTs (see src/admin/tokenRevocation.ts). A stateless JWT can't be
