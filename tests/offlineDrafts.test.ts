@@ -163,7 +163,7 @@ describe("drafts (scenario 17)", () => {
 
     const short = await sync(token, [draft({ amountMinor: 600_000, items: [{ itemName: "Cola can", quantity: 60, unitPriceMinor: 10_000, sku: "COLA", expectedUnitPriceMinor: 10_000 }] })]);
     expect(short.body.results[0].conflicts.map((c: { code: string }) => c.code)).toEqual(["STOCK_SHORT"]);
-    expect(short.body.results[0].conflicts[0].available).toBe(50);
+    expect(short.body.results[0].conflicts[0].available).toBe(40); // 10 cans left with the price-change draft accepted above
   });
 
   it("re-checks at confirmation: stock that sold out after the sync is caught then", async () => {
@@ -177,6 +177,29 @@ describe("drafts (scenario 17)", () => {
     expect(r.status).toBe(409);
     expect(r.body.conflicts[0]).toMatchObject({ code: "STOCK_SHORT", available: 20 });
     expect(await txCount(b.s.businessId)).toBe(0);
+  });
+
+  it("confirming a catalog-line sale takes the stock out in the same transaction; a shortage the person accepts is allowed and recorded", async () => {
+    const b = await biz();
+    const token = await connect(b);
+    const { getStockLevel } = await import("../src/domain/stock.js");
+    const level = () => getStockLevel(b.s.scoped, b.s.shopId, b.s.variant.id);
+    const line = (qty: number) => ({ itemName: "Cola can", quantity: qty, unitPriceMinor: 10_000, sku: "COLA", expectedUnitPriceMinor: 10_000 });
+    const free = await sync(token, [draft({ amountMinor: 50_000, items: [line(5)] })]);
+    await request(app).post(`/m/api/drafts/${free.body.results[0].id}/confirm`).set(auth(token)).send({});
+    expect((await level()).onHand).toBe(45);
+    const confirm2 = await request(app).post(`/m/api/drafts/${(await sync(token, [draft({ amountMinor: 50_000, items: [line(5)] })])).body.results[0].id}/confirm`).set(auth(token)).send({});
+    expect(confirm2.status).toBe(200);
+    expect((await level()).onHand).toBe(40);
+
+    const short = await sync(token, [draft({ amountMinor: 500_000, items: [line(50)] })]);
+    expect(short.body.results[0].status).toBe("CONFLICT");
+    expect((await request(app).post(`/m/api/drafts/${short.body.results[0].id}/confirm`).set(auth(token)).send({})).status).toBe(409);
+    expect((await level()).onHand).toBe(40); // nothing moved
+    expect((await request(app).post(`/m/api/drafts/${short.body.results[0].id}/confirm`).set(auth(token)).send({ acceptConflicts: true })).status).toBe(200);
+    expect((await level()).onHand).toBe(-10); // knowingly oversold, recorded as approved by the person
+    const move = await prisma.stockMovement.findFirstOrThrow({ where: { businessId: b.s.businessId, sourceType: "OFFLINE_DRAFT" }, orderBy: { createdAt: "desc" } });
+    expect(move.note).toContain("negative stock approved by");
   });
 
   it("flags a total that is not the sum of its lines, a phone clock ahead, and an old draft; rejects credit with no customer and unreadable drafts", async () => {

@@ -40,8 +40,8 @@ const SYMBOL_CODES: [RegExp, string][] = [
   [/\bUS\$|\$/, "USD"], [/€/, "EUR"], [/£/, "GBP"], [/₦/, "NGN"],
 ];
 const WORD_CODES: [RegExp, string][] = [
-  [/\b(usd|dollars?|bucks)\b/i, "USD"], [/\b(eur|euros?)\b/i, "EUR"], [/\b(gbp|pounds?|sterling)\b/i, "GBP"],
-  [/\b(ngn|naira)\b/i, "NGN"], [/\b(ghs|cedis?)\b/i, "GHS"], [/\b(kes|shillings?|bob)\b/i, "KES"],
+  [/\b(usd|dollars?)\b/i, "USD"], [/\b(eur|euros?)\b/i, "EUR"], [/\b(gbp|sterling)\b/i, "GBP"],
+  [/\b(ngn|naira)\b/i, "NGN"], [/\b(ghs|cedis?)\b/i, "GHS"], [/\b(kes|shillings?)\b/i, "KES"],
   [/\b(xof|xaf|cfa|francs?)\b/i, "XOF"], [/\bsll\b/i, "SLL"], [/\bsle\b/i, "SLE"],
 ];
 

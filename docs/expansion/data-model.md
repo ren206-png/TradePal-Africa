@@ -122,3 +122,20 @@ Subscription -> planVersion (sold) / pendingVersion (scheduled change)
 None of these tables has any link to a journal, store, trade or merchant-payment record. TradePal's subscription revenue is not recorded in any merchant's ledger and merchant money is not recorded here.
 
 `BillingAttempt.refundedMinor` tracks money returned out of one payment (bounded by `capturedMinor`, database CHECK); `BillingRefund.heldPayment` marks a refund of a payment that was collected but never applied to an invoice, whose funds are reserved on the attempt rather than the invoice.
+
+## Messaging, consent, confirmations, drafts and alert delivery (Phase 7)
+
+Platform data (not tenant): `MessageTemplate`, `BlockedNumber`, `OutboundMessageLog`, `AlertDelivery`. Tenant tables (RLS + tenant scope): `ContactConsent`, `ContactConsentEvent`, `PendingAction`, `DeviceSession`, `OfflineDraft`.
+
+```
+MessageTemplate (one per class and language: DRAFT | SUBMITTED | APPROVED | REJECTED | DISABLED; APPROVED needs a provider name and a reference)
+ContactConsent (business, phone digits, purpose ORDER_UPDATES | MARKETING; OPTED_IN | OPTED_OUT; basis; notice version) 1-n ContactConsentEvent (append-only)
+BlockedNumber (one per number; source STOP_KEYWORD | ADMIN; lifted, never deleted)
+OutboundMessageLog (append-only; recipient as keyed hash + last four digits; decision SENT | SUPPRESSED | FAILED + reason; unique idempotency key for sent and suppressed)
+PendingAction (PROPOSAL | CLARIFICATION; digest, summary, payload, optional code hash, expiry; unique per person and source message; one PENDING per person)
+DeviceSession (code or token hash, shared flag, expiry, revoked) ; OfflineDraft (client id, kind, payload, status, conflicts, transaction id; unique per business and client id)
+AlertDelivery (append-only; incident or channel check; DELIVERED | FAILED; provider message id, HTTP status, error)
+```
+
+Phone numbers are stored in full only where a consent or block needs them (digits, in the consent and block tables); the outbound log keeps a keyed hash and the last four digits, and every admin view masks to the last four. `Transaction.whatsappMessageId` carries `draft:<clientId>` for a confirmed offline draft and the ORIGINAL message id for a confirmed AI proposal. No messaging table links to a journal, payment or order total.
+

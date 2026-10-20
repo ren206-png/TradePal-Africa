@@ -6,7 +6,7 @@ import { canMerchant, membershipRoleForLegacyMerchantRole } from "../auth/permis
 import { QuotaExceededError, assertWithinQuotaIfEnabled } from "../domain/billing.js";
 import { resolvePrice } from "../domain/pricing.js";
 import { ensureDefaultShopFor } from "../domain/shops.js";
-import { getStockLevel } from "../domain/stock.js";
+import { fulfilSale, getStockLevel } from "../domain/stock.js";
 import type { AuthedDevice } from "./devices.js";
 
 /**
@@ -184,10 +184,29 @@ export async function confirmDraft(prisma: PrismaClient, dev: AuthedDevice, id: 
   const reply = await withScopedTransaction(scoped, async (tx) => {
     const claim = await tx.offlineDraft.updateMany({ where: { id: row.id, status: { in: ["PENDING_REVIEW", "CONFLICT"] } }, data: { status: "CONFIRMED", conflicts: conflicts as unknown as Prisma.InputJsonValue } });
     if (claim.count !== 1) throw new DraftError("WRONG_STATE", "Someone else just settled this draft.");
-    return applyLoggableIntent(
-      { scopedPrisma: asTenantScoped(tx), businessId: dev.business.id, currencyCode: dev.business.currencyCode, minorUnitExp: dev.business.currency.minorUnitExp, whatsappMessageId: sourceId, stockTrackingEnabled: false, businessName: dev.business.name },
+    const scopedTx = asTenantScoped(tx);
+    const replyText = await applyLoggableIntent(
+      { scopedPrisma: scopedTx, businessId: dev.business.id, currencyCode: dev.business.currencyCode, minorUnitExp: dev.business.currency.minorUnitExp, whatsappMessageId: sourceId, stockTrackingEnabled: false, businessName: dev.business.name },
       toParsed(input),
     );
+    // Catalog (SKU) lines take their stock out in the SAME transaction, so the books and the stock cannot disagree. Lines without a SKU are
+    // free text and touch no stock, as with any sale typed in chat. A shortage the person knowingly accepted is allowed through, recorded with who approved it.
+    if (input.kind === "SALE" && input.items?.length) {
+      const shop = await ensureDefaultShopFor(scopedTx, dev.business.id);
+      let n = 0;
+      for (const item of input.items) {
+        if (!item.sku) continue;
+        const variant = await scopedTx.productVariant.findFirst({ where: { sku: item.sku } });
+        if (!variant || !variant.trackStock) continue;
+        n++;
+        await fulfilSale(scopedTx, {
+          businessId: dev.business.id, shopId: shop.id, variantId: variant.id, quantity: item.quantity, sourceType: "OFFLINE_DRAFT", sourceId: row.id,
+          idempotencyKey: `draft:${row.clientId}:${n}`, actor: { type: "MERCHANT", id: dev.merchant.id },
+          ...(opts.acceptConflicts && conflicts.some((c) => c.code === "STOCK_SHORT") ? { approvedBy: dev.merchant.id } : { requireAvailable: true }),
+        });
+      }
+    }
+    return replyText;
   });
   const txn = await scoped.transaction.findFirst({ where: { whatsappMessageId: sourceId }, select: { id: true }, orderBy: { createdAt: "desc" } });
   if (txn) await scoped.offlineDraft.updateMany({ where: { id: row.id }, data: { transactionId: txn.id } });

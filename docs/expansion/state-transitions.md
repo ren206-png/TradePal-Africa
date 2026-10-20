@@ -138,3 +138,25 @@ Invoice: PENDING -> OVERDUE (past due, by the sweep) -> PAID (one guarded update
 Entitlement state (computed from stored state and the clock, never from a sweep): no paid subscription = FREE; before the period end = ACTIVE; for `graceDays` after it = GRACE (same entitlements); then EXPIRED (FREE caps; new premium operations refused); a suspended business = SECURITY_SUSPENDED whatever else is true. Cancelling sets `cancelAtPeriodEnd`: access continues to the end, the sweep marks the subscription CANCELED afterwards, and a later renewal starts a new subscription row (the old one stays as history).
 
 Billing refund: REQUESTED -> ACCEPTED -> PROCESSING -> COMPLETED | FAILED | REJECTED. Funds are reserved on the invoice before sending and released on failure.
+
+## Messaging, confirmations and drafts (Phase 7)
+
+Pending action (the database refuses any change once it left PENDING, and refuses a second PENDING row for one person):
+
+| From | Event | To | Notes |
+|---|---|---|---|
+| (new) | AI-read entry previewed (PROPOSAL) or two stock items fit (CLARIFICATION) | PENDING | expires in 10 minutes |
+| PENDING | YES (or the code) from the same person, all checks pass | EXECUTED | one transaction: claim + entry; a second YES finds nothing |
+| PENDING | NO, three wrong codes, a failed re-check | CANCELLED | nothing saved |
+| PENDING | a newer AI-read message from the same person | SUPERSEDED | |
+| PENDING | seen after its expiry | EXPIRED | a late YES says it expired |
+| PENDING (clarification) | a valid number | EXECUTED | then a new PROPOSAL for the same entry is created |
+
+Consent: (none) -> OPTED_IN (checkout tick) -> OPTED_OUT (STOP, withdrawn) -> OPTED_IN (checkout tick again, or START when the last event was STOP's). A number is BLOCKED by STOP or by an operator; START lifts only the person's own block.
+
+Outbound message decision: SUPPRESSED (reason recorded, final for that event) | SENT (provider message id) | FAILED (no key, so a retry of the same event may try again).
+
+Offline draft: (new) -> PENDING_REVIEW | CONFLICT | REJECTED at sync; PENDING_REVIEW | CONFLICT -> CONFIRMED (one claim + entry in one transaction; CONFLICT needs an explicit accept) | DISCARDED. CONFIRMED is final (the database refuses any change to its status or payload).
+
+Device session: unclaimed code (10 minutes, one use) -> token (14 days; 8 hours shared) -> revoked (logout, `/disconnect`, expiry, or the person being removed or the business suspended).
+

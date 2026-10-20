@@ -51,3 +51,15 @@ The consumer's full phone number is shown to an admin only on a case handled by 
 | New-charge switch | turn new charges on or off per provider and country (owner, reason); never affects servicing | create a switch for merchant sales (database refuses) |
 
 An admin (owner) can also refund a payment pawaPay collected but that was never applied to an invoice (a duplicate, a wrong amount, a payment after cancellation) from its billing exception: same rules, audited, the invoice is untouched, and the exception resolves itself when the payment has been returned in full.
+
+## Phase 7 records
+
+| Record | Admin can | Admin cannot |
+|---|---|---|
+| Message template | record its state (draft, submitted, approved with provider name and reference, rejected): owner only, step-up, reason; disable an approved one at once (owner or operator) | send anything, contact Meta, delete a template |
+| Consent and opt-out records | view (numbers masked to the last four digits), search by last four or full number | create, edit, withdraw or restore a person's consent, delete |
+| Blocked number | block with a reason (operator or owner); lift an operator block with a reason | lift a block the person made with STOP (only their own START does), re-opt anyone in, delete |
+| Outbound message log, alert deliveries | view (masked) | edit, delete (database refuses) |
+| Stuck inbound message | replay once with a reason, if it is 5 minutes to 20 hours old and unprocessed | replay a processed or too-old message, edit it |
+| Alert channel | send a labelled test message and see the recorded outcome | read or change the email key |
+

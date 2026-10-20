@@ -110,3 +110,15 @@ Migration `20261025000000_phase6_billing_entitlements` (additive: new columns wi
 Verification: PGlite only. **Not verified on a real Postgres server.**
 
 Also: `BillingAttempt.refundedMinor <= capturedMinor` (CHECK), so refunds out of one payment can never exceed what was collected.
+
+## Phase 7 additions
+
+Migration `20261026000000_phase7_messaging_consent_drafts` (additive: 9 new tables; no changes to existing tables, no `ALTER TYPE`, no drops).
+- CHECKs: **a MARKETING consent can never have the checkout basis** (transaction updates and marketing are separate); phone numbers are 8-15 digits; the outbound log's audience and last-four are well formed; **a template cannot be APPROVED without a provider name and an approval reference**; template parameter count 0-10; offline draft kind is SALE or EXPENSE.
+- Partial unique index `PendingAction_one_pending_per_actor` (one open question per person); unique (business, phone, purpose) consent; unique (business, client id) draft; unique idempotency key on the outbound log; unique (person, source message) pending action.
+- Triggers: a pending action that left PENDING cannot change status; a CONFIRMED draft cannot change status or payload; `ContactConsentEvent`, `OutboundMessageLog` and `AlertDelivery` are append-only; no-delete on templates, consents, blocks, pending actions, device sessions and drafts; TRUNCATE guards on all nine tables.
+- RLS `tenant_isolation` on the 5 tenant tables (inert in production until the role step, like Phases 1-6). **The STOP handler and the block list read and write consent rows across businesses with the unscoped client by design;** under future RLS enforcement they need a platform role.
+- Flags `consumerMessaging`, `conversationalConfirmations`, `offlineDrafts` seeded OFF.
+
+Verification: PGlite only. **Not verified on a real Postgres server.**
+

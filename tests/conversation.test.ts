@@ -70,6 +70,9 @@ describe("deterministic guards (no model involved)", () => {
     expect(detectCurrencyConflict("sold rice for 50 leones", "SLE")).toBeNull();
     expect(detectCurrencyConflict("sold 3 bread for 1500", "NGN")).toBeNull();
     expect(detectCurrencyConflict("paid ₦5000", "NGN")).toBeNull();
+    // ordinary words that look like currency names must not trip it
+    expect(detectCurrencyConflict("Bob paid 500", "NGN")).toBeNull();
+    expect(detectCurrencyConflict("sold 5 pounds of rice for 500", "NGN")).toBeNull();
   });
 
   it("reads digits with commas, decimals, k and m", () => {
