@@ -6,9 +6,10 @@ Resume from this file across sessions. Update after every slice.
 - **Phases 0, 1, 2: approved.** (`APPROVED: PHASE 2` received.)
 - **Phase 3: approved.** (`APPROVED: PHASE 3` received.)
 - **Phase 4: approved.** (`APPROVED: PHASE 4` received.)
-- **Phase 5 (merchant-provider adapter completion and exception handling; marketplace discovery and moderation; admin payments/exceptions and listings/moderation panels): complete, awaiting approval.** Gate line: `AWAITING: APPROVED: PHASE 5`.
+- **Phase 5: approved.** (`APPROVED: PHASE 5` received.)
+- **Phase 6 (pawaPay subscription completion and entitlement boundary; admin subscriptions panel): complete, awaiting approval; still disabled everywhere (no token exists).** Gate line: `AWAITING: APPROVED: PHASE 6`.
 - Branch `expansion/phase-1` (local only: **not pushed, not merged, nothing deployed, no migration run against any real database**). A push to `main` would deploy production and run `prisma migrate deploy`.
-- Tests: backend 95 files / 1055 pass; admin-frontend 11 files / 49 pass + build OK. Self-check: `self-check-phase-5.md`. Demo (Phase 3): `npx tsx scripts/demoWholesale.ts`.
+- Tests: backend 100 files / 1103 pass; admin-frontend 12 files / 53 pass + build OK. Self-check: `self-check-phase-6.md`. Demo (Phase 3): `npx tsx scripts/demoWholesale.ts`.
 - Production at `86a072d`, untouched.
 
 ## Completed slices
@@ -49,6 +50,11 @@ Resume from this file across sessions. Update after every slice.
 | 2026-10-20 | 5c reconciliation sweep, outage circuit, provider-aware refunds in `/store` | locally tested (scenario 23); sweeps default off |
 | 2026-10-20 | 5d marketplace discovery, reports, moderation, appeals, public pages, seller commands | locally tested (scenario 24) |
 | 2026-10-20 | 5e admin payments/exceptions and listings/moderation panels, permissions, overview counts | locally tested |
+| 2026-10-20 | 6a schema + migration (plan versions/prices, billing attempts/allocations/refunds, entitlement history, exceptions, switches, signing keys; columns added to Invoice and Subscription) | locally tested; migration not run on a real server |
+| 2026-10-20 | 6b pawaPay client additions + RFC 9421 callback verification + key cache | locally tested (self-generated vectors; not verified against pawaPay) |
+| 2026-10-20 | 6c versioned plans, customer-authorised renewal, authenticated allocation, reconciliation, refunds (invoice and held payments), cancellation, scheduled plan change | locally tested (scenario 15) against an in-memory pawaPay fake |
+| 2026-10-20 | 6d entitlement matrix, grace/expiry, security suspension, call-site gates | locally tested (scenario 16) |
+| 2026-10-20 | 6e owner commands, admin subscriptions panel, permissions, sweep, signed billing webhook | locally tested; everything OFF by default |
 
 ## Commands run (reproducible)
 - `git log --oneline | head`, `git show --stat dfe8bb6`
@@ -63,9 +69,10 @@ Resume from this file across sessions. Update after every slice.
 3. Activation prerequisites to add to the checklist: `OUTBOX_SWEEP_ENABLED=true`, `OPERATIONS_SWEEP_ENABLED=true`, `HEARTBEAT_ENABLED` on both services.
 4. Owner actions: external heartbeat monitor; verified alert sender + second recipient; Railway CLI relink; pawaPay approval/token; mobile-money API approval.
 5. No merchant-sales payment provider established (simulator only).
-6. Phase 5 known gaps: no real provider (the provider decision blocks the real adapter); everything provider-side was the simulator's behaviour; real concurrency, a real Postgres and a real callback format are unverified; refunds of B2B invoice payments are not supported through the provider; settlement is not netted against later refunds; no seller identity verification; marketplace search is capped at 300 candidates; callbacks and reconciliation need the sweeps on.
-7. Phase 4 known gaps: no courier integration; no outbound messages to shoppers (Phase 7); online payment is the simulator only (real provider Phase 5); no marketplace discovery or moderation (Phase 5); a shopper who loses the order link cannot look the order up; low-end-device measurements are Phase 8; the web layer was exercised with supertest, not on real phones.
-8. Known gaps: credit-limit check not atomic under concurrent acceptance; no duplicate-payment detection; no dead-letter replay button; quotes/partial receipts/credit notes lack merchant commands; no web surface; FOR UPDATE contention untested on a real server; forecast quality unknown on real data.
+6. Phase 6 known gaps: no pawaPay token or sandbox exists, so everything is proven only against an in-memory fake; callback signature verification never saw a real callback; OPEN-12 (plan features) undecided so entitlements must stay off; two subscription billing paths coexist (OPEN-2); real concurrency and a real Postgres unverified; sweeps must be on or callbacks and lost payments are never processed.
+7. Phase 5 known gaps: no real provider (the provider decision blocks the real adapter); everything provider-side was the simulator's behaviour; real concurrency, a real Postgres and a real callback format are unverified; refunds of B2B invoice payments are not supported through the provider; settlement is not netted against later refunds; no seller identity verification; marketplace search is capped at 300 candidates; callbacks and reconciliation need the sweeps on.
+8. Phase 4 known gaps: no courier integration; no outbound messages to shoppers (Phase 7); online payment is the simulator only (real provider Phase 5); no marketplace discovery or moderation (Phase 5); a shopper who loses the order link cannot look the order up; low-end-device measurements are Phase 8; the web layer was exercised with supertest, not on real phones.
+9. Known gaps: credit-limit check not atomic under concurrent acceptance; no duplicate-payment detection; no dead-letter replay button; quotes/partial receipts/credit notes lack merchant commands; no web surface; FOR UPDATE contention untested on a real server; forecast quality unknown on real data.
 
 ## Next concrete step
-On `APPROVED: PHASE 5`: start Phase 6 (pawaPay subscriptions and entitlements; admin subscriptions panel). Before any deploy of Phase 1-5 work: rehearse the migrations on a restored production backup; set `STOREFRONT_ENABLED`, `OPERATIONS_SWEEP_ENABLED`, `OUTBOX_SWEEP_ENABLED` deliberately.
+On `APPROVED: PHASE 6`: start Phase 7 (WhatsApp action flows, AI clarification, consent register, localization, offline drafts; admin messaging and consent panel). Before any deploy of Phase 1-6 work: rehearse the migrations on a restored production backup; set `STOREFRONT_ENABLED`, `OPERATIONS_SWEEP_ENABLED`, `OUTBOX_SWEEP_ENABLED` deliberately.

@@ -91,6 +91,7 @@ Do not assume affiliation with the separately referenced TradePal AI (tradepalai
 | OPEN-9 | Human-reviewed language samples and error thresholds (Krio etc.); until then English only, no invented dialect strings | Phase 7 |
 | OPEN-10 | External heartbeat / dead-man's switch (owner action); verified alert sender domain and a second recipient (owner action) | Before any activation |
 | OPEN-11 | Whether to fix `tests/helpers/db.ts` (P10) now | Before Phase 1 |
+| OPEN-12 | Which premium features each plan includes (and whether voice, staff caps and the AI budget move onto plan versions). Until decided, `subscriptionEntitlements` must stay off for real businesses | Before enabling entitlements |
 
 ## C2. Phase 1 application of proposals (provisional, reversible, awaiting owner confirmation)
 
