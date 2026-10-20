@@ -27,6 +27,11 @@ Legacy WhatsApp roles map as: OWNER -> OWNER, STAFF -> SALES_CLERK (`membershipR
 | `staff:manage` | yes | yes | - | - | - | - |
 | `settings:manage` | yes | - | - | - | - | - |
 | `business:manage` | yes | - | - | - | - | - |
+| `trade:buy` | yes | yes | - | yes | - | - |
+| `trade:sell` | yes | yes | - | - | - | - |
+| `trade:payments` | yes | yes | - | - | yes | - |
+| `trade:partners` | yes | yes | - | - | - | - |
+| `trade:credit_override` | yes | - | - | - | - | - |
 
 ## Platform admin roles (TradePal staff; no merchant permission by default)
 
@@ -50,6 +55,8 @@ Legacy WhatsApp roles map as: OWNER -> OWNER, STAFF -> SALES_CLERK (`membershipR
 | `admin:resolve_support_case` | yes | yes | yes | - | yes |
 | `admin:delete_synthetic_org` | yes | - | - | - | yes |
 | `admin:flip_forecast_gate` | yes | - | - | - | yes |
+| `admin:set_forecast_thresholds` | yes | - | - | - | yes |
+| `admin:view_reorder` | yes | yes | - | - | - |
 | `admin:manage_admins` | yes | - | - | - | yes |
 
 Notes: viewing a merchant's financial data additionally needs a recorded support-access reason when flag `adminSupportAccessRequired` is on. The existing admin routes keep their original role checks (SUPER_ADMIN / SUPPORT); the platform permission is layered on top for the new panels. Regenerate with the command above if the matrix changes.

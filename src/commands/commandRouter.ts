@@ -143,6 +143,9 @@ const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
   { flag: FLAG_STOCK_V2, line: "/count <sku> <how many> - count your stock, then /count approve" },
   { flag: "reorderRules", line: "/reorder - see what to reorder and why; /reorder accept <number> makes a draft order (never sent by itself)" },
   { flag: "tradeOrders", line: "/orders - your purchase and sales orders; /sendorder, /acceptorder, /shiporder, /receiveorder <order number>" },
+  { flag: "tradeOrders", line: "/partners, /partner add|invite|share|terms|unlink, /join <code> - trade partners and linking" },
+  { flag: "tradeOrders", line: "/invoices, /payinvoice <invoice> <amount> [cash|momo|bank], /confirmpayment, /rejectpayment - trade invoices and payments" },
+  { flag: "catalogV2", line: "/wholesale <sku> <price> [per <pack>] [from <qty>], /publish <sku>, /unpublish <sku> - wholesale prices for your partners" },
   { line: "/help - show this message" },
 ];
 

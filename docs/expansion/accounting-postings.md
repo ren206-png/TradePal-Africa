@@ -92,3 +92,18 @@ Consequences, stated plainly: the books' Receivable is a ledger figure and can d
 ## Rounding and allocation
 
 `src/domain/rounding.ts`: division rounds half away from zero; percentages are basis points applied once; splitting an amount across lines uses largest remainder (ties to the earlier line), so parts always sum to the total. Unit tests include 100 across three equal lines = 34/33/33.
+
+## B2B trade documents (Phase 3, flag `accountingJournals`)
+
+| Event | Business | Entry |
+|---|---|---|
+| Seller ships and invoices (revenue recognised per shipment, cumulative rounding so invoices sum to the order total exactly) | seller | Dr Receivable, Cr Sales (invoice total). The shipped units also post Dr COGS, Cr Inventory at average cost (from stock) |
+| Buyer confirms receipt (accepted + quarantined units, value by cumulative rounding) | buyer | Dr Inventory, Cr Payables. Short units are not booked |
+| Short-delivery credit note (amount derived from the buyer's receipt) | seller | Dr Sales returns, Cr Receivable. Buyer: no entry |
+| Buyer records a payment | buyer | Dr Payables, Cr method (cash / wallet / bank / unclassified) |
+| Seller confirms a payment or records one received | seller | Dr method, Cr Receivable |
+| Simulator or provider-confirmed payment | seller / buyer | seller: Dr Provider clearing, Cr Receivable; buyer: Dr Payables, Cr Mobile money |
+
+Worked example (tested): 3 cartons x 24 at 220,000 = 660,000. Shipment 1 of 48 units invoices 440,000; the retailer receives 40 then 6 accepted + 1 damaged + 1 short; booked payable 430,833 (660,000 x 47/72); the short unit is credited 9,167 (440,000 x 1/48), so the invoice owes 430,833, exactly what the retailer booked. Shipment 2 invoices 220,000; invoices total 660,000. Final payable 650,833 = 660,000 - 9,167.
+
+Limits stated plainly: the buyer's payable is receipt-based, so a credit note for anything other than short delivery (price disputes, returned goods) is not supported in this phase and would need a buyer-side entry; a buyer who pays before receiving carries a debit balance on Payables (a prepayment); inventory value from the payable (value of the order line) can differ by rounding from average cost times units.
