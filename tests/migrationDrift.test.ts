@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
  */
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "prisma/migrations");
 /** Objects the migrations create that Prisma's datamodel cannot express (partial indexes). */
-const MIGRATION_ONLY_INDEXES = new Set(["Shop.Shop_one_default_per_business"]);
+const MIGRATION_ONLY_INDEXES = new Set(["Shop.Shop_one_default_per_business", "ReorderSuggestion.ReorderSuggestion_one_open_per_method"]);
 const SCHEMA_PATH = path.resolve(process.cwd(), "prisma/schema.prisma");
 
 async function shape(db: PGlite) {

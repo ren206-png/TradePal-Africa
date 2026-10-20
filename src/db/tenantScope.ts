@@ -51,6 +51,24 @@ export const TENANT_SCOPED_MODELS = new Set([
   "JournalEntry",
   "JournalLine",
   "DailyClose",
+  // Expansion Phase 3: trade documents, reorder and forecasting.
+  "TradePartner",
+  "PriceListShare",
+  "TradeOrder",
+  "TradeOrderLine",
+  "Shipment",
+  "ShipmentLine",
+  "GoodsReceipt",
+  "GoodsReceiptLine",
+  "TradeInvoice",
+  "TradeInvoiceLine",
+  "TradePayment",
+  "CreditNote",
+  "ReorderRule",
+  "ReorderSuggestion",
+  "ForecastPrediction",
+  "ForecastScore",
+  "ForecastGateEvent",
   // DeepSeek Integration Phase 3 (INTEGRATION_DESIGN.md §3): carries a
   // required businessId. Deliberately NOT added to APPEND_ONLY_MODELS below —
   // see AiUsageLedger's own schema.prisma docstring for why there is no

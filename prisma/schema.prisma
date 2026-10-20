@@ -27,6 +27,7 @@ model Country {
 }
 
 model Currency {
+  tradeOrders    TradeOrder[]
   priceLists     PriceList[]
   journalEntries JournalEntry[]
   code           String         @id // ISO 4217, e.g. NGN, KES, GHS, SLE, TZS
@@ -78,44 +79,63 @@ enum BusinessStatus {
 }
 
 model Business {
-  products           Product[]
-  productVariants    ProductVariant[]
-  variantAliases     VariantAlias[]
-  packConversions    PackConversion[]
-  priceLists         PriceList[]
-  priceRules         PriceRule[]
-  stockMovements     StockMovement[]
-  stockBalances      StockBalance[]
-  stockReservations  StockReservation[]
-  stockCounts        StockCount[]
-  stockCountLines    StockCountLine[]
-  stockTransfers     StockTransfer[]
-  stockTransferLines StockTransferLine[]
-  accounts           Account[]
-  journalEntries     JournalEntry[]
-  journalLines       JournalLine[]
-  dailyCloses        DailyClose[]
-  stockPolicy        StockPolicy?
-  id                 String              @id @default(uuid())
-  name               String
-  countryCode        String
-  currencyCode       String
-  languageCode       String
-  timezone           String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
+  tradePartners       TradePartner[]
+  linksInvited        BusinessLink[]       @relation("LinkInviter")
+  linksReceived       BusinessLink[]       @relation("LinkInvitee")
+  priceListShares     PriceListShare[]
+  tradeOrders         TradeOrder[]
+  tradeOrderLines     TradeOrderLine[]
+  shipments           Shipment[]
+  shipmentLines       ShipmentLine[]
+  goodsReceipts       GoodsReceipt[]
+  goodsReceiptLines   GoodsReceiptLine[]
+  tradeInvoices       TradeInvoice[]
+  tradeInvoiceLines   TradeInvoiceLine[]
+  tradePayments       TradePayment[]
+  creditNotes         CreditNote[]
+  reorderRules        ReorderRule[]
+  reorderSuggestions  ReorderSuggestion[]
+  forecastPredictions ForecastPrediction[]
+  forecastScores      ForecastScore[]
+  forecastGateEvents  ForecastGateEvent[]
+  products            Product[]
+  productVariants     ProductVariant[]
+  variantAliases      VariantAlias[]
+  packConversions     PackConversion[]
+  priceLists          PriceList[]
+  priceRules          PriceRule[]
+  stockMovements      StockMovement[]
+  stockBalances       StockBalance[]
+  stockReservations   StockReservation[]
+  stockCounts         StockCount[]
+  stockCountLines     StockCountLine[]
+  stockTransfers      StockTransfer[]
+  stockTransferLines  StockTransferLine[]
+  accounts            Account[]
+  journalEntries      JournalEntry[]
+  journalLines        JournalLine[]
+  dailyCloses         DailyClose[]
+  stockPolicy         StockPolicy?
+  id                  String               @id @default(uuid())
+  name                String
+  countryCode         String
+  currencyCode        String
+  languageCode        String
+  timezone            String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
   // Phase 29: platform-moderation suspension (src/domain/businessModeration.ts),
   // distinct from Merchant.removedAt's per-staff soft-deactivation — this cuts
   // off every merchant on the business at once, for a platform-rules
   // violation. suspendedAt/suspensionReason are null whenever status is
   // ACTIVE (reinstateBusiness clears them). Enforced in the live message path
   // by messageDispatcher.ts's own gate, not just by hiding admin UI.
-  status             BusinessStatus      @default(ACTIVE)
-  suspendedAt        DateTime?           @db.Timestamptz()
+  status              BusinessStatus       @default(ACTIVE)
+  suspendedAt         DateTime?            @db.Timestamptz()
   /// True only for synthetic/test/demo organizations. The ONLY businesses whose financial rows may ever be hard-deleted
   /// (database triggers enforce this); set at creation and immutable afterwards. See docs/expansion/db-protection.md.
-  isSynthetic        Boolean             @default(false)
-  suspensionReason   String?
-  createdAt          DateTime            @default(now()) @db.Timestamptz()
-  updatedAt          DateTime            @updatedAt @db.Timestamptz()
+  isSynthetic         Boolean              @default(false)
+  suspensionReason    String?
+  createdAt           DateTime             @default(now()) @db.Timestamptz()
+  updatedAt           DateTime             @updatedAt @db.Timestamptz()
 
   country  Country  @relation(fields: [countryCode], references: [code])
   currency Currency @relation(fields: [currencyCode], references: [code])
@@ -173,18 +193,21 @@ enum MembershipStatus {
 /// A physical or logical shop inside a business (tenant). Every business has exactly one default shop; more can be added
 /// in later phases. Additive: no existing table references Shop yet.
 model Shop {
-  stockMovements    StockMovement[]
-  stockBalances     StockBalance[]
-  stockReservations StockReservation[]
-  stockCounts       StockCount[]
-  transfersFrom     StockTransfer[]    @relation("TransferFrom")
-  transfersTo       StockTransfer[]    @relation("TransferTo")
-  id                String             @id @default(uuid())
-  businessId        String
-  name              String
-  isDefault         Boolean            @default(false)
-  createdAt         DateTime           @default(now()) @db.Timestamptz()
-  updatedAt         DateTime           @updatedAt @db.Timestamptz()
+  reorderRules        ReorderRule[]
+  reorderSuggestions  ReorderSuggestion[]
+  forecastPredictions ForecastPrediction[]
+  stockMovements      StockMovement[]
+  stockBalances       StockBalance[]
+  stockReservations   StockReservation[]
+  stockCounts         StockCount[]
+  transfersFrom       StockTransfer[]      @relation("TransferFrom")
+  transfersTo         StockTransfer[]      @relation("TransferTo")
+  id                  String               @id @default(uuid())
+  businessId          String
+  name                String
+  isDefault           Boolean              @default(false)
+  createdAt           DateTime             @default(now()) @db.Timestamptz()
+  updatedAt           DateTime             @updatedAt @db.Timestamptz()
 
   business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
   memberships Membership[]
@@ -1120,19 +1143,23 @@ model Product {
 }
 
 model ProductVariant {
-  id                String        @id @default(uuid())
-  businessId        String
-  productId         String
-  sku               String
-  barcode           String?
-  name              String // e.g. "500 ml", "Red / L"; the product name is on Product
-  baseUnit          String // smallest tracked quantum: piece, bottle, gram. Pack sizes convert to this explicitly.
-  trackStock        Boolean       @default(true)
-  lowStockThreshold Int? // in base units
-  status            ProductStatus @default(DRAFT)
-  inventoryItemId   String?       @unique // bridge to the legacy InventoryItem this variant adopted (Phase 2 adoption)
-  createdAt         DateTime      @default(now()) @db.Timestamptz()
-  updatedAt         DateTime      @updatedAt @db.Timestamptz()
+  tradeOrderLines     TradeOrderLine[]
+  reorderRules        ReorderRule[]
+  reorderSuggestions  ReorderSuggestion[]
+  forecastPredictions ForecastPrediction[]
+  id                  String               @id @default(uuid())
+  businessId          String
+  productId           String
+  sku                 String
+  barcode             String?
+  name                String // e.g. "500 ml", "Red / L"; the product name is on Product
+  baseUnit            String // smallest tracked quantum: piece, bottle, gram. Pack sizes convert to this explicitly.
+  trackStock          Boolean              @default(true)
+  lowStockThreshold   Int? // in base units
+  status              ProductStatus        @default(DRAFT)
+  inventoryItemId     String?              @unique // bridge to the legacy InventoryItem this variant adopted (Phase 2 adoption)
+  createdAt           DateTime             @default(now()) @db.Timestamptz()
+  updatedAt           DateTime             @updatedAt @db.Timestamptz()
 
   business      Business           @relation(fields: [businessId], references: [id])
   product       Product            @relation(fields: [productId], references: [id])
@@ -1195,16 +1222,17 @@ enum PriceStatus {
 }
 
 model PriceList {
-  id           String        @id @default(uuid())
+  shares       PriceListShare[]
+  id           String           @id @default(uuid())
   businessId   String
   name         String
   kind         PriceListKind
   currencyCode String
   customerId   String? // CUSTOMER lists: the one customer these approved prices apply to
-  status       PriceStatus   @default(ACTIVE)
-  validFrom    DateTime?     @db.Timestamptz()
-  validTo      DateTime?     @db.Timestamptz()
-  createdAt    DateTime      @default(now()) @db.Timestamptz()
+  status       PriceStatus      @default(ACTIVE)
+  validFrom    DateTime?        @db.Timestamptz()
+  validTo      DateTime?        @db.Timestamptz()
+  createdAt    DateTime         @default(now()) @db.Timestamptz()
 
   business Business    @relation(fields: [businessId], references: [id])
   currency Currency    @relation(fields: [currencyCode], references: [code])
@@ -1539,4 +1567,525 @@ model DailyClose {
   business Business @relation(fields: [businessId], references: [id])
 
   @@unique([businessId, businessDate, currencyCode])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 3: B2B procurement and wholesale, reorder engine, forecasting.
+// Each business owns ITS OWN row of every document (buyer's purchase order, seller's sales order). The two rows are
+// linked by plain counterpart ids (deliberately no foreign key across tenants) and kept in step by outbox events that
+// copy only agreed fields. Neither side ever reads the other's books.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum TradePartnerRole {
+  SUPPLIER
+  CUSTOMER
+  BOTH
+}
+
+enum PartnerLinkStatus {
+  NONE
+  INVITED
+  LINKED
+  REVOKED
+}
+
+enum BusinessLinkStatus {
+  INVITED
+  ACTIVE
+  REVOKED
+}
+
+/// A trade counterparty in ONE business's books. Registered on TradePal or not; being linked shares nothing but agreed documents.
+model TradePartner {
+  id                   String            @id @default(uuid())
+  businessId           String
+  name                 String
+  normalizedName       String
+  phone                String?
+  role                 TradePartnerRole  @default(SUPPLIER)
+  linkStatus           PartnerLinkStatus @default(NONE)
+  linkedBusinessId     String? // the partner's own TradePal business, once an explicit link is ACTIVE
+  linkId               String?
+  paymentTermsDays     Int?
+  creditLimitMinor     BigInt? // seller-approved terms recorded by the merchant; TradePal does not lend, guarantee or score
+  blockWhenOverdueDays Int?
+  note                 String?
+  createdAt            DateTime          @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, normalizedName])
+  @@index([businessId, role])
+}
+
+/// An explicit, reversible authorization between two businesses. Not tenant-scoped (it has two parties).
+model BusinessLink {
+  id                String             @id @default(uuid())
+  inviterBusinessId String
+  inviteeBusinessId String?
+  inviterPartnerId  String
+  inviteePartnerId  String?
+  tokenHash         String             @unique // sha256 of the one-time invite token; the token itself is never stored
+  status            BusinessLinkStatus @default(INVITED)
+  expiresAt         DateTime           @db.Timestamptz()
+  createdBy         String?
+  acceptedBy        String?
+  acceptedAt        DateTime?          @db.Timestamptz()
+  revokedBy         String?
+  revokedAt         DateTime?          @db.Timestamptz()
+  createdAt         DateTime           @default(now()) @db.Timestamptz()
+
+  inviter Business  @relation("LinkInviter", fields: [inviterBusinessId], references: [id])
+  invitee Business? @relation("LinkInvitee", fields: [inviteeBusinessId], references: [id])
+
+  @@index([inviterBusinessId, status])
+  @@index([inviteeBusinessId, status])
+}
+
+/// A seller's wholesale price list shared with one linked buyer. Revoking stops new orders; agreed documents stay.
+model PriceListShare {
+  id          String    @id @default(uuid())
+  businessId  String
+  priceListId String
+  linkId      String
+  createdAt   DateTime  @default(now()) @db.Timestamptz()
+  revokedAt   DateTime? @db.Timestamptz()
+
+  business  Business  @relation(fields: [businessId], references: [id])
+  priceList PriceList @relation(fields: [priceListId], references: [id])
+
+  @@unique([priceListId, linkId])
+  @@index([businessId])
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+/// Acceptance state machine only. Goods movement, invoicing and payment are separate states.
+enum OrderAcceptance {
+  DRAFT
+  REQUESTED
+  QUOTED
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum GoodsMovementStatus {
+  NOT_SHIPPED
+  PARTIALLY_SHIPPED
+  SHIPPED
+  PARTIALLY_RECEIVED
+  RECEIVED
+}
+
+model TradeOrder {
+  id                 String              @id @default(uuid())
+  businessId         String
+  side               TradeSide
+  partnerId          String
+  counterpartOrderId String?             @unique // the other business's row of this same order
+  reference          String
+  currencyCode       String
+  acceptance         OrderAcceptance     @default(DRAFT)
+  movement           GoodsMovementStatus @default(NOT_SHIPPED)
+  totalMinor         BigInt              @default(0)
+  paymentTermsDays   Int?
+  validUntil         DateTime?           @db.Timestamptz()
+  holdUntil          DateTime?           @db.Timestamptz()
+  note               String?
+  frozenTerms        Json? // snapshot taken on acceptance: lines, prices, terms. Catalog edits never rewrite it.
+  acceptedAt         DateTime?           @db.Timestamptz()
+  closedAt           DateTime?           @db.Timestamptz()
+  createdBy          String?
+  createdAt          DateTime            @default(now()) @db.Timestamptz()
+  updatedAt          DateTime            @updatedAt @db.Timestamptz()
+
+  business  Business         @relation(fields: [businessId], references: [id])
+  currency  Currency         @relation(fields: [currencyCode], references: [code])
+  lines     TradeOrderLine[]
+  shipments Shipment[]
+  invoices  TradeInvoice[]
+
+  @@unique([businessId, reference])
+  @@index([businessId, side, acceptance])
+  @@index([partnerId])
+}
+
+model TradeOrderLine {
+  id                   String   @id @default(uuid())
+  businessId           String
+  orderId              String
+  lineNo               Int
+  variantId            String? // this business's own variant (stock is received/shipped against it)
+  counterpartVariantId String? // the other business's variant id, for linked orders (no cross-tenant foreign key)
+  description          String
+  sku                  String
+  unit                 String // pack name or base unit, as ordered
+  packBaseQuantity     Int      @default(1) // snapshot of the declared conversion
+  quantity             Int // in `unit`
+  baseQuantity         Int // quantity x packBaseQuantity
+  unitPriceMinor       BigInt // per `unit`, frozen on acceptance
+  lineTotalMinor       BigInt
+  shippedBase          Int      @default(0)
+  receivedBase         Int      @default(0) // goods the buyer has accepted or quarantined (short units are not received)
+  reservationId        String?
+  counterpartLineId    String?  @unique
+  createdAt            DateTime @default(now()) @db.Timestamptz()
+
+  business Business        @relation(fields: [businessId], references: [id])
+  order    TradeOrder      @relation(fields: [orderId], references: [id])
+  variant  ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@unique([orderId, lineNo])
+  @@index([businessId])
+}
+
+enum ShipmentStatus {
+  DISPATCHED
+  PARTIALLY_RECEIVED
+  RECEIVED
+}
+
+model Shipment {
+  id                    String         @id @default(uuid())
+  businessId            String
+  orderId               String
+  side                  TradeSide
+  number                Int
+  waybillRef            String?
+  carrier               String?
+  status                ShipmentStatus @default(DISPATCHED)
+  dispatchedAt          DateTime       @default(now()) @db.Timestamptz()
+  counterpartShipmentId String?        @unique
+  createdBy             String?
+
+  business Business       @relation(fields: [businessId], references: [id])
+  order    TradeOrder     @relation(fields: [orderId], references: [id])
+  lines    ShipmentLine[]
+  receipts GoodsReceipt[]
+
+  @@unique([orderId, number])
+  @@index([businessId])
+}
+
+model ShipmentLine {
+  id           String @id @default(uuid())
+  businessId   String
+  shipmentId   String
+  orderLineId  String
+  baseQuantity Int
+  acceptedBase Int    @default(0)
+  damagedBase  Int    @default(0)
+  shortBase    Int    @default(0)
+
+  business Business @relation(fields: [businessId], references: [id])
+  shipment Shipment @relation(fields: [shipmentId], references: [id])
+
+  @@unique([shipmentId, orderLineId])
+  @@index([businessId])
+}
+
+/// The buyer's confirmation of what actually arrived. Only a receipt increases the buyer's stock. Append-only.
+model GoodsReceipt {
+  id         String   @id @default(uuid())
+  businessId String
+  shipmentId String
+  note       String?
+  receivedBy String?
+  receivedAt DateTime @default(now()) @db.Timestamptz()
+
+  business Business           @relation(fields: [businessId], references: [id])
+  shipment Shipment           @relation(fields: [shipmentId], references: [id])
+  lines    GoodsReceiptLine[]
+
+  @@index([businessId, shipmentId])
+}
+
+model GoodsReceiptLine {
+  id             String  @id @default(uuid())
+  businessId     String
+  receiptId      String
+  shipmentLineId String
+  acceptedBase   Int
+  damagedBase    Int     @default(0)
+  shortBase      Int     @default(0)
+  reason         String?
+  valueMinor     BigInt // value booked for what was received (accepted + quarantined), by cumulative rounding
+
+  business Business     @relation(fields: [businessId], references: [id])
+  receipt  GoodsReceipt @relation(fields: [receiptId], references: [id])
+
+  @@index([businessId])
+}
+
+enum TradeInvoiceStatus {
+  ISSUED
+  CANCELLED
+}
+
+/// A seller's invoice for ONE shipment, and the buyer's copy (the payable). Totals equal the shipped lines exactly.
+model TradeInvoice {
+  id                   String             @id @default(uuid())
+  businessId           String
+  side                 TradeSide
+  partnerId            String
+  orderId              String
+  shipmentId           String
+  counterpartInvoiceId String?            @unique
+  number               String
+  currencyCode         String
+  totalMinor           BigInt
+  creditedMinor        BigInt             @default(0)
+  paidMinor            BigInt             @default(0)
+  status               TradeInvoiceStatus @default(ISSUED)
+  issuedAt             DateTime           @default(now()) @db.Timestamptz()
+  dueDate              DateTime?          @db.Timestamptz()
+
+  business Business           @relation(fields: [businessId], references: [id])
+  order    TradeOrder         @relation(fields: [orderId], references: [id])
+  lines    TradeInvoiceLine[]
+  payments TradePayment[]
+  credits  CreditNote[]
+
+  @@unique([businessId, number])
+  @@index([businessId, side, status])
+  @@index([orderId])
+}
+
+model TradeInvoiceLine {
+  id               String @id @default(uuid())
+  businessId       String
+  invoiceId        String
+  orderLineId      String
+  description      String
+  sku              String
+  unit             String
+  packBaseQuantity Int
+  baseQuantity     Int
+  unitPriceMinor   BigInt
+  lineTotalMinor   BigInt
+
+  business Business     @relation(fields: [businessId], references: [id])
+  invoice  TradeInvoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
+}
+
+enum PaymentDirection {
+  OUT // the buyer paying
+  IN // the seller receiving
+}
+
+enum TradePaymentMethod {
+  CASH
+  MOBILE_MONEY
+  BANK
+  OTHER
+}
+
+/// How we know a payment happened. A buyer's report is only ever a PROPOSAL to the seller.
+enum TradePaymentEvidence {
+  MERCHANT_RECORDED
+  COUNTERPARTY_REPORTED
+  COUNTERPARTY_CONFIRMED
+  SIMULATOR_CONFIRMED
+  PROVIDER_CONFIRMED
+}
+
+enum TradePaymentState {
+  PROPOSED
+  APPLIED
+  HELD
+  REJECTED
+}
+
+model TradePayment {
+  id                   String               @id @default(uuid())
+  businessId           String
+  invoiceId            String
+  direction            PaymentDirection
+  amountMinor          BigInt
+  currencyCode         String
+  method               TradePaymentMethod
+  evidence             TradePaymentEvidence
+  state                TradePaymentState
+  reference            String?
+  provider             String?
+  externalId           String?
+  reason               String?
+  counterpartPaymentId String?              @unique
+  journalEntryId       String?
+  createdBy            String?
+  createdAt            DateTime             @default(now()) @db.Timestamptz()
+  appliedAt            DateTime?            @db.Timestamptz()
+
+  business Business     @relation(fields: [businessId], references: [id])
+  invoice  TradeInvoice @relation(fields: [invoiceId], references: [id])
+
+  @@unique([businessId, provider, externalId])
+  @@index([businessId, state])
+  @@index([invoiceId])
+}
+
+/// A seller-issued reduction of an invoice (short delivery, price correction). The buyer holds a mirror.
+model CreditNote {
+  id                      String    @id @default(uuid())
+  businessId              String
+  side                    TradeSide
+  invoiceId               String
+  number                  String
+  amountMinor             BigInt
+  reason                  String
+  counterpartCreditNoteId String?   @unique
+  createdBy               String?
+  createdAt               DateTime  @default(now()) @db.Timestamptz()
+
+  business Business     @relation(fields: [businessId], references: [id])
+  invoice  TradeInvoice @relation(fields: [invoiceId], references: [id])
+
+  @@unique([businessId, number])
+  @@index([invoiceId])
+}
+
+enum ReorderMode {
+  FIXED
+  DAYS_OF_COVER
+}
+
+model ReorderRule {
+  id                 String      @id @default(uuid())
+  businessId         String
+  shopId             String
+  variantId          String
+  mode               ReorderMode
+  reorderPoint       Int?
+  reorderQuantity    Int?
+  targetCoverDays    Int?
+  windowDays         Int?
+  preferredPartnerId String?
+  active             Boolean     @default(true)
+  createdAt          DateTime    @default(now()) @db.Timestamptz()
+  updatedAt          DateTime    @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([shopId, variantId])
+  @@index([businessId])
+}
+
+enum SuggestionMethod {
+  TIER1_FIXED
+  TIER1_COVER
+  TIER2_FORECAST
+}
+
+enum SuggestionStatus {
+  PROPOSED
+  ACCEPTED
+  DISMISSED
+  SUPERSEDED
+}
+
+/// A reorder suggestion is a PROPOSAL (a draft purchase order with its reasoning). It never places or pays anything.
+model ReorderSuggestion {
+  id               String           @id @default(uuid())
+  businessId       String
+  shopId           String
+  variantId        String
+  ruleId           String?
+  method           SuggestionMethod
+  suggestedBaseQty Int
+  inputs           Json // every number the arithmetic used
+  arithmetic       String // the arithmetic, in words, shown to the merchant
+  status           SuggestionStatus @default(PROPOSED)
+  draftOrderId     String?
+  createdAt        DateTime         @default(now()) @db.Timestamptz()
+  decidedAt        DateTime?        @db.Timestamptz()
+  decidedBy        String?
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([businessId, status])
+  @@index([shopId, variantId])
+}
+
+/// Tier 2: a demand forecast written in SHADOW mode. Never shown to a merchant unless the per-merchant gate is open.
+/// Append-only; its score is a separate row.
+model ForecastPrediction {
+  id                  String   @id @default(uuid())
+  businessId          String
+  shopId              String
+  variantId           String
+  method              String // e.g. ses-v1 (documented in docs/expansion/decisions.md)
+  horizonDays         Int
+  periodStart         DateTime @db.Timestamptz()
+  periodEnd           DateTime @db.Timestamptz()
+  predictionMilli     Int // predicted units over the horizon, x1000 (integer arithmetic only)
+  baselineMilli       Int // the Tier 1 trailing-average prediction for the same period
+  suggestedReorderQty Int
+  inputs              Json // the series and parameters used
+  runAt               DateTime @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+  score    ForecastScore?
+
+  @@unique([shopId, variantId, method, periodStart])
+  @@index([businessId, periodEnd])
+}
+
+model ForecastScore {
+  id                    String   @id @default(uuid())
+  businessId            String
+  predictionId          String   @unique
+  actualMilli           Int
+  absErrorMilli         Int
+  apeBps                Int? // null when actual demand was zero (percentage error undefined)
+  baselineAbsErrorMilli Int
+  baselineApeBps        Int?
+  stockout              Boolean // stock ran out in the period: demand was censored, flagged and excluded from the headline metric
+  scoredAt              DateTime @default(now()) @db.Timestamptz()
+
+  business   Business           @relation(fields: [businessId], references: [id])
+  prediction ForecastPrediction @relation(fields: [predictionId], references: [id])
+}
+
+/// Platform-wide promotion thresholds. NULL until the owner sets them: there are no invented defaults.
+model ForecastGateConfig {
+  id                Int      @id @default(1)
+  minScoredWeeks    Int?
+  minImprovementBps Int?
+  updatedBy         String?
+  updatedAt         DateTime @default(now()) @db.Timestamptz()
+}
+
+enum GateAction {
+  ENABLED
+  DISABLED
+  REJECTED
+}
+
+/// Every attempt to flip a merchant's forecast gate, including rejected ones, with the metrics at the time. Append-only.
+model ForecastGateEvent {
+  id            String     @id @default(uuid())
+  businessId    String
+  action        GateAction
+  adminUserId   String
+  reason        String
+  metrics       Json
+  correlationId String?
+  createdAt     DateTime   @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt])
 }
