@@ -524,14 +524,25 @@ export async function journalLegacyTransactionIfEnabled(scoped: TenantScopedClie
 /** Transactions that should have a journal entry and do not (flag was off, or a posting failed). */
 export async function findUnjournaledTransactions(scoped: TenantScopedClient, limit = 500): Promise<Transaction[]> {
   const txns = await scoped.transaction.findMany({ orderBy: { createdAt: "asc" } });
-  const keys = new Set((await scoped.journalEntry.findMany({ where: { sourceType: "TRANSACTION" }, select: { sourceId: true } })).map((e) => e.sourceId));
+  const entries = await scoped.journalEntry.findMany({ where: { sourceType: "TRANSACTION" }, select: { id: true, sourceId: true } });
+  const entryOfTxn = new Map(entries.map((e) => [e.sourceId, e.id]));
+  const reversedEntries = new Set(
+    (await scoped.journalEntry.findMany({ where: { reversalOfEntryId: { not: null } }, select: { reversalOfEntryId: true } })).map((e) => e.reversalOfEntryId),
+  );
   const missing: Transaction[] = [];
+  const missingIds = new Set<string>();
   for (const t of txns) {
-    if (keys.has(t.id)) continue;
-    if (t.type === "STOCK_ADJUSTMENT" || (t.amountMinor <= 0n && !t.reversalOfTransactionId)) continue;
-    // A reversal of something that was never journaled has nothing to reverse: not a gap.
-    if (t.reversalOfTransactionId && !keys.has(t.reversalOfTransactionId)) continue;
+    if (t.reversalOfTransactionId) {
+      const originalEntry = entryOfTxn.get(t.reversalOfTransactionId);
+      if (originalEntry && reversedEntries.has(originalEntry)) continue; // already reversed in the books
+      // A reversal of something neither journaled nor about to be has nothing to reverse: not a gap.
+      if (!originalEntry && !missingIds.has(t.reversalOfTransactionId)) continue;
+    } else {
+      if (entryOfTxn.has(t.id)) continue;
+      if (t.type === "STOCK_ADJUSTMENT" || t.amountMinor <= 0n) continue;
+    }
     missing.push(t);
+    missingIds.add(t.id);
     if (missing.length >= limit) break;
   }
   return missing;
