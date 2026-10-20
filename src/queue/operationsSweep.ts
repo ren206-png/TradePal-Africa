@@ -5,13 +5,15 @@ import { runForecasts, scoreForecasts, forecastForLive } from "../domain/forecas
 import { generateReorderSuggestions } from "../domain/reorder.js";
 import { expireReservations } from "../domain/stock.js";
 import { expireTradeOrders } from "../domain/trade/orders.js";
+import { expireStoreOrders } from "../domain/store/orders.js";
 
 /**
  * Periodic operations for the Phase 2-3 capabilities (OFF unless OPERATIONS_SWEEP_ENABLED=true):
  *   1. expire stock reservations whose time has passed (so held stock is never stuck);
  *   2. expire requested/quoted trade orders past their validity;
- *   3. refresh reorder suggestions (Tier 1; the forecast quantity only for merchants whose gate is open);
- *   4. write the day's shadow forecasts and score every forecast whose period has ended (the "nightly" scoring job).
+ *   3. (Phase 4) lapse unconfirmed or unpaid consumer store orders and release their held stock; retire abandoned baskets;
+ *   4. refresh reorder suggestions (Tier 1; the forecast quantity only for merchants whose gate is open);
+ *   5. write the day's shadow forecasts and score every forecast whose period has ended (the "nightly" scoring job).
  * Every task is idempotent, so running more often than needed is harmless, and one task failing never stops the others.
  */
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000; // hourly
@@ -24,6 +26,8 @@ export function operationsSweepEnabled(env: NodeJS.ProcessEnv = process.env): bo
 export interface OperationsSweepResult {
   reservationsExpired: number;
   tradeOrdersExpired: number;
+  storeOrdersExpired: number;
+  basketsExpired: number;
   suggestionsCreated: number;
   forecastsWritten: number;
   forecastsScored: number;
@@ -31,7 +35,7 @@ export interface OperationsSweepResult {
 }
 
 export async function runOperationsSweep(prisma: PrismaClient, now: Date = new Date()): Promise<OperationsSweepResult> {
-  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
+  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, storeOrdersExpired: 0, basketsExpired: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
   const step = async (name: string, fn: () => Promise<void>) => {
     try {
       await fn();
@@ -46,6 +50,12 @@ export async function runOperationsSweep(prisma: PrismaClient, now: Date = new D
   });
   await step("trade orders", async () => {
     out.tradeOrdersExpired = await expireTradeOrders(prisma, now);
+  });
+  await step("store orders", async () => {
+    out.storeOrdersExpired = await expireStoreOrders(prisma, now);
+  });
+  await step("baskets", async () => {
+    out.basketsExpired = (await prisma.basket.updateMany({ where: { status: "OPEN", expiresAt: { lte: now } }, data: { status: "EXPIRED" } })).count;
   });
   await step("forecasts", async () => {
     const written = await runForecasts(prisma, now);
