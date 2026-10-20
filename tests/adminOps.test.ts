@@ -138,3 +138,27 @@ describe("re-run reconciliation from the console", () => {
     expect(JSON.stringify(await prisma.auditLog.findFirst({ where: { entityType: "Payment" }, orderBy: { createdAt: "desc" } }))).toContain(REASON);
   });
 });
+
+describe("support access covers the remaining merchant-sensitive reads (when the control is on)", () => {
+  it("opening a business and the cross-business mobile-money list need a role that may see merchant finances; opening one business needs a recorded session", async () => {
+    const s = await makeSeller(prisma, "Gate Shop", { slug: "gate-shop" });
+    const analyst = await loginAs("analyst@t.test");
+    const support = await loginAs("support@t.test");
+    // control off (default): unchanged behaviour
+    expect((await request(app).get(`/admin/businesses/${s.businessId}`).set(auth(analyst))).status).toBe(200);
+    expect((await request(app).get("/admin/mobile-money-alerts").set(auth(analyst))).status).toBe(200);
+    await prisma.featureFlag.update({ where: { key: "adminSupportAccessRequired" }, data: { enabledByDefault: true } });
+    try {
+      expect((await request(app).get(`/admin/businesses/${s.businessId}`).set(auth(analyst))).status).toBe(403); // metadata-only role
+      expect((await request(app).get("/admin/mobile-money-alerts").set(auth(analyst))).status).toBe(403);
+      const noSession = await request(app).get(`/admin/businesses/${s.businessId}`).set(auth(support));
+      expect(noSession.status).toBe(403);
+      expect(noSession.body.code).toBe("SUPPORT_ACCESS_REQUIRED");
+      expect((await request(app).get("/admin/mobile-money-alerts").set(auth(support))).status).toBe(200);
+      expect((await request(app).post(`/admin/businesses/${s.businessId}/support-access`).set(auth(support)).send({ reason: "Merchant asked about an invoice" })).status).toBeLessThan(300);
+      expect((await request(app).get(`/admin/businesses/${s.businessId}`).set(auth(support))).status).toBe(200);
+    } finally {
+      await prisma.featureFlag.update({ where: { key: "adminSupportAccessRequired" }, data: { enabledByDefault: false } });
+    }
+  });
+});

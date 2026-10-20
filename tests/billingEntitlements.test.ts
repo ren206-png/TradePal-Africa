@@ -125,7 +125,7 @@ describe("scenario 16: the entitlement matrix", () => {
     expect((await getEntitlement(b.scoped, b.businessId, at(48))).state).toBe("ACTIVE");
     await prisma.billingSwitch.update({ where: { provider_countryCode_purpose: { provider: "pawapay", countryCode: "SL", purpose: "PLATFORM_SUBSCRIPTION" } }, data: { newAttemptsEnabled: true } });
 
-    // (2) a consumer shop whose subscription has expired: shoppers still order, the seller still fulfils, closing still works, re-opening is the premium step
+    // (2) a consumer shop whose subscription has expired: shoppers still order, the seller still fulfils, closing still works, and re-opening is allowed because a shop is in the FREE plan
     const seller = await makeSeller(prisma, "Expired Shop", { slug: "expired-shop" });
     await enableFlag(prisma, seller.businessId, "subscriptionEntitlements");
     await seller.scoped.subscription.create({ data: { businessId: seller.businessId, planCode: "STARTER", status: "ACTIVE", currentPeriodStart: at(-60), currentPeriodEnd: at(-30) } });
@@ -136,7 +136,8 @@ describe("scenario 16: the entitlement matrix", () => {
     await completeStoreOrder(prisma, { businessId: seller.businessId, orderId: placed.order.id, code: (await loadStoreOrder(seller.scoped, placed.order.id)).pickupCode, collect: { method: "CASH" } });
     expect((await loadStoreOrder(seller.scoped, placed.order.id)).status).toBe("COMPLETED");
     await updateStorefront(prisma, seller.businessId, { enabled: false }); // closing is never restricted
-    await expect(updateStorefront(prisma, seller.businessId, { enabled: true })).rejects.toBeInstanceOf(EntitlementError); // re-opening a shop is a new premium operation
+    await expect(updateStorefront(prisma, seller.businessId, { enabled: true })).resolves.toMatchObject({ enabled: true }); // decision OPEN-12: the FREE plan includes a shop, so an expired business can re-open it
+    await expect(assertEntitled(seller.scoped, seller.businessId, "marketplace.publish", at(60))).rejects.toMatchObject({ code: "SUBSCRIPTION_EXPIRED" }); // what was PAID for (marketplace, trade, reorder) is what pauses
     expect(await seller.scoped.storeOrder.count()).toBe(1); // history intact and readable
 
     // (3) the documented servicing list is exactly the set of things this file proves; none of them is a premium operation

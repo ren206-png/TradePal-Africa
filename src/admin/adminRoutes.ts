@@ -54,7 +54,7 @@ import { parsePaginationParams, paginate } from "./pagination.js";
 import { InMemoryLoginRateLimiter, type LoginRateLimiter } from "./rateLimiter.js";
 import { revokeAdminToken } from "./tokenRevocation.js";
 import { createPlatformAdminRouter, type PlatformAdminOptions } from "./platformAdmin.js";
-import { recordPlatformAudit, requireStepUp, requireSupportAccess } from "./platformGuards.js";
+import { recordPlatformAudit, requireFinancialViewer, requireStepUp, requireSupportAccess } from "./platformGuards.js";
 import { auditAdminWrites, correlationIdOf, correlationMiddleware } from "./adminAudit.js";
 import type { PlatformPermission } from "../auth/permissions.js";
 
@@ -247,8 +247,10 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
     }),
   );
 
+  // Opening one business shows its people's phone numbers and its subscriptions: with the support-access control on it needs a recorded reason.
   router.get(
     "/businesses/:id",
+    requireSupportAccess(prisma, "Business"),
     asyncHandler(async (req, res) => {
       const businessId = req.params["id"] as string;
       const business = await prisma.business.findUnique({
@@ -395,6 +397,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
   router.get(
     "/mobile-money-alerts",
+    requireFinancialViewer(prisma),
     asyncHandler(async (req, res) => {
       const businessId = req.query["businessId"];
       const statusParam = req.query["status"];

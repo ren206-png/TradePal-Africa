@@ -51,6 +51,12 @@ export const SERVICING_OPERATIONS = [
 ] as const;
 
 const FALLBACK_PLAN = "FREE";
+/**
+ * DECISION (OPEN-12): the free plan includes opening an online shop. A shop is how a merchant is found and how shoppers arrive; charging for
+ * trade orders, marketplace publishing and reorder rules (the features that save a merchant money or find them wholesale/retail customers)
+ * is the paid line, not the storefront. Voice, staff caps and the AI budget stay on the older per-plan fields and are not moved onto plan versions.
+ */
+export const FREE_FEATURES: readonly string[] = ["storefront"];
 /** Plans created before versions existed carry no feature list: a paid plan includes every premium feature, the FREE plan none. A documented assumption (decisions C7). */
 const ALL_FEATURES = ["trade", "marketplace", "reorder", "storefront", "voice"];
 
@@ -74,7 +80,7 @@ export async function getEntitlement(scoped: TenantScopedClient, businessId: str
     const graceEnds = new Date(sub.currentPeriodEnd.getTime() + graceDays * DAY_MS);
     const live = now < sub.currentPeriodEnd;
     const inGrace = !live && now < graceEnds;
-    const features = new Set(version ? version.features : sub.plan.code === FALLBACK_PLAN ? [] : ALL_FEATURES);
+    const features = new Set(version ? version.features : sub.plan.code === FALLBACK_PLAN ? FREE_FEATURES : ALL_FEATURES);
     const paid = {
       planCode: sub.plan.code, planVersionId: version?.id ?? null, features, subscriptionStatus: sub.status, periodEnd: sub.currentPeriodEnd, graceEndsAt: graceEnds,
       entryCapPerMonth: version ? version.entryCapPerMonth : sub.plan.entryCapPerMonth, voiceEnabled: version ? version.voiceEnabled : sub.plan.voiceEnabled,
@@ -91,7 +97,7 @@ export async function getEntitlement(scoped: TenantScopedClient, businessId: str
 async function freeEntitlement(scoped: TenantScopedClient): Promise<Omit<Entitlement, "state">> {
   const plan = await scoped.plan.findUnique({ where: { code: FALLBACK_PLAN } });
   return {
-    planCode: FALLBACK_PLAN, planVersionId: null, features: new Set<string>(), entryCapPerMonth: plan?.entryCapPerMonth ?? null, voiceEnabled: plan?.voiceEnabled ?? false,
+    planCode: FALLBACK_PLAN, planVersionId: null, features: new Set<string>(FREE_FEATURES), entryCapPerMonth: plan?.entryCapPerMonth ?? null, voiceEnabled: plan?.voiceEnabled ?? false,
     staffCapCount: plan?.staffCapCount ?? null, subscriptionStatus: null, periodEnd: null, graceEndsAt: null,
   };
 }
@@ -105,7 +111,8 @@ export async function assertEntitled(scoped: TenantScopedClient, businessId: str
   const ent = await getEntitlement(scoped, businessId, now);
   if (ent.state === "SECURITY_SUSPENDED") throw new EntitlementError("SECURITY_SUSPENDED", "This account is suspended by TradePal. Please contact TradePal support. Paying a subscription does not lift a suspension.");
   const needed = PREMIUM_OPERATIONS[operation];
-  if (ent.state === "EXPIRED") {
+  // an expired business falls back to what the FREE plan includes: it keeps those, and loses only what was paid for
+  if (ent.state === "EXPIRED" && !ent.features.has(needed)) {
     throw new EntitlementError("SUBSCRIPTION_EXPIRED", "Your subscription has ended, so new orders, publishing and rules are paused. Everything already in progress, your payments and all your records are untouched. Renew with /renew to continue.");
   }
   if (!ent.features.has(needed)) {

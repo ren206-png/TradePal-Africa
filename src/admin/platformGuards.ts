@@ -135,6 +135,19 @@ export async function hasActiveSupportAccess(prisma: PrismaClient, adminUserId: 
  * unexpired support-access record for that exact business, and it writes a per-read audit row
  * ("admin.merchant_financials.viewed") so every read of someone's books is traceable.
  */
+/**
+ * For a route that lists money across businesses (so it has no single business to open a session for): when the support-access control is on,
+ * only roles that may open a merchant's financial data at all can read it. An analyst (metadata only) cannot.
+ */
+export function requireFinancialViewer(prisma: PrismaClient): RequestHandler {
+  return asyncHandler(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (!(await globalFlagEnabled(prisma, FLAG_SUPPORT_ACCESS))) return void next();
+    const admin = (req as AuthenticatedAdminRequest).adminUser;
+    if (!admin || !canPlatform(admin.role, "admin:view_merchant_financials")) return void res.status(403).json({ error: "You do not have permission to perform this action.", code: "FORBIDDEN" });
+    next();
+  });
+}
+
 export function requireSupportAccess(prisma: PrismaClient, entity: string): RequestHandler {
   return asyncHandler(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (!(await globalFlagEnabled(prisma, FLAG_SUPPORT_ACCESS))) {
