@@ -9,6 +9,8 @@ import { asyncHandler } from "./asyncHandler.js";
 import { createAdminTransactionsRouter } from "./adminTransactions.js";
 import { createAdminReorderRouter } from "./adminReorder.js";
 import { createAdminSupportRouter } from "./adminSupport.js";
+import { createAdminPaymentsRouter } from "./adminPayments.js";
+import { createAdminModerationRouter } from "./adminModeration.js";
 import { correlationIdOf } from "./adminAudit.js";
 import { verifyAdminPassword } from "./auth.js";
 import type { AuthenticatedAdminRequest } from "./authMiddleware.js";
@@ -50,6 +52,8 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
   router.use(createAdminTransactionsRouter(prisma, jwtSecret));
   router.use(createAdminReorderRouter(prisma, jwtSecret));
   router.use(createAdminSupportRouter(prisma, jwtSecret));
+  router.use(createAdminPaymentsRouter(prisma, jwtSecret));
+  router.use(createAdminModerationRouter(prisma, jwtSecret));
 
   router.get("/me/permissions", (req, res) => {
     const admin = (req as AuthenticatedAdminRequest).adminUser;
@@ -156,6 +160,10 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
       const unmatchedAlerts = await prisma.mobileMoneyAlert.count({ where: { matchStatus: "UNMATCHED" } });
       const openSupportCases = await prisma.supportCase.count({ where: { status: { not: "CLOSED" } } });
       const openPaymentExceptions = await prisma.paymentException.count({ where: { status: "OPEN" } });
+      const openProviderExceptions = await prisma.providerException.count({ where: { status: "OPEN" } });
+      const unresolvedPaymentAttempts = await prisma.paymentAttempt.count({ where: { status: { in: ["PENDING", "UNKNOWN"] } } });
+      const openReports = await prisma.marketplaceReport.count({ where: { status: "OPEN" } });
+      const openAppeals = await prisma.appeal.count({ where: { status: "OPEN" } });
       const pendingRefundRequests = await prisma.storeRefundRequest.count({ where: { status: { in: ["REQUESTED", "APPROVED", "GOODS_RECEIVED"] } } });
       const outbox = await getOutboxStats(prisma, now);
       const inbox = await getInboxStats(prisma, now);
@@ -164,7 +172,7 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
         merchants: { active: merchants },
         activity: { transactionsLast24h: transactions24h, transactionsLast7d: transactions7d },
         subscriptions: Object.fromEntries(subs.map((s) => [s.status, s._count._all])),
-        queues: { pendingDeletionRequests: deletions, unmatchedMobileMoneyAlerts: unmatchedAlerts, openSupportCases, openPaymentExceptions, pendingRefundRequests, outbox, inbox },
+        queues: { pendingDeletionRequests: deletions, unmatchedMobileMoneyAlerts: unmatchedAlerts, openSupportCases, openPaymentExceptions, pendingRefundRequests, openProviderExceptions, unresolvedPaymentAttempts, openReports, openAppeals, outbox, inbox },
         generatedAt: now,
       });
     }),

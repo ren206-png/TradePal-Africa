@@ -201,3 +201,18 @@ export async function pollRefunds(prisma: PrismaClient, registry: AdapterRegistr
   }
   return handled;
 }
+
+/**
+ * Admin or seller retries a FAILED refund. It is a NEW refund with its own key (the failed one stays in the history, unresolved until
+ * a person closes its exception), sent to the same provider that collected the money and never to a different one.
+ */
+export async function retryFailedRefund(prisma: PrismaClient, registry: AdapterRegistry, input: { refundId: string; actor?: string; now?: Date }): Promise<{ refund: ProviderRefund; replayed: boolean }> {
+  const failed = await prisma.providerRefund.findUnique({ where: { id: input.refundId } });
+  if (!failed || failed.status !== "FAILED") throw new PaymentsError("WRONG_STATE", "Only a failed refund can be retried.");
+  const tries = await prisma.providerRefund.count({ where: { idempotencyKey: { startsWith: `retry:${failed.id}:` } } });
+  return refundThroughProvider(prisma, registry, {
+    businessId: failed.businessId, attemptId: failed.attemptId, amountMinor: failed.amountMinor, reason: `Retry: ${failed.reason}`.slice(0, 300), idempotencyKey: `retry:${failed.id}:${tries + 1}`,
+    ...(failed.storeRefundRequestId ? { storeRefundRequestId: failed.storeRefundRequestId } : {}), ...(failed.storeOrderId ? { storeOrderId: failed.storeOrderId } : {}),
+    ...(failed.storeExceptionId ? { storeExceptionId: failed.storeExceptionId } : {}), ...(input.actor ?? failed.createdBy ? { actor: (input.actor ?? failed.createdBy)! } : {}), ...(input.now ? { now: input.now } : {}),
+  });
+}

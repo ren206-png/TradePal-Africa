@@ -117,7 +117,7 @@ export interface RefreshResult {
  * Asks the provider (authenticated) where an attempt stands and applies the answer. A provider that cannot be reached leaves the
  * attempt exactly as it was, schedules the next look with bounded backoff, and after MAX_POLLS raises an exception for a person.
  */
-export async function refreshAttempt(prisma: PrismaClient, registry: AdapterRegistry, attemptId: string, source: "POLL" | "ADMIN", now: Date): Promise<RefreshResult> {
+export async function refreshAttempt(prisma: PrismaClient, registry: AdapterRegistry, attemptId: string, source: "POLL" | "ADMIN", now: Date, actorId?: string): Promise<RefreshResult> {
   const found = await prisma.paymentAttempt.findUnique({ where: { id: attemptId }, include: { connection: true } });
   if (!found) throw new PaymentsError("NOT_FOUND", "No such attempt.");
   const { connection, ...attempt } = found;
@@ -143,7 +143,7 @@ export async function refreshAttempt(prisma: PrismaClient, registry: AdapterRegi
     if (attempt.externalRef === null && attempt.status !== "SUCCEEDED") {
       // We never got an acceptance and the provider (authenticated) has no record: it never collected. Safe to close.
       const moved = await scoped.paymentAttempt.updateMany({ where: { id: attempt.id, status: { in: ["CREATED", "UNKNOWN"] } }, data: { status: "FAILED", failureReason: "The provider has no record of this request." } });
-      if (moved.count === 1) await recordAttemptEvent(scoped, attempt.businessId, attempt.id, attempt.status, "FAILED", source, { reason: "provider has no record" });
+      if (moved.count === 1) await recordAttemptEvent(scoped, attempt.businessId, attempt.id, attempt.status, "FAILED", source, { reason: "provider has no record", ...(actorId ? { adminUserId: actorId } : {}) });
       return { outcome: { result: "NOT_FOUND" }, snapshot };
     }
     await raiseUnresolved(prisma, attempt, "The provider has no record of a payment we thought it accepted.");
@@ -193,7 +193,7 @@ export async function closeAttemptAfterCheck(
   prisma: PrismaClient, registry: AdapterRegistry, input: { attemptId: string; as: "FAILED" | "CANCELLED"; adminUserId: string; reason: string; now?: Date },
 ): Promise<{ closed: boolean; providerSays: string }> {
   const now = input.now ?? new Date();
-  const refreshed = await refreshAttempt(prisma, registry, input.attemptId, "ADMIN", now);
+  const refreshed = await refreshAttempt(prisma, registry, input.attemptId, "ADMIN", now, input.adminUserId);
   if (refreshed.outcome.result === "UNREACHABLE") throw new PaymentsError("CANNOT_VERIFY", "The provider could not be reached, so we cannot confirm it did not collect. Try again when it is available.");
   const attempt = await prisma.paymentAttempt.findUniqueOrThrow({ where: { id: input.attemptId } });
   if (attempt.status === "SUCCEEDED") return { closed: false, providerSays: "SUCCEEDED" };

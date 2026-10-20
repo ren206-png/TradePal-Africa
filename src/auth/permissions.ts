@@ -95,6 +95,9 @@ export const PLATFORM_PERMISSIONS = [
   "admin:set_forecast_thresholds", //    the platform-wide promotion thresholds (owner only)
   "admin:view_reorder", //               reorder suggestions, forecasts and their scores
   "admin:view_support_cases", //         consumer support cases, payment exceptions and refund-request counts (no merchant books)
+  "admin:view_payments", //              merchant payment intents, attempts, refunds, settlements and the exception queue
+  "admin:view_moderation", //            marketplace reports, listings, suspensions and appeals
+  "admin:manage_payment_connections", // connect a merchant to a payment provider (owner only; never a secret)
   "admin:manage_admins", //              create/disable platform admins
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
@@ -105,10 +108,11 @@ const PLATFORM_MATRIX: Readonly<Record<AdminRole, ReadonlySet<PlatformPermission
     "admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log",
     "admin:view_merchant_financials", "admin:manage_flags", "admin:resolve_exception", "admin:replay_dead_letter",
     "admin:pause_job_class", "admin:reverse_transaction", "admin:resolve_support_case", "admin:view_reorder", "admin:view_support_cases",
+    "admin:view_payments", "admin:view_moderation", "admin:moderate_listings",
   ]),
   SUPPORT: new Set<PlatformPermission>([
     "admin:view_overview", "admin:view_orgs", "admin:view_audit_log", "admin:view_merchant_financials",
-    "admin:revoke_staff", "admin:resolve_support_case", "admin:view_support_cases",
+    "admin:revoke_staff", "admin:resolve_support_case", "admin:view_support_cases", "admin:view_moderation",
   ]),
   // Read-only analyst (legacy role): metadata and audit only, never merchant financials.
   ANALYST: new Set<PlatformPermission>(["admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log"]),
@@ -139,6 +143,7 @@ export const PLATFORM_STEP_UP_PERMISSIONS: ReadonlySet<PlatformPermission> = new
   "admin:delete_synthetic_org",
   "admin:flip_forecast_gate",
   "admin:set_forecast_thresholds",
+  "admin:manage_payment_connections",
   "admin:manage_admins",
 ]);
 

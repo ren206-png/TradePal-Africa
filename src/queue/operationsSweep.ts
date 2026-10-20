@@ -6,14 +6,18 @@ import { generateReorderSuggestions } from "../domain/reorder.js";
 import { expireReservations } from "../domain/stock.js";
 import { expireTradeOrders } from "../domain/trade/orders.js";
 import { expireStoreOrders } from "../domain/store/orders.js";
+import { reconcilePayments } from "../domain/merchantPayments/outcomes.js";
+import { getAdapterRegistry } from "../payments/registry.js";
 
 /**
  * Periodic operations for the Phase 2-3 capabilities (OFF unless OPERATIONS_SWEEP_ENABLED=true):
  *   1. expire stock reservations whose time has passed (so held stock is never stuck);
  *   2. expire requested/quoted trade orders past their validity;
  *   3. (Phase 4) lapse unconfirmed or unpaid consumer store orders and release their held stock; retire abandoned baskets;
- *   4. refresh reorder suggestions (Tier 1; the forecast quantity only for merchants whose gate is open);
- *   5. write the day's shadow forecasts and score every forecast whose period has ended (the "nightly" scoring job).
+ *   4. (Phase 5) reconcile merchant payments with the provider: look at every unresolved attempt and refund that is due, close lapsed
+ *      payment requests, repair any confirmed payment that never got its allocation;
+ *   5. refresh reorder suggestions (Tier 1; the forecast quantity only for merchants whose gate is open);
+ *   6. write the day's shadow forecasts and score every forecast whose period has ended (the "nightly" scoring job).
  * Every task is idempotent, so running more often than needed is harmless, and one task failing never stops the others.
  */
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000; // hourly
@@ -28,6 +32,8 @@ export interface OperationsSweepResult {
   tradeOrdersExpired: number;
   storeOrdersExpired: number;
   basketsExpired: number;
+  paymentsPolled: number;
+  paymentsApplied: number;
   suggestionsCreated: number;
   forecastsWritten: number;
   forecastsScored: number;
@@ -35,7 +41,7 @@ export interface OperationsSweepResult {
 }
 
 export async function runOperationsSweep(prisma: PrismaClient, now: Date = new Date()): Promise<OperationsSweepResult> {
-  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, storeOrdersExpired: 0, basketsExpired: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
+  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, storeOrdersExpired: 0, basketsExpired: 0, paymentsPolled: 0, paymentsApplied: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
   const step = async (name: string, fn: () => Promise<void>) => {
     try {
       await fn();
@@ -56,6 +62,11 @@ export async function runOperationsSweep(prisma: PrismaClient, now: Date = new D
   });
   await step("baskets", async () => {
     out.basketsExpired = (await prisma.basket.updateMany({ where: { status: "OPEN", expiresAt: { lte: now } }, data: { status: "EXPIRED" } })).count;
+  });
+  await step("payments", async () => {
+    const r = await reconcilePayments(prisma, getAdapterRegistry(prisma), now);
+    out.paymentsPolled = r.polled;
+    out.paymentsApplied = r.applied;
   });
   await step("forecasts", async () => {
     const written = await runForecasts(prisma, now);
