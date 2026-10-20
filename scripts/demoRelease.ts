@@ -60,7 +60,7 @@ export interface ReleaseDemoResult {
   panels: PanelCheck[];
 }
 
-export async function runReleaseDemo(log: (line: string) => void = () => undefined): Promise<ReleaseDemoResult> {
+export async function runReleaseDemo(log: (line: string) => void = () => undefined, options: { servePort?: number } = {}): Promise<ReleaseDemoResult> {
   const testDb = await createTestDb();
   const prisma = testDb.prisma;
   const previous = { sim: process.env["STOREFRONT_SIMULATOR_ENABLED"], cm: process.env["CONSUMER_MESSAGING_ENABLED"] };
@@ -151,6 +151,9 @@ export async function runReleaseDemo(log: (line: string) => void = () => undefin
     await drainInbox(prisma);
     const heldCount = await w.R.scoped.paymentException.count({ where: { orderId: orderC.id } });
     log(`  A third shopper cancels, but their payment still arrives: it is HELD as an exception (${heldCount}), never silently applied.`);
+    const mkListing = await w.R.scoped.listing.findFirstOrThrow({ where: { variantId: w.rVariant.id, channel: "MARKETPLACE" } });
+    await fileReport(prisma, { listingId: mkListing.id, reason: "MISLEADING_PRICE", details: "The shelf price in the shop was higher than on the listing.", contact: "reporter@example.test" });
+    log("  A visitor reports the marketplace listing: it goes to the moderation queue. Nothing is taken down automatically.");
     await openSupportCase(prisma, { businessId: w.R.businessId, orderId: orderA.id, type: "OTHER", openedBy: "CONSUMER", summary: "Please confirm my pickup time next week", contactName: "Amaka Obi", contactPhone: "08031234567" });
 
     // consent and messaging: a recorded opt-in, and a refused message because no template is approved
@@ -243,6 +246,7 @@ export async function runReleaseDemo(log: (line: string) => void = () => undefin
       { panel: "Payments (exception queue)", path: "/payments/exceptions", count: (b) => rows(b, "exceptions"), summary: () => "provider exceptions" },
       { panel: "Subscriptions", path: "/subscriptions", count: (b) => rows(b, "subscriptions"), summary: () => "subscriptions with state" },
       { panel: "Subscriptions (billing exceptions)", path: "/subscriptions/exceptions", count: (b) => rows(b, "exceptions"), summary: () => "billing exceptions" },
+      { panel: "Listings and moderation (report queue)", path: "/moderation/queue", count: (b) => rows(b, "reports"), summary: () => "open reports awaiting a decision" },
       { panel: "Listings and moderation", path: "/moderation/listings", count: (b) => rows(b, "listings"), summary: () => "marketplace listings" },
       { panel: "Messaging and consent", path: "/messaging/consents", count: (b) => rows(b, "consents"), summary: () => "consent records, numbers masked" },
       { panel: "Messaging and consent (outbound log)", path: "/messaging/outbound", count: (b) => rows(b, "messages"), summary: () => "decisions incl. suppressed" },
@@ -257,6 +261,27 @@ export async function runReleaseDemo(log: (line: string) => void = () => undefin
       const n = res.status === 200 ? s.count(res.body) : 0;
       panels.push({ panel: s.panel, path: s.path.replace(biz, ":id").replace(w.W.businessId, ":id").replace(f.businessId, ":id"), rows: n, populated: res.status === 200 && n > 0, summary: res.status === 200 ? s.summary(res.body) : `HTTP ${res.status}` });
       log(`  ${res.status === 200 && n > 0 ? "populated" : "EMPTY    "}  ${s.panel}: ${n}`);
+    }
+
+    if (options.servePort) {
+      // Keep the synthetic world alive and serve the admin API so the admin console can be pointed at it (VITE_API_BASE_URL). Demo credentials only.
+      const serve = express();
+      serve.use((req, res, next) => {
+        const origin = req.headers.origin ?? "";
+        if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+          res.setHeader("Access-Control-Allow-Origin", origin);
+          res.setHeader("Access-Control-Allow-Headers", "authorization,content-type,x-admin-step-up,x-support-access");
+          res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+        }
+        if (req.method === "OPTIONS") return void res.sendStatus(204);
+        next();
+      });
+      serve.use(express.json());
+      serve.use("/admin", createAdminRouter(prisma, "demo-secret-not-a-real-secret"));
+      const server = serve.listen(options.servePort, "127.0.0.1");
+      log(`\nSERVING the synthetic admin API on http://127.0.0.1:${options.servePort}/admin  (login owner@demo.test / correct-horse; Ctrl-C to stop)`);
+      await new Promise<void>((resolve) => process.once("SIGINT", () => resolve()));
+      server.close();
     }
 
     return {
@@ -279,5 +304,7 @@ export async function runReleaseDemo(log: (line: string) => void = () => undefin
 }
 
 if (process.argv[1]?.endsWith("demoRelease.ts")) {
-  runReleaseDemo((line) => console.log(line)).then((r) => { console.log(`\nAdmin panels populated: ${r.panels.filter((p) => p.populated).length} of ${r.panels.length}`); process.exit(0); }, (error) => { console.error(error); process.exit(1); });
+  const serveAt = process.argv.indexOf("--serve");
+  const servePort = serveAt >= 0 ? Number(process.argv[serveAt + 1] ?? 4180) || 4180 : undefined;
+  runReleaseDemo((line) => console.log(line), servePort ? { servePort } : {}).then((r) => { console.log(`\nAdmin panels populated: ${r.panels.filter((p) => p.populated).length} of ${r.panels.length}`); process.exit(0); }, (error) => { console.error(error); process.exit(1); });
 }

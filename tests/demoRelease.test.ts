@@ -36,7 +36,7 @@ describe("release demo: wholesaler -> retailer -> consumer -> simulator payment 
 
     // section 18: every panel is populated by the demo's data
     expect(r.panels.filter((p) => !p.populated)).toEqual([]);
-    expect(r.panels.length).toBeGreaterThanOrEqual(17);
+    expect(r.panels.length).toBeGreaterThanOrEqual(18);
 
     const out = lines.join("\n");
     expect(out).toContain("SUPPRESSED (TEMPLATE_NOT_APPROVED)");
