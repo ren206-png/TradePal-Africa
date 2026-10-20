@@ -124,7 +124,7 @@ export function SubscriptionsPage() {
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       {cfg.configured ? (
         <p className="muted">pawaPay: {cfg.environment.toLowerCase()}. Signed callbacks {cfg.requireSignedCallbacks ? "required" : "NOT required"}. {cfg.environment === "PRODUCTION" ? (cfg.productionActivated ? "Production ACTIVATED." : "Production not activated: no new charges.") : ""}</p>
-      ) : <p className="form-error">pawaPay is not usable here: {cfg.reason}. No new charges can start.</p>}
+      ) : <p className="form-error">pawaPay is not usable here: {cfg.reason.replace(/\.+$/, "")}. No new charges can start.</p>}
 
       <div className="stat-grid">
         <div className="stat-card"><div className="stat-value">{count(overview.states)}</div><div className="stat-label">Subscriptions</div></div>

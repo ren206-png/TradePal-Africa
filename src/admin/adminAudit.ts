@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import type { AuthenticatedAdminRequest } from "./authMiddleware.js";
 import { recordPlatformAudit } from "./platformGuards.js";
+import { reportIncident, type AlertEmailDeps } from "../monitoring/alerts.js";
 
 /**
  * Every admin request gets a correlation id (the caller's `x-correlation-id` if it is a sane token, else a new
@@ -52,7 +53,7 @@ const SKIP = new Set(["/logout", "/step-up"]);
  * It wraps `res.json` so the row is written BEFORE the success response leaves the server; if the insert fails the
  * request still answers (the change already happened) and the failure is logged loudly.
  */
-export function auditAdminWrites(prisma: PrismaClient): RequestHandler {
+export function auditAdminWrites(prisma: PrismaClient, auditAlertDeps?: AlertEmailDeps): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
       next();
@@ -75,7 +76,11 @@ export function auditAdminWrites(prisma: PrismaClient): RequestHandler {
         metadata: { correlationId: correlationIdOf(res), status: res.statusCode, ...(reason ? { reason } : {}) },
         correlationId: correlationIdOf(res),
       })
-        .catch((error) => console.error("ADMIN AUDIT WRITE FAILED (action succeeded, row missing):", error instanceof Error ? error.message : error))
+        .catch((error) => {
+          // The change already happened, so the request still answers, but a missing audit row is itself an incident: tell a person (Phase 2 gap).
+          console.error("ADMIN AUDIT WRITE FAILED (action succeeded, row missing):", error instanceof Error ? error.message : error);
+          void reportIncident(auditAlertDeps, { service: "server", title: "Admin audit write failed (action succeeded, audit row missing)", detail: `${req.method} ${routePath} by admin ${admin.adminUserId}: ${error instanceof Error ? error.message : String(error)}` });
+        })
         .finally(() => original(body));
       return res;
     }) as typeof res.json;

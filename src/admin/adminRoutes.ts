@@ -214,7 +214,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
   router.use(requireAdminAuth(prisma, jwtSecret));
   router.use(correlationMiddleware());
-  router.use(auditAdminWrites(prisma));
+  router.use(auditAdminWrites(prisma, options.platform?.alertDeps));
 
   // Expansion Phase 1: admin console core (overview, system health, step-up, support access, admin list).
   router.use(createPlatformAdminRouter(prisma, jwtSecret, options.platform));

@@ -364,3 +364,18 @@ describe("sendWeeklyBusinessDigests", () => {
     expect(params.join("\n")).toBe(message);
   });
 });
+
+describe("digest labelling (reports flag)", () => {
+  it("calls sales minus expenses by its name when reportsV2 is on, and keeps the old wording otherwise", () => {
+    const summary = { transactionCount: 3, totalSalesMinor: 10_000n, totalExpensesMinor: 4_000n, totalPaymentsReceivedMinor: 0n, netMinor: 6_000n };
+    const digest = { summary, previousWeekSummary: { ...summary, netMinor: 1_000n }, topDebtor: null, weekStart: new Date("2026-10-05T00:00:00Z"), weekEnd: new Date("2026-10-12T00:00:00Z") } as never;
+    const plain = buildWeeklyDigestMessage(digest, "Africa/Lagos", "NGN", 2);
+    expect(plain).toContain("Net: 60.00 NGN");
+    expect(plain).toContain("last week's net was");
+    const honest = buildWeeklyDigestTemplateParams(digest, "Africa/Lagos", "NGN", 2, true);
+    expect(honest).toHaveLength(7); // still one parameter per line: the approved template is unchanged
+    expect(honest[4]).toBe("Sales minus expenses (not profit): 60.00 NGN");
+    expect(honest[5]).toContain("last week's sales minus expenses was");
+    expect(honest.join(" ")).not.toContain("Net:");
+  });
+});
