@@ -6,6 +6,8 @@ import { getOutboxStats } from "../domain/outbox.js";
 import { platformPermissionsFor } from "../auth/permissions.js";
 import { evaluateHeartbeats, heartbeatEnabled, requiredHeartbeatServices } from "../monitoring/heartbeat.js";
 import { asyncHandler } from "./asyncHandler.js";
+import { createAdminTransactionsRouter } from "./adminTransactions.js";
+import { correlationIdOf } from "./adminAudit.js";
 import { verifyAdminPassword } from "./auth.js";
 import type { AuthenticatedAdminRequest } from "./authMiddleware.js";
 import {
@@ -43,6 +45,8 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
   const stepUpLimiter = options.stepUpRateLimiter ?? new InMemoryLoginRateLimiter();
   const clock = options.now ?? (() => new Date());
 
+  router.use(createAdminTransactionsRouter(prisma, jwtSecret));
+
   router.get("/me/permissions", (req, res) => {
     const admin = (req as AuthenticatedAdminRequest).adminUser;
     if (!admin) {
@@ -76,12 +80,12 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
       const row = await prisma.adminUser.findUnique({ where: { id: admin.adminUserId } });
       const ok = row ? await verifyAdminPassword(parsed.data.password, row.passwordHash) : false;
       if (!row || !ok) {
-        await recordPlatformAudit(prisma, { adminUserId: admin.adminUserId, action: "admin.step_up.failed", entityType: "AdminUser", entityId: admin.adminUserId });
+        await recordPlatformAudit(prisma, { adminUserId: admin.adminUserId, action: "admin.step_up.failed", entityType: "AdminUser", entityId: admin.adminUserId, correlationId: correlationIdOf(res) });
         res.status(401).json({ error: "Incorrect password." });
         return;
       }
       await stepUpLimiter.reset(key);
-      await recordPlatformAudit(prisma, { adminUserId: admin.adminUserId, action: "admin.step_up.confirmed", entityType: "AdminUser", entityId: admin.adminUserId });
+      await recordPlatformAudit(prisma, { adminUserId: admin.adminUserId, action: "admin.step_up.confirmed", entityType: "AdminUser", entityId: admin.adminUserId, correlationId: correlationIdOf(res) });
       res.json({ stepUpToken: issueStepUpToken(admin.adminUserId, admin.jti, jwtSecret), expiresInSeconds: STEP_UP_TTL_SECONDS });
     }),
   );
@@ -106,6 +110,7 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
         businessId,
         reason: parsed.data.reason,
         now: clock(),
+        correlationId: correlationIdOf(res),
         ...(parsed.data.minutes !== undefined ? { minutes: parsed.data.minutes } : {}),
       });
       res.status(201).json({ supportAccess: { id: access.id, businessId, openedAt: access.openedAt, expiresAt: access.expiresAt } });

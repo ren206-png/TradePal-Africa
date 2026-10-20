@@ -53,6 +53,7 @@ import { InMemoryLoginRateLimiter, type LoginRateLimiter } from "./rateLimiter.j
 import { revokeAdminToken } from "./tokenRevocation.js";
 import { createPlatformAdminRouter, type PlatformAdminOptions } from "./platformAdmin.js";
 import { recordPlatformAudit, requireStepUp, requireSupportAccess } from "./platformGuards.js";
+import { auditAdminWrites, correlationIdOf, correlationMiddleware } from "./adminAudit.js";
 import type { PlatformPermission } from "../auth/permissions.js";
 
 const loginBodySchema = z.object({
@@ -209,6 +210,8 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   );
 
   router.use(requireAdminAuth(prisma, jwtSecret));
+  router.use(correlationMiddleware());
+  router.use(auditAdminWrites(prisma));
 
   // Expansion Phase 1: admin console core (overview, system health, step-up, support access, admin list).
   router.use(createPlatformAdminRouter(prisma, jwtSecret, options.platform));
@@ -454,6 +457,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
         // Standard #8: these platform-level writes were previously un-audited (no business to scope to).
         await recordPlatformAudit(prisma, {
           adminUserId: (req as AuthenticatedAdminRequest).adminUser!.adminUserId,
+          correlationId: correlationIdOf(res),
           action: "admin.plan.upserted",
           entityType: "Plan",
           entityId: plan.code,
@@ -494,6 +498,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
         const flag = await setFeatureFlagGlobalDefault(prisma, req.params["key"] as string, parsed.data.enabledByDefault);
         await recordPlatformAudit(prisma, {
           adminUserId: (req as AuthenticatedAdminRequest).adminUser!.adminUserId,
+          correlationId: correlationIdOf(res),
           action: "admin.feature_flag.global_default_set",
           entityType: "FeatureFlag",
           entityId: flag.key,
@@ -800,6 +805,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
       const result = await backfillInventoryLinksForBusiness(getTenantScopedClient(prisma, businessId), businessId);
       await recordPlatformAudit(prisma, {
         adminUserId: (req as AuthenticatedAdminRequest).adminUser!.adminUserId,
+        correlationId: correlationIdOf(res),
         action: "admin.inventory.backfill_run",
         entityType: "Business",
         entityId: businessId,

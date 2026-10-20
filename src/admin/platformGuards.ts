@@ -93,6 +93,7 @@ export interface OpenSupportAccessInput {
   reason: string;
   minutes?: number;
   now?: Date;
+  correlationId?: string;
 }
 
 /** Records the reason and opens a time-boxed window. Also writes the audit row in the same transaction. */
@@ -112,7 +113,7 @@ export async function openSupportAccess(prisma: PrismaClient, input: OpenSupport
         action: "admin.support_access.opened",
         entityType: "SupportAccess",
         entityId: access.id,
-        metadata: { reason: input.reason, expiresAt: expiresAt.toISOString() },
+        metadata: { reason: input.reason, expiresAt: expiresAt.toISOString(), ...(input.correlationId ? { correlationId: input.correlationId } : {}) },
       },
     });
     return access;
@@ -170,7 +171,7 @@ export function requireSupportAccess(prisma: PrismaClient, entity: string): Requ
 /** Platform-level audit row (no business). Used for admin-only actions such as step-up confirmation. */
 export async function recordPlatformAudit(
   prisma: PrismaClient,
-  input: { adminUserId: string; action: string; entityType: string; entityId?: string; businessId?: string; metadata?: Prisma.InputJsonValue },
+  input: { adminUserId: string; action: string; entityType: string; entityId?: string; businessId?: string; correlationId?: string; metadata?: Prisma.InputJsonValue },
 ): Promise<void> {
   await prisma.auditLog.create({
     data: {
@@ -180,7 +181,10 @@ export async function recordPlatformAudit(
       action: input.action,
       entityType: input.entityType,
       entityId: input.entityId ?? null,
-      metadata: input.metadata ?? Prisma.JsonNull,
+      metadata:
+        input.correlationId && (input.metadata === undefined || (typeof input.metadata === "object" && input.metadata !== null && !Array.isArray(input.metadata)))
+          ? ({ ...((input.metadata as Prisma.JsonObject | undefined) ?? {}), correlationId: input.correlationId } as Prisma.InputJsonValue)
+          : (input.metadata ?? Prisma.JsonNull),
     },
   });
 }
