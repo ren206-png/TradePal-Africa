@@ -50,6 +50,7 @@ import { generateReminderForCustomer, NoOutstandingDebtError } from "../domain/r
 import type { FlutterwaveDeps } from "../flutterwave/client.js";
 import type { PawaPayDeps } from "../pawapay/client.js";
 import { initiatePawaPayCollection, PawaPayCollectionError } from "../domain/pawapayCollection.js";
+import { FLAG_CATALOG, FLAG_DAILY_CLOSE, FLAG_STOCK_V2, handleOperationsCommand, OPERATIONS_COMMANDS } from "./operationsCommands.js";
 
 const REMINDERS_FEATURE_FLAG_KEY = "reminders";
 const MOBILE_MONEY_FEATURE_FLAG_KEY = "mobileMoneyReconciliation";
@@ -133,6 +134,13 @@ const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
     line: "/collect <customer name> <amount> <customer mobile-money number> - ask a customer to pay by mobile money; they get a prompt on their phone",
   },
   { flag: CUSTOMER_PAYMENT_LINKS_FEATURE_FLAG_KEY, line: "/catalog - list your priced items as text to forward to a customer" },
+  // Expansion Phase 2 (each line appears only for a business with that flag on).
+  { flag: FLAG_DAILY_CLOSE, line: "/close [amount] - close the day: see what cash you should have, then enter what you counted" },
+  { flag: FLAG_CATALOG, line: "/products - list your products and pack sizes" },
+  { flag: FLAG_CATALOG, line: "/addproduct <sku> <unit> <name> - add a product" },
+  { flag: FLAG_CATALOG, line: "/pack <sku> <pack name> <how many> - say how many pieces are in a carton, bag or box" },
+  { flag: FLAG_STOCK_V2, line: "/receive <sku> <quantity> [pack] [cost <price>] - record stock that arrived" },
+  { flag: FLAG_STOCK_V2, line: "/count <sku> <how many> - count your stock, then /count approve" },
   { line: "/help - show this message" },
 ];
 
@@ -917,6 +925,12 @@ export async function handleCommand(ctx: CommandContext, rawText: string): Promi
   const firstSpace = trimmed.indexOf(" ");
   const command = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
   const args = firstSpace === -1 ? "" : trimmed.slice(firstSpace + 1);
+
+  // Expansion Phase 2 commands: null while their flag is off, so the answer below is exactly what it always was.
+  if (OPERATIONS_COMMANDS.has(command)) {
+    const reply = await handleOperationsCommand(ctx, command, args);
+    if (reply !== null) return reply;
+  }
 
   switch (command) {
     case "/debt":
