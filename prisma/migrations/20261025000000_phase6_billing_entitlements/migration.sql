@@ -291,6 +291,10 @@ ALTER TABLE "EntitlementEvent" ADD CONSTRAINT "EntitlementEvent_businessId_fkey"
 -- Phase 6: platform subscriptions through pawaPay, plan versions, entitlement history - hand-written part.
 -- ============================================================================================
 
+-- Invoices that were already PAID before this migration (the hosted-checkout path) paid their full amount. Record that, so the billing screens,
+-- reports and the refund limit do not show a paid invoice as having received nothing. Runs before the Invoice triggers below exist.
+UPDATE "Invoice" SET "paidMinor" = "amountMinor" WHERE "status" = 'PAID' AND "paidMinor" = 0;
+
 -- ---- value constraints
 ALTER TABLE "PlanVersion" ADD CONSTRAINT "PlanVersion_values_check" CHECK (
   "billingPeriodDays" BETWEEN 1 AND 366 AND "graceDays" BETWEEN 0 AND 30 AND "version" >= 1);
