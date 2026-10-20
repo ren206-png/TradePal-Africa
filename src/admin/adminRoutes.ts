@@ -690,7 +690,8 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
       const { items, pagination: meta } = paginate(rows, pagination);
       // amountMinor is a bigint (Non-Negotiable: money is never a float) — same
       // string-serialization reasoning as GET /mobile-money-alerts above.
-      const serialized = items.map((item) => ({ ...item, amountMinor: item.amountMinor.toString() }));
+      // Phase 6 added two more bigint columns (paidMinor, refundedMinor): serialized the same way.
+      const serialized = items.map((item) => ({ ...item, amountMinor: item.amountMinor.toString(), paidMinor: item.paidMinor.toString(), refundedMinor: item.refundedMinor.toString() }));
       res.json({ invoices: serialized, pagination: meta });
     }),
   );
