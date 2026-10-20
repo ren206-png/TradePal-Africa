@@ -28,3 +28,29 @@ export async function makeSeller(prisma: PrismaClient, name: string, opts: { sto
   return { ...biz, product, variant, list };
 }
 export type Seller = Awaited<ReturnType<typeof makeSeller>>;
+
+/** A buyer's order at a seller (default: 3 cans, pickup). `online` places it as an ONLINE_SIMULATED order (needs the simulator switch). */
+export async function placeStoreOrder(
+  prisma: PrismaClient, s: Seller, opts: { qty?: number; fulfilment?: "PICKUP" | "DELIVERY"; online?: boolean; now?: Date } = {},
+) {
+  const { addToBasket } = await import("../../src/domain/store/basket.js");
+  const { checkoutBasket } = await import("../../src/domain/store/orders.js");
+  const t = await addToBasket(prisma, { token: null, businessId: s.businessId, variantId: s.variant.id, unit: "can", quantity: opts.qty ?? 3, ...(opts.now ? { now: opts.now } : {}) });
+  const zone = await s.scoped.deliveryZone.findFirst({ where: {} });
+  const prev = process.env["STOREFRONT_SIMULATOR_ENABLED"];
+  if (opts.online) process.env["STOREFRONT_SIMULATOR_ENABLED"] = "true";
+  try {
+    const r = await checkoutBasket(prisma, {
+      basketToken: t.token, buyer: { name: "Amaka Obi", phone: "08031234567", contactConsent: true }, allowOnline: opts.online ?? false, ...(opts.now ? { now: opts.now } : {}),
+      sellers: [{ businessId: s.businessId, fulfilment: opts.fulfilment ?? "PICKUP", paymentMethod: opts.online ? "ONLINE_SIMULATED" : "PAY_ON_COLLECTION", ...(opts.fulfilment === "DELIVERY" ? { zoneId: zone!.id, address: { landmark: "Near the blue gate" } } : {}) }],
+    });
+    const o = r.outcomes[0]!;
+    if (!o.ok) throw new Error(`placement failed: ${o.error}`);
+    return { order: o.order, token: o.accessToken };
+  } finally {
+    if (opts.online) {
+      if (prev === undefined) delete process.env["STOREFRONT_SIMULATOR_ENABLED"];
+      else process.env["STOREFRONT_SIMULATOR_ENABLED"] = prev;
+    }
+  }
+}
