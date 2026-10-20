@@ -26,3 +26,15 @@ Export: `GET /admin/businesses/:id/transactions.csv`, capped at 10,000 rows (`X-
 | Refund request, cancellation request | counted on the overview | decide them: the seller decides |
 
 The consumer's full phone number is shown to an admin only on a case handled by the platform or assigned to that admin; otherwise it is masked.
+
+## Phase 5 records
+
+| Record | Admin can | Admin cannot |
+|---|---|---|
+| Payment intent, attempt, allocation, refund, settlement, attempt history | view; refresh an attempt (an authenticated check); close an attempt only after the provider confirms it did not collect; retry a FAILED refund through the same provider | edit, delete (database refuses), mark anything paid, move money, change an attempt the provider reported final |
+| Provider exception | resolve with an outcome from a fixed list and a note of 10+ characters (audited) | delete; resolve a shop-order payment exception (the seller resolves those) |
+| Callback inbox | replay a dead-lettered callback (`admin:replay_dead_letter`, step-up) | edit or delete a callback |
+| Provider connection | create one for a merchant (owner only, step-up, no secret accepted, only providers allowed for merchant sales), disable it | edit a destination, delete |
+| Marketplace report | dismiss with a note, or act on it through a takedown | delete |
+| Listing / seller moderation | unpublish, suspend, reinstate (a reason of 10+ characters; recorded append-only with the admin) | delete a listing; block order servicing; edit a recorded decision |
+| Appeal | decide once (overturning reinstates) | decide twice |

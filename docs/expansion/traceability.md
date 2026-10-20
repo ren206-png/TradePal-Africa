@@ -54,3 +54,18 @@ Status vocabulary: implemented / locally tested / sandbox verified / partner app
 | 20 scenario 19 pickup and delivery end to end through the web | `storefront/routes.ts` | `storefrontWeb.test.ts` | locally tested |
 | 12 online payment is simulator-only and refused in production | `simulatedPaymentsAllowed`, `/order/:token/pay` | `storefrontWeb.test.ts` | locally tested |
 | 20 scenario 2 no oversell across channels (consumer holds) | reservations, expiry sweep | `storeCheckout.test.ts`, `storeSweep.test.ts` | locally tested |
+| 12 adapter contract, explicit capability errors, simulator | `payments/adapter.ts`, `simulatorAdapter.ts` | `paymentsLifecycle.test.ts` | locally tested (no real provider exists to test against) |
+| 12 intent / attempt / allocation / refund / settlement, idempotency, DB constraints | `domain/merchantPayments/*`, migration 20261024 | `paymentsLifecycle.test.ts`, `tradeFlow.test.ts`, `storefrontWeb.test.ts` | locally tested |
+| 12 secrets server-side, no merchant URLs, provider allow-list | `registerConnection`, `PURPOSE_POLICY` | `paymentsLifecycle.test.ts`, `adminPayments.test.ts` | locally tested |
+| 20 scenario 7 concurrent and replayed callbacks, one effect | `applyPaymentSnapshot` (guarded UPDATE) | `paymentsLifecycle.test.ts` | locally tested (replays and repeated appliers; real interleaving unproven) |
+| 20 scenario 8 forged signature / wrong account, tenant, purpose / amount, currency mismatch / unknown reference | `receiveProviderCallback`, `applyPaymentSnapshot` | `paymentsLifecycle.test.ts` | locally tested |
+| 20 scenario 9 accepted, timed-out, unknown stay unpaid until authenticated evidence | `startPaymentAttempt`, `refreshAttempt`, `reconcilePayments` | `paymentsLifecycle.test.ts` | locally tested |
+| 20 scenario 10 late success is a recoverable exception | `closeIntentsForSubject`, `applyToSubject`, `resolvePaymentException` | `paymentsLifecycle.test.ts` | locally tested |
+| 20 scenario 11 no two active attempts | partial unique index, `startPaymentAttempt` | `paymentsLifecycle.test.ts` | locally tested |
+| 20 scenario 12 refunds bounded; failed refund stays unresolved | `refundThroughProvider`, `retryFailedRefund` | `paymentsLifecycle.test.ts`, `storeCommandsPayments.test.ts` | locally tested (sequential; real interleaving unproven) |
+| 20 scenario 13 settlement is not a second sale | `recordSettlementReport` | `paymentsLifecycle.test.ts` | locally tested |
+| 20 scenario 14 merchant routes cannot reach pawaPay; forged purpose | purpose policy, DB CHECK, `registerConnection` | `paymentsLifecycle.test.ts`, `adminPayments.test.ts` | locally tested |
+| 20 scenario 23 provider outage blocks new attempts, reconciliation continues | circuit in `common.ts`, `startPaymentAttempt` | `paymentsLifecycle.test.ts`, `storefrontWeb.test.ts` | locally tested |
+| 20 scenario 24 suspended listings unavailable by URL and search; servicing continues | `marketplace.ts`, `moderation.ts`, storefront loaders | `marketplace.test.ts` | locally tested |
+| 10 marketplace discovery, filters, seller identity, ranking inputs, reports, moderation, appeals | `domain/marketplace.ts`, `domain/moderation.ts`, marketplace routes | `marketplace.test.ts`, `storeCommandsPayments.test.ts` | locally tested |
+| 18 admin payments and exceptions panel; listings and moderation panel | `admin/adminPayments.ts`, `admin/adminModeration.ts`, `PaymentsPage`, `ModerationPage` | `adminPayments.test.ts`, `adminModeration.test.ts`, page tests | locally tested |

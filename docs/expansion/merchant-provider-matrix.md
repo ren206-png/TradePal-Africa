@@ -52,3 +52,21 @@ Legend: **C** confirmed in cited documentation · **Cond** conditional on a stat
 - [S11] pawaPay go-live — https://docs.pawapay.io/v2/docs/going_live
 
 Caveat: sources describe products and policies; they do not certify readiness or authorise a funds flow. Re-check current documentation and account capabilities at implementation time. The Flutterwave Sierra Leone finding came from a search summary of Flutterwave's own docs and should be confirmed in the Flutterwave dashboard before any decision rests on it.
+
+## 5. Phase 5: how each capability maps onto the adapter contract (`src/payments/adapter.ts`)
+
+Status vocabulary: **C** confirmed in cited documentation, **Cond** conditional on a stated requirement, **U** unknown. "Built" means the adapter operation exists in the contract and is exercised against the simulator only.
+
+| Adapter operation | Contract | Orange Money Web Payment | Afrimoney merchant payments | Flutterwave (SL mobile money) | Simulator (built, tests only) |
+|---|---|---|---|---|---|
+| `createPayment` (accepted = PENDING, never paid) | built | **U** (docs after onboarding) | **U** (no API stated) | **U** for SL collections | yes |
+| `getStatus` (authenticated lookup) | built | **U** | **U** | **C** generally (verify transaction); not shown for SL | yes |
+| `receiveCallback` (authenticate, normalise) | built | **U** scheme | **U** | **C** `verif-hash` header + re-verification: a WEAK scheme, so a callback is only a hint and the status endpoint decides | yes (HMAC, STRONG) |
+| `refund` / `getRefundStatus` | built | **U** | **U** | **U** | yes |
+| `settlementReport` (pull) | built as an optional capability | **U** | **U** | **U** | deliberately NOT supported: returns a capability error, so that path is exercised |
+| Merchant arrangement, destination, secrets | `ProviderConnection` (one per merchant per provider; `credentialRef` names a server-side secret; no URL or secret field) | merchant onboards with the operator | **U** | account + KYC; settles to TradePal unless sub-accounts | simulated wallet |
+| Sandbox | n/a | **U** | **U** | **C** test keys | yes |
+
+**Provider decision still needed from the owner (unchanged from section 4, now with the build waiting on it):** which provider to approach for Sierra Leone merchant sales, who holds the commercial relationship, and whether merchants contract directly (their own credentials, referenced by name) or through an integrator. Until then: **no real adapter is registered** (the production registry is empty), live online checkout is unavailable, and merchants record manual payments with evidence labels. A real adapter is one reviewed change: implement the interface, add its id to the purpose policy table, and register it.
+
+Source freshness: sections 1-4 were fetched 2026-10-20 and not re-fetched in Phase 5; nothing in the Phase 5 build depends on a provider capability being confirmed.

@@ -41,6 +41,9 @@ export async function refundThroughProvider(prisma: PrismaClient, registry: Adap
   const adapter = registry.get(attempt.provider);
   if (!adapter) throw new PaymentsError("NO_CONNECTION", "That provider is not available.");
   requireCapability(adapter, "refund"); // an explicit CapabilityError, before any money is reserved
+  // A refund must always have a home in the books: money must never leave the provider without the seller's records moving with it.
+  if (attempt.intent.subjectType === "TRADE_INVOICE") throw new PaymentsError("NOT_SUPPORTED", "A payment on a B2B invoice is corrected between the two businesses with a credit note, not refunded through the provider.");
+  if (!input.storeRefundRequestId && !input.storeOrderId && !input.storeExceptionId) throw new PaymentsError("INVALID", "Name what this refund is for: an approved request, a cancelled paid order, or a held payment.");
   await validateBookkeeping(prisma, input, attempt);
 
   const reserved = await prisma.$executeRaw`UPDATE "PaymentAttempt" SET "refundedMinor" = "refundedMinor" + ${input.amountMinor}

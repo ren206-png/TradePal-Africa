@@ -86,3 +86,14 @@ Migration `20261023000000_phase4_storefront_orders_support` (additive: no ALTER/
 - Flags `storefront` and `storefrontOnlinePayment` are seeded OFF.
 
 Verification: PGlite only (as before). **Not verified on a real Postgres server**; the migration is part of the same unrehearsed set (`scripts/rehearseMigrations.sh`).
+
+## Phase 5 additions
+
+Migration `20261024000000_phase5_payments_marketplace` (additive; the only changes to existing tables are new columns with defaults on `Storefront` and `Listing`; no `ALTER TYPE`, no drops).
+- CHECKs: **`PaymentIntent.purpose = 'MERCHANT_SALE'`** (a forged subscription intent is refused by the database); positive amounts; `refunded <= paid` on the intent and `refunded <= captured` on the attempt (concurrent refunds cannot exceed what was collected); a SUCCEEDED attempt has a positive capture; settlement `gross = fee + net`; settlement line bounds.
+- Partial unique index `PaymentAttempt_one_active_per_intent` (one active attempt per intent); unique (provider, provider reference) and idempotency keys on attempts, refunds and intents; one allocation per attempt; one settlement line per attempt; unique exception fingerprints.
+- Triggers: a SUCCEEDED or FAILED attempt cannot change status; an intent that left OPEN cannot change status; `PaymentAttemptEvent` and `ModerationAction` are append-only; no-delete and TRUNCATE guards on every new payment and moderation table.
+- RLS `tenant_isolation` on the 10 tenant tables. `ProviderException`, `MarketplaceReport` and `SimulatorPayment` are deliberately outside it (see data-model.md).
+- Flag `marketplace` seeded OFF.
+
+Verification: PGlite only (see sections 5-6). **Not verified on a real Postgres server.**

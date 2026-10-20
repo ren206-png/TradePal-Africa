@@ -81,3 +81,40 @@ The database refuses: accepting an order with no lines or an unpriced line, and 
 COMPLETED and CANCELLED are final (database trigger `tradepal_store_order_terminal`).
 
 Payment exception: OPEN -> RESOLVED (refund | re-reserve | apply). Refund request: REQUESTED -> APPROVED | DENIED; a return then GOODS_RECEIVED; then REFUNDED (once). Cancellation request: REQUESTED -> APPROVED | DENIED. Support case: OPEN -> ASSIGNED -> CLOSED (closed is final; reassigning the responsible party is allowed while open).
+
+## Merchant payment (Phase 5)
+
+Payment attempt (the provider's word is final once SUCCEEDED or FAILED; the database refuses to change either):
+
+| From | Event | To | Notes |
+|---|---|---|---|
+| (new) | we create it | CREATED | the one-active-attempt-per-intent index is checked here |
+| CREATED | provider accepts | PENDING | accepted is not paid; `nextPollAt` set |
+| CREATED | provider refuses | FAILED | definitive: it did not create anything |
+| CREATED | no answer (timeout/outage) | UNKNOWN | it MAY have collected; blocks a second attempt |
+| PENDING / UNKNOWN | provider reports success (signed callback, or an authenticated lookup) | SUCCEEDED | guarded UPDATE: one winner; capture recorded; money allocated |
+| CREATED / PENDING / UNKNOWN | provider reports failure | FAILED | |
+| UNKNOWN / CREATED | authenticated lookup says "no record" and we never got an acceptance | FAILED | the only way to close an unknown attempt automatically |
+| any open | an admin closes it after the provider confirms it never collected | FAILED / CANCELLED | audited |
+| SUCCEEDED | provider later says FAILED (or the reverse) | (no change) | CONTRADICTORY_STATUS exception |
+
+Payment intent: OPEN -> PAID (applied amount reaches the amount) | EXPIRED (the order's hold ended or the invoice request lapsed) | CANCELLED (the order was cancelled or completed another way). Final once left OPEN. A success that arrives after the intent closed is HELD as an exception (scenario 10).
+
+Provider refund: REQUESTED -> PENDING (provider accepted or we could not tell) -> SUCCEEDED | FAILED. Funds are reserved on the attempt before sending and released on FAILED. Books move on SUCCEEDED only. A FAILED refund is retried as a NEW refund (new key), only through the same provider.
+
+Allocation: HELD -> APPLIED (the seller re-reserved or accepted a part-payment) | REFUNDED; or created directly APPLIED.
+
+Provider settlement: reported -> POSTED (or an exception and nothing posted). One report posts once; one payment settles once.
+
+## Marketplace (Phase 5)
+
+| Subject | From | Event | To |
+|---|---|---|---|
+| Seller | OFF | seller opts in and is ready | ACTIVE |
+| Seller | ACTIVE | seller opts out | OFF |
+| Seller | OFF / ACTIVE | admin suspends (reason, audited) | SUSPENDED (shop, listings and checkout hidden; existing orders serviced as normal) |
+| Seller | SUSPENDED | admin reinstates, or an appeal is overturned | ACTIVE |
+| Listing | VISIBLE | admin unpublishes (every channel of the item) | UNPUBLISHED (the seller cannot republish it) |
+| Listing | UNPUBLISHED | admin reinstates, or an appeal is overturned | VISIBLE |
+| Report | OPEN | admin dismisses / acts on it | DISMISSED / ACTIONED |
+| Appeal | OPEN | admin decides | UPHELD / OVERTURNED (once) |

@@ -121,3 +121,16 @@ Limits stated plainly: the buyer's payable is receipt-based, so a credit note fo
 Worked example (tested, pickup): 3 cans at 100.00 = 300.00. Payment: Customer advances -300.00. Hand-over: Sales revenue 300.00 and cost of goods 120.00 (3 x 40.00), Customer advances back to 0, stock down by 3. A delivery order for 2 cans adds a 500.00 delivery fee: revenue 200.00 + Delivery fees 500.00.
 
 Limits: a wrong-currency payment is held and never posted, so the books do not show that money until a person handles it; Provider clearing is cleared only by settlement (Phase 5); a customer advance older than the order's life has no automatic sweep.
+
+## Provider payments, refunds and settlement (Phase 5, flag `accountingJournals`)
+
+| Event | Entry |
+|---|---|
+| Provider confirms a payment for a store order or invoice | applied: as in the earlier sections (Dr Provider clearing, Cr Customer advances / Cr Receivable). Held (late, short, over): Dr Provider clearing, Cr Customer advances, but NOT applied to the order. Wrong currency: held, **not journaled** |
+| Refund confirmed by the provider (order not yet handed over) | Dr Customer advances, Cr Provider clearing |
+| Refund confirmed by the provider (after hand-over) | Dr Sales returns, Cr Provider clearing (a returned item also restocks at its original cost) |
+| Provider settlement | Dr Bank (net), Dr Payment fees (fee), Cr Provider clearing (gross). Revenue is untouched |
+
+Worked example (tested): two online orders of 200.00 are paid: Provider clearing 400.00, Customer advances -400.00 (nothing handed over, so no revenue). The provider settles 400.00 with a fee of 1.50 per payment: Bank +397.00, Payment fees +3.00, Provider clearing back to 0, Sales revenue still 0, and the trial balance balances. A report whose totals do not add up, a payout to another account, or a payment settled twice posts nothing and raises an exception.
+
+Limits: the settlement fee is recognised when the settlement is reported, not when each payment is collected; a refund of money the provider has already settled to the merchant leaves Provider clearing negative until the provider nets it in a later settlement (the books show the true position, but there is no automatic netting); a held wrong-currency payment is invisible to the books until a person resolves it.

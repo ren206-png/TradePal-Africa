@@ -156,8 +156,9 @@ describe("admin payments panel", () => {
     const p = await pendingOrder(2);
     await deliverCallback(prisma, registry, await sim.completePayment(p.attempt.externalRef!));
     await drainInbox(prisma);
+    await cancelStoreOrderBySeller(prisma, { businessId: s.businessId, orderId: p.order.id, reason: "Cancelled for the refund test" });
     await sim.setBehaviour(p.attempt.externalRef!, "REFUND_FAILS");
-    const { refund } = await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: p.attempt.id, amountMinor: 5_000n, reason: "Customer returned goods", idempotencyKey: `adm-${p.attempt.id}` });
+    const { refund } = await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: p.attempt.id, amountMinor: 5_000n, reason: "Customer returned goods", idempotencyKey: `adm-${p.attempt.id}`, storeOrderId: p.order.id });
     expect(refund.status).toBe("FAILED");
     expect((await request(app).get("/admin/payments/refunds").set(auth(tok))).body.refunds.find((r: { id: string }) => r.id === refund.id)).toMatchObject({ status: "FAILED" });
     expect((await request(app).post(`/admin/payments/refunds/${refund.id}/retry`).set(auth(await loginAs("support@t.test"))).send({})).status).toBe(403);

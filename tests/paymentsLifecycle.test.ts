@@ -277,10 +277,12 @@ describe("scenario 11: a retry or fallback cannot create a second active collect
 });
 
 describe("scenario 12: refunds are bounded by what was collected; a failed refund stays unresolved", () => {
+  /** A collected payment on an order that was then cancelled: the books have a place for the refund (a cancelled paid order). */
   async function collected(s: Seller, qty = 2) {
     const p = await pending(s, qty);
     await deliverCallback(prisma, registry, await sim.completePayment(p.attempt.externalRef!));
     await drainInbox(prisma);
+    await cancelStoreOrderBySeller(prisma, { businessId: s.businessId, orderId: p.order.id, reason: "Cancelled for the refund tests" });
     return p;
   }
 
@@ -288,7 +290,7 @@ describe("scenario 12: refunds are bounded by what was collected; a failed refun
     const s = await seller();
     const { order, attempt } = await collected(s); // 200.00 captured
     const tries = [];
-    for (const i of [1, 2, 3, 4, 5, 6]) tries.push(await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 5_000n, reason: `Partial refund ${i}`, idempotencyKey: `r-${order.id}-${i}` }).catch((e) => e));
+    for (const i of [1, 2, 3, 4, 5, 6]) tries.push(await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 5_000n, reason: `Partial refund ${i}`, idempotencyKey: `r-${order.id}-${i}`, storeOrderId: order.id }).catch((e) => e));
     const ok = tries.filter((t) => !(t instanceof Error));
     const refused = tries.filter((t) => t instanceof PaymentsError && t.code === "REFUND_LIMIT");
     expect(ok).toHaveLength(4);
@@ -299,16 +301,16 @@ describe("scenario 12: refunds are bounded by what was collected; a failed refun
     const sp = await prisma.simulatorPayment.findUniqueOrThrow({ where: { externalRef: attempt.externalRef! } });
     expect(sp.refundedMinor).toBe(20_000n); // the provider agrees
 
-    const again = await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 5_000n, reason: "Partial refund 1", idempotencyKey: `r-${order.id}-1` });
+    const again = await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 5_000n, reason: "Partial refund 1", idempotencyKey: `r-${order.id}-1`, storeOrderId: order.id });
     expect(again.replayed).toBe(true);
     await expect(testDb.db.query(`UPDATE "PaymentAttempt" SET "refundedMinor" = "capturedMinor" + 1 WHERE id='${attempt.id}'`)).rejects.toThrow(/check/i);
   });
 
   it("a failed refund is recorded, releases the reserved funds, raises an exception and is never retried elsewhere", async () => {
     const s = await seller();
-    const { attempt } = await collected(s);
+    const { order, attempt } = await collected(s);
     await sim.setBehaviour(attempt.externalRef!, "REFUND_FAILS");
-    const r = await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 8_000n, reason: "Customer returned goods", idempotencyKey: `fail-${attempt.id}` });
+    const r = await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 8_000n, reason: "Customer returned goods", idempotencyKey: `fail-${attempt.id}`, storeOrderId: order.id });
     expect(r.refund).toMatchObject({ status: "FAILED" });
     expect(r.refund.failureReason).toContain("could not send");
     expect((await s.scoped.paymentAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).refundedMinor).toBe(0n);
@@ -317,14 +319,13 @@ describe("scenario 12: refunds are bounded by what was collected; a failed refun
     expect((await prisma.simulatorPayment.findUniqueOrThrow({ where: { externalRef: attempt.externalRef! } })).refundedMinor).toBe(0n);
     // the full amount is still refundable once the provider can do it
     await sim.setBehaviour(attempt.externalRef!, "NORMAL");
-    const retry = await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 20_000n, reason: "Retry after the provider recovered", idempotencyKey: `retry-${attempt.id}` });
+    const retry = await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 20_000n, reason: "Retry after the provider recovered", idempotencyKey: `retry-${attempt.id}`, storeOrderId: order.id });
     expect(retry.refund.status).toBe("SUCCEEDED");
   });
 
   it("a pending refund is confirmed by its callback exactly once; the seller's books move only then", async () => {
     const s = await seller();
     const { order, attempt } = await collected(s);
-    await cancelStoreOrderBySeller(prisma, { businessId: s.businessId, orderId: order.id, reason: "Cannot deliver" });
     await sim.setBehaviour(attempt.externalRef!, "REFUND_PENDING");
     const r = await refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 20_000n, reason: "Cancelled paid order", idempotencyKey: `pend-${order.id}`, storeOrderId: order.id });
     expect(r.refund.status).toBe("PENDING");
@@ -339,12 +340,23 @@ describe("scenario 12: refunds are bounded by what was collected; a failed refun
     expect(await orderOf(s, order.id)).toMatchObject({ refundedMinor: 20_000n }); // a replay changes nothing
   });
 
-  it("an operation the provider does not support is an explicit capability error before any money is reserved", async () => {
+  it("a refund must name what it is for, and a payment on a B2B invoice is not refunded through the provider", async () => {
     const s = await seller();
     const { attempt } = await collected(s);
+    await expect(refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 1_000n, reason: "A bare refund", idempotencyKey: "bare-1" })).rejects.toMatchObject({ code: "INVALID" });
+    expect((await s.scoped.paymentAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).refundedMinor).toBe(0n);
+    await prisma.paymentIntent.update({ where: { id: attempt.intentId }, data: {} });
+    // pretend this attempt paid an invoice: the provider refund path is refused for that subject type
+    await testDb.db.query(`UPDATE "PaymentIntent" SET "subjectType"='TRADE_INVOICE' WHERE id='${attempt.intentId}'`);
+    await expect(refundThroughProvider(prisma, registry, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 1_000n, reason: "Invoice payment refund", idempotencyKey: "inv-1", storeOrderId: "x" })).rejects.toMatchObject({ code: "NOT_SUPPORTED" });
+  });
+
+  it("an operation the provider does not support is an explicit capability error before any money is reserved", async () => {
+    const s = await seller();
+    const { order, attempt } = await collected(s);
     const noRefund = { ...sim, id: "simulator", capabilities: new Set(["createPayment", "getStatus"]), getStatus: sim.getStatus.bind(sim) } as unknown as ProviderAdapter;
     const reg2 = new AdapterRegistry().register(noRefund);
-    await expect(refundThroughProvider(prisma, reg2, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 1_000n, reason: "No refund support", idempotencyKey: "cap-1" })).rejects.toBeInstanceOf(CapabilityError);
+    await expect(refundThroughProvider(prisma, reg2, { businessId: s.businessId, attemptId: attempt.id, amountMinor: 1_000n, reason: "No refund support", idempotencyKey: "cap-1", storeOrderId: order.id })).rejects.toBeInstanceOf(CapabilityError);
     expect((await s.scoped.paymentAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).refundedMinor).toBe(0n);
     await expect(sim.fetchSettlements()).rejects.toBeInstanceOf(CapabilityError);
   });

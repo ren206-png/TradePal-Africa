@@ -84,3 +84,23 @@ StoreOrder (seller-owned; reference ORD-000001 per seller; access token hash + e
 What a shopper can see about an order (`publicOrderView`): seller name and support phone, items as ordered with prices, delivery fee, status timeline, collection or delivery details, handover code (only after confirmation), payment and refund state, and which actions are available. Never: unit cost, stock numbers, other customers, internal notes, tenant ids.
 
 The CHECK constraints (slug format, totals arithmetic, line arithmetic, delivery fee only for DELIVERY, `refundedMinor <= paidMinor`, positive amounts) are listed in `db-protection.md`.
+
+## Merchant payments and marketplace (Phase 5)
+
+Tenant tables (RLS + tenant scope): `ProviderConnection`, `PaymentIntent`, `PaymentAttempt`, `PaymentAttemptEvent`, `PaymentAllocation`, `ProviderRefund`, `ProviderSettlement`, `ProviderSettlementLine`, `ModerationAction`, `Appeal`. Not tenant data: `ProviderException` (an unknown reference has no tenant), `MarketplaceReport` (a public report is not the seller's), `SimulatorPayment` (the simulator's own side of the world; development and CI only).
+
+```
+ProviderConnection (one per merchant per provider: arrangementRef, destinationKey, credentialRef = a NAME)
+PaymentIntent  (purpose MERCHANT_SALE only; subject STORE_ORDER | TRADE_INVOICE; amount; OPEN|PAID|EXPIRED|CANCELLED)
+  PaymentAttempt (provider ref; CREATED|PENDING|UNKNOWN active, SUCCEEDED|FAILED final; captured, refunded, fee)
+    PaymentAttemptEvent (append-only history)
+    PaymentAllocation  (APPLIED | HELD | REFUNDED: where the money went)
+    ProviderRefund     (REQUESTED|PENDING|SUCCEEDED|FAILED; links to the refund request, cancelled order or held payment it books against)
+    ProviderSettlementLine -> ProviderSettlement (gross = fee + net; POSTED)
+ProviderException (global; fingerprint-unique): UNKNOWN_REFERENCE, WRONG_TENANT, PURPOSE_MISMATCH, AMOUNT/CURRENCY/DESTINATION_MISMATCH,
+                   CONTRADICTORY_STATUS, UNRESOLVED_ATTEMPT, REFUND_FAILED, SETTLEMENT_MISMATCH, DUPLICATE_COLLECTION
+Storefront.marketplaceStatus (OFF | ACTIVE | SUSPENDED), Listing.category / moderation (VISIBLE | UNPUBLISHED) / updatedAt
+MarketplaceReport -> ModerationAction (append-only) -> Appeal
+```
+
+Every payment application also keeps the Phase 3/4 per-subject rows (`TradePayment`, `StorePayment`) unique per (provider, provider reference), so a replay converges. The payment layer never edits an order or invoice itself: it asks the subject how much is owed and tells it about confirmed money.
