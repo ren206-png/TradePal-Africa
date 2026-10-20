@@ -22,6 +22,7 @@ model Country {
   currency      Currency        @relation(fields: [defaultCurrency], references: [code])
   countryConfig CountryConfig[]
   businesses    Business[]
+  planPrices    PlanPrice[]
 
   @@index([defaultCurrency])
 }
@@ -36,6 +37,7 @@ model Currency {
   minorUnitExp   Int // decimal places of the minor unit; TZS documented as 0 (whole shilling treated as minor unit)
 
   countries       Country[]
+  planPrices      PlanPrice[]
   businesses      Business[]
   transactions    Transaction[]
   debts           Debt[]
@@ -188,6 +190,10 @@ model Business {
   shops                Shop[]
   memberships          Membership[]
   supportAccesses      SupportAccess[]
+  billingAttempts      BillingAttempt[]
+  billingAllocations   BillingAllocation[]
+  billingRefunds       BillingRefund[]
+  entitlementEvents    EntitlementEvent[]
 
   @@index([countryCode])
 }
@@ -801,6 +807,7 @@ model Plan {
 
   currency      Currency       @relation(fields: [currencyCode], references: [code])
   subscriptions Subscription[]
+  versions      PlanVersion[]
 }
 
 enum SubscriptionStatus {
@@ -816,17 +823,25 @@ enum SubscriptionStatus {
 }
 
 model Subscription {
-  id                 String             @id @default(uuid())
-  businessId         String
-  planCode           String
-  status             SubscriptionStatus @default(ACTIVE)
-  currentPeriodStart DateTime           @db.Timestamptz()
-  currentPeriodEnd   DateTime           @db.Timestamptz()
-  createdAt          DateTime           @default(now()) @db.Timestamptz()
+  id                   String             @id @default(uuid())
+  businessId           String
+  planCode             String
+  status               SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart   DateTime           @db.Timestamptz()
+  currentPeriodEnd     DateTime           @db.Timestamptz()
+  createdAt            DateTime           @default(now()) @db.Timestamptz()
+  /// Phase 6: which published plan version this subscription is on (null for subscriptions created before versions existed).
+  planVersionId        String?
+  /// A plan change scheduled for the next renewal. There is no silent proration: the current period is paid for and runs out first.
+  pendingPlanVersionId String?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  cancelledAt          DateTime?          @db.Timestamptz()
 
-  business Business  @relation(fields: [businessId], references: [id])
-  plan     Plan      @relation(fields: [planCode], references: [code])
-  invoices Invoice[]
+  business       Business     @relation(fields: [businessId], references: [id])
+  plan           Plan         @relation(fields: [planCode], references: [code])
+  planVersion    PlanVersion? @relation("SubscriptionPlanVersion", fields: [planVersionId], references: [id])
+  pendingVersion PlanVersion? @relation("SubscriptionPendingVersion", fields: [pendingPlanVersionId], references: [id])
+  invoices       Invoice[]
 
   @@index([businessId])
 }
@@ -859,10 +874,22 @@ model Invoice {
   // because every Invoice created before Phase 22 has no provider at all.
   providerCode      String?
   providerReference String?        @unique
+  /// Phase 6 (pawaPay subscription billing). All null/zero for invoices created by the earlier hosted-checkout path.
+  planVersionId     String?
+  kind              String? // NEW | RENEWAL | PLAN_CHANGE
+  reference         String?        @unique // the support reference quoted to the merchant (INV-xxxxxxxx)
+  paidMinor         BigInt         @default(0)
+  refundedMinor     BigInt         @default(0)
+  periodStart       DateTime?      @db.Timestamptz() // set when the payment is allocated, never before
+  periodEnd         DateTime?      @db.Timestamptz()
+  cancelledAt       DateTime?      @db.Timestamptz()
 
-  subscription Subscription     @relation(fields: [subscriptionId], references: [id])
-  currency     Currency         @relation(fields: [currencyCode], references: [code])
-  provider     PaymentProvider? @relation(fields: [providerCode], references: [code])
+  planVersion     PlanVersion?     @relation(fields: [planVersionId], references: [id])
+  billingAttempts BillingAttempt[]
+  billingRefunds  BillingRefund[]
+  subscription    Subscription     @relation(fields: [subscriptionId], references: [id])
+  currency        Currency         @relation(fields: [currencyCode], references: [code])
+  provider        PaymentProvider? @relation(fields: [providerCode], references: [code])
 
   @@index([subscriptionId])
 }
@@ -2937,4 +2964,256 @@ model Appeal {
   action   ModerationAction @relation(fields: [actionId], references: [id])
 
   @@index([status, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 6: platform subscriptions through pawaPay, plan versions, entitlements
+// (TradePal's own billing. Never merchant sales: see src/domain/paymentPurpose.ts.)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum PlanVersionStatus {
+  DRAFT
+  PUBLISHED
+  RETIRED
+}
+
+/// An immutable-once-published snapshot of what a plan includes. A subscription points at the version it was sold, so changing a
+/// plan never changes what an existing subscriber is entitled to until they renew onto a newer version.
+model PlanVersion {
+  id                              String            @id @default(uuid())
+  planCode                        String
+  version                         Int
+  status                          PlanVersionStatus @default(DRAFT)
+  billingPeriodDays               Int               @default(30)
+  /// Days after the period ends during which entitlements continue while renewal is still possible.
+  graceDays                       Int               @default(3)
+  /// Premium capabilities this version includes (see src/domain/entitlements.ts for the list).
+  features                        String[]
+  entryCapPerMonth                Int?
+  voiceEnabled                    Boolean           @default(false)
+  staffCapCount                   Int?
+  aiDeepseekMonthlyBudgetMicroUsd BigInt?
+  note                            String?
+  createdBy                       String?
+  publishedAt                     DateTime?         @db.Timestamptz()
+  retiredAt                       DateTime?         @db.Timestamptz()
+  createdAt                       DateTime          @default(now()) @db.Timestamptz()
+
+  plan          Plan           @relation(fields: [planCode], references: [code])
+  prices        PlanPrice[]
+  subscriptions Subscription[] @relation("SubscriptionPlanVersion")
+  pendingFor    Subscription[] @relation("SubscriptionPendingVersion")
+  invoices      Invoice[]
+
+  @@unique([planCode, version])
+}
+
+/// The price of one plan version in one country. Nothing is priced until an owner enters a price here: there are no defaults.
+model PlanPrice {
+  id            String   @id @default(uuid())
+  planVersionId String
+  countryCode   String
+  currencyCode  String
+  priceMinor    BigInt
+  createdAt     DateTime @default(now()) @db.Timestamptz()
+
+  planVersion PlanVersion @relation(fields: [planVersionId], references: [id])
+  country     Country     @relation(fields: [countryCode], references: [code])
+  currency    Currency    @relation(fields: [currencyCode], references: [code])
+
+  @@unique([planVersionId, countryCode])
+}
+
+enum BillingAttemptStatus {
+  INITIATED
+  ACCEPTED
+  PROCESSING
+  UNKNOWN
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+/// One customer-authorised charge (a PIN prompt on the payer's phone) against one subscription invoice, through pawaPay.
+/// `id` IS the pawaPay depositId (a UUIDv4 stored BEFORE the call). One active attempt per invoice (partial unique index).
+model BillingAttempt {
+  id                    String               @id // == pawaPay depositId
+  businessId            String
+  invoiceId             String
+  provider              String               @default("PAWAPAY")
+  environment           String // SANDBOX | PRODUCTION: the environment this attempt was made in; never mixed
+  providerCode          String? // the mobile-money operator, e.g. ORANGE_SLE
+  status                BillingAttemptStatus @default(INITIATED)
+  amountMinor           BigInt
+  currencyCode          String
+  capturedMinor         BigInt               @default(0)
+  payerPhoneLast4       String?
+  providerTransactionId String?
+  failureCode           String?
+  initiatedBy           String?
+  pollCount             Int                  @default(0)
+  nextPollAt            DateTime?            @db.Timestamptz()
+  createdAt             DateTime             @default(now()) @db.Timestamptz()
+  updatedAt             DateTime             @updatedAt @db.Timestamptz()
+
+  business   Business           @relation(fields: [businessId], references: [id])
+  invoice    Invoice            @relation(fields: [invoiceId], references: [id])
+  allocation BillingAllocation?
+  refunds    BillingRefund[]
+
+  @@index([invoiceId])
+  @@index([status, nextPollAt])
+}
+
+/// The one thing a confirmed payment bought: a billing period on a subscription. One per invoice and one per attempt (both unique),
+/// so a duplicate or replayed payment cannot extend a subscription twice. Append-only.
+model BillingAllocation {
+  id             String   @id @default(uuid())
+  businessId     String
+  attemptId      String   @unique
+  invoiceId      String   @unique
+  subscriptionId String
+  planVersionId  String?
+  periodStart    DateTime @db.Timestamptz()
+  periodEnd      DateTime @db.Timestamptz()
+  amountMinor    BigInt
+  createdAt      DateTime @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  attempt  BillingAttempt @relation(fields: [attemptId], references: [id])
+}
+
+enum BillingRefundStatus {
+  REQUESTED
+  ACCEPTED
+  PROCESSING
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+/// A refund of a SUBSCRIPTION charge, authorised by a named admin with a reason. `id` IS the pawaPay refundId.
+model BillingRefund {
+  id                String              @id // == pawaPay refundId
+  businessId        String
+  invoiceId         String
+  attemptId         String
+  amountMinor       BigInt
+  status            BillingRefundStatus @default(REQUESTED)
+  reason            String
+  adminUserId       String
+  revokeEntitlement Boolean             @default(false)
+  failureCode       String?
+  pollCount         Int                 @default(0)
+  nextPollAt        DateTime?           @db.Timestamptz()
+  createdAt         DateTime            @default(now()) @db.Timestamptz()
+  updatedAt         DateTime            @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  invoice  Invoice        @relation(fields: [invoiceId], references: [id])
+  attempt  BillingAttempt @relation(fields: [attemptId], references: [id])
+
+  @@index([invoiceId])
+}
+
+enum EntitlementEventKind {
+  GRANTED
+  EXTENDED
+  PLAN_CHANGE_SCHEDULED
+  PLAN_CHANGED
+  CANCEL_REQUESTED
+  CANCELLED
+  EXPIRY_NOTED
+  MANUAL_ADJUSTMENT
+  REFUND_REVOKED
+}
+
+/// Every change to what a business is entitled to, with its cause. Append-only.
+model EntitlementEvent {
+  id             String               @id @default(uuid())
+  businessId     String
+  subscriptionId String?
+  kind           EntitlementEventKind
+  fromPlanCode   String?
+  toPlanCode     String?
+  periodStart    DateTime?            @db.Timestamptz()
+  periodEnd      DateTime?            @db.Timestamptz()
+  source         String // PAYMENT | ADMIN | SWEEP | MERCHANT
+  invoiceId      String?
+  adminUserId    String?
+  reason         String?
+  createdAt      DateTime             @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+enum BillingExceptionType {
+  DUPLICATE_PAYMENT
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  UNKNOWN_DEPOSIT
+  ENVIRONMENT_MISMATCH
+  PAYMENT_AFTER_CANCELLATION
+  UNRESOLVED_ATTEMPT
+  REFUND_FAILED
+  CALLBACK_AUTH_FAILED
+}
+
+/// Subscription-billing problems for a person to look at. NOT tenant data (an unknown deposit has no tenant).
+model BillingException {
+  id          String                 @id @default(uuid())
+  businessId  String?
+  type        BillingExceptionType
+  status      PaymentExceptionStatus @default(OPEN)
+  attemptId   String?
+  invoiceId   String?
+  amountMinor BigInt?
+  details     Json?
+  fingerprint String                 @unique
+  resolution  String?
+  resolvedBy  String?
+  resolvedAt  DateTime?              @db.Timestamptz()
+  createdAt   DateTime               @default(now()) @db.Timestamptz()
+
+  @@index([status, createdAt])
+}
+
+/// Whether NEW subscription charges may be started, per provider and country (and always for the PLATFORM_SUBSCRIPTION purpose only).
+/// Absent means OFF: fail closed. Existing attempts are always reconciled regardless of this switch.
+model BillingSwitch {
+  id                 String         @id @default(uuid())
+  provider           String
+  countryCode        String
+  purpose            PaymentPurpose @default(PLATFORM_SUBSCRIPTION)
+  newAttemptsEnabled Boolean        @default(false)
+  reason             String?
+  updatedBy          String?
+  updatedAt          DateTime       @default(now()) @updatedAt @db.Timestamptz()
+
+  @@unique([provider, countryCode, purpose])
+}
+
+/// Verification keys fetched from the provider's public-keys endpoint, per environment, with rotation handled by refetching on an unknown key id.
+model ProviderSigningKey {
+  id          String   @id @default(uuid())
+  provider    String
+  environment String
+  keyId       String
+  pem         String
+  fetchedAt   DateTime @default(now()) @db.Timestamptz()
+
+  @@unique([provider, environment, keyId])
+}
+
+/// Binds an environment to the provider account it first authenticated as, so sandbox credentials against production (or another account) fail closed.
+model BillingAccountBinding {
+  id          String   @id @default(uuid())
+  provider    String
+  environment String
+  companyName String
+  boundAt     DateTime @default(now()) @db.Timestamptz()
+
+  @@unique([provider, environment])
 }

@@ -146,7 +146,7 @@ describe("delete-protected records (status may change, rows may not vanish)", ()
     await refused(`DELETE FROM "Invoice" WHERE id = $1`, [invoice.id], NOT_PERMITTED);
     await refused(`DELETE FROM "PaymentRequest" WHERE id = $1`, [paymentRequest.id], NOT_PERMITTED);
     await refused(`DELETE FROM "Subscription" WHERE id = $1`, [subscription.id], NOT_PERMITTED);
-    await refused(`TRUNCATE "Invoice"`, [], /TRUNCATE/);
+    await refused(`TRUNCATE "Invoice" CASCADE`, [], /TRUNCATE/); // CASCADE: Invoice is now referenced by billing tables
   });
 });
 
