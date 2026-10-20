@@ -1,6 +1,7 @@
 import { syncMembershipFromMerchant } from "../domain/memberships.js";
 import type { Merchant, PrismaClient } from "@prisma/client";
 import { getCountryByCode, getCountryByPhoneNumber, type CountryDefinition } from "../config/countries.js";
+import { getCountryRegistry } from "../config/countryRegistry.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
 import { findOrCreateCustomerByName } from "../domain/debtBook.js";
 
@@ -63,7 +64,11 @@ export function resolveOnboardingCountry(
  * on one).
  */
 export async function startOnboarding(prisma: PrismaClient, phoneNumber: string): Promise<OnboardingStepResult> {
-  const country = resolveOnboardingCountry(phoneNumber);
+  // An operator test override wins; otherwise the country comes from configuration (the database's Country /
+  // CountryConfig rows, with the static list as fallback), so a country added as data is accepted without a deploy.
+  const registry = await getCountryRegistry(prisma);
+  const override = parseTestNumberCountryOverrides(process.env["ONBOARDING_TEST_NUMBER_COUNTRIES"]).get(phoneNumber.replace(/\D/g, ""));
+  const country = override ?? registry.byPhoneNumber(phoneNumber);
   if (!country) {
     throw new UnsupportedCountryError(`No supported country matches phone number ${phoneNumber}.`);
   }
