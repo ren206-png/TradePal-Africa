@@ -10,7 +10,7 @@ Resume from this file across sessions. Update after every slice.
 - **Phase 6: approved.** (`APPROVED: PHASE 6` received.)
 - **Phase 7 (WhatsApp action flows, AI clarification, consent register, localization framework, offline drafts; admin messaging and consent panel): complete, awaiting approval; everything OFF by default.** Gate line: `AWAITING: APPROVED: PHASE 7`.
 - Branch `expansion/phase-1` (local only: **not pushed, not merged, nothing deployed, no migration run against any real database**). A push to `main` would deploy production and run `prisma migrate deploy`.
-- Tests: backend 105 files / 1183 pass; admin-frontend 13 files / 57 pass + build OK. Self-check: `self-check-phase-7.md`. Demo (Phase 3): `npx tsx scripts/demoWholesale.ts`.
+- Tests: backend 105 files / 1184 pass; admin-frontend 13 files / 57 pass + build OK. Self-check: `self-check-phase-7.md`. Demo (Phase 3): `npx tsx scripts/demoWholesale.ts`.
 - Production at `86a072d`, untouched.
 
 ## Completed slices
