@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getEffectivePlan, type EffectivePlan } from "../domain/billing.js";
 import {
   FeatureFlagNotFoundError,
+  ProtectedFlagError,
   listFeatureFlags,
   listFeatureFlagStatesForBusiness,
   removeFeatureFlagOverrideForBusiness,
@@ -506,6 +507,10 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
         });
         res.json({ featureFlag: flag });
       } catch (error) {
+        if (error instanceof ProtectedFlagError) {
+          res.status(409).json({ error: error.message, code: "PROTECTED_FLAG" });
+          return;
+        }
         if (error instanceof FeatureFlagNotFoundError) {
           res.status(404).json({ error: error.message });
           return;
@@ -745,6 +750,10 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
         );
         res.json({ featureFlag: override });
       } catch (error) {
+        if (error instanceof ProtectedFlagError) {
+          res.status(409).json({ error: error.message, code: "PROTECTED_FLAG" });
+          return;
+        }
         if (error instanceof FeatureFlagNotFoundError) {
           res.status(404).json({ error: error.message });
           return;
@@ -777,6 +786,10 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
         );
         res.json({ removed });
       } catch (error) {
+        if (error instanceof ProtectedFlagError) {
+          res.status(409).json({ error: error.message, code: "PROTECTED_FLAG" });
+          return;
+        }
         if (error instanceof FeatureFlagNotFoundError) {
           res.status(404).json({ error: error.message });
           return;

@@ -754,6 +754,26 @@ CREATE POLICY link_parties ON "BusinessLink"
   USING ("inviterBusinessId" = current_setting('app.current_business_id', true) OR "inviteeBusinessId" = current_setting('app.current_business_id', true))
   WITH CHECK ("inviterBusinessId" = current_setting('app.current_business_id', true) OR "inviteeBusinessId" = current_setting('app.current_business_id', true));
 
+-- ---- the per-merchant forecast gate can only be opened through the promotion-gate function.
+-- That function sets a transaction-local marker; any other attempt (application code, a manual UPDATE) is refused here.
+CREATE OR REPLACE FUNCTION tradepal_forecast_gate_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'BusinessFeatureFlag' THEN
+    IF NEW."flagKey" = 'reorderForecastLive' AND NEW."enabled" = true
+       AND (TG_OP = 'INSERT' OR OLD."enabled" IS DISTINCT FROM true)
+       AND COALESCE(current_setting('app.forecast_gate_open', true), '') <> 'on' THEN
+      RAISE EXCEPTION 'TradePal: the forecast gate can only be opened through the promotion gate (thresholds checked, audited)' USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+  ELSIF NEW."key" = 'reorderForecastLive' AND NEW."enabledByDefault" = true THEN
+    RAISE EXCEPTION 'TradePal: the forecast gate is per merchant and can never be on by default' USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+CREATE TRIGGER "BusinessFeatureFlag_forecast_gate" BEFORE INSERT OR UPDATE ON "BusinessFeatureFlag" FOR EACH ROW EXECUTE FUNCTION tradepal_forecast_gate_guard();
+CREATE TRIGGER "FeatureFlag_forecast_gate" BEFORE INSERT OR UPDATE ON "FeatureFlag" FOR EACH ROW EXECUTE FUNCTION tradepal_forecast_gate_guard();
+
 -- ---- default-OFF flags
 INSERT INTO "FeatureFlag" ("key", "description", "enabledByDefault")
 VALUES
