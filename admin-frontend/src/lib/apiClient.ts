@@ -68,10 +68,12 @@ export function clearStepUpToken(): void {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   /** Set false for the login call, which has no token yet. */
   authenticated?: boolean;
+  /** "text" for non-JSON bodies (CSV export). Error responses are still parsed as JSON. */
+  responseType?: "json" | "text";
 }
 
 /**
@@ -81,7 +83,7 @@ interface RequestOptions {
  * "log the admin out", not retry.
  */
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, authenticated = true } = options;
+  const { method = "GET", body, authenticated = true, responseType = "json" } = options;
 
   const attempt = async (): Promise<{ response: Response; data: unknown }> => {
     const headers: Record<string, string> = {};
@@ -97,7 +99,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     const contentType = response.headers.get("content-type") ?? "";
-    const data = contentType.includes("application/json") ? await response.json() : null;
+    const data = contentType.includes("application/json") ? await response.json() : responseType === "text" ? await response.text() : null;
     return { response, data };
   };
 

@@ -96,6 +96,9 @@ export function BusinessDetailPage() {
         <Link to="/businesses">&larr; Back to businesses</Link>
       </p>
       <h1>{business.name}</h1>
+      <p>
+        <Link to={`/businesses/${business.id}/transactions`}>Transactions, stock and journals &rarr;</Link>
+      </p>
       <dl className="detail-grid">
         <dt>Country</dt>
         <dd>{business.countryCode}</dd>

@@ -521,3 +521,6 @@ label {
 .modal { background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 10px; }
 .modal input, .modal textarea { width: 100%; box-sizing: border-box; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.tab-row { display: flex; gap: 8px; margin: 8px 0 12px; }
+.tab { border: 1px solid #d0d5dd; background: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.tab.active { background: #101828; color: #fff; border-color: #101828; }

@@ -3,7 +3,7 @@
 // OpenAPI/schema export yet — if the backend shape changes, these need a
 // matching manual update.
 
-export type AdminRole = "SUPER_ADMIN" | "SUPPORT" | "ANALYST";
+export type AdminRole = "SUPER_ADMIN" | "OPERATOR" | "SUPPORT" | "ANALYST";
 
 export interface AdminUser {
   id: string;
@@ -176,4 +176,60 @@ export interface FeatureFlagState {
   override: boolean | null;
   /** What's actually in effect for this business right now. */
   effective: boolean;
+}
+
+// Expansion Phase 2: transactions and orders panel (src/admin/adminTransactions.ts).
+export type TransactionStatus = "POSTED" | "REVERSED" | "REVERSAL";
+
+export interface AdminTransaction {
+  id: string;
+  type: string;
+  amountMinor: string;
+  currencyCode: string;
+  paymentStatus: string;
+  description: string | null;
+  counterparty: string | null;
+  createdAt: string;
+  itemCount: number;
+  status: TransactionStatus;
+  reversalOfTransactionId: string | null;
+  reversedByTransactionId: string | null;
+  provenance: { label: string; channel: string; reference: string | null };
+  journalEntryId: string | null;
+}
+
+export interface AdminStockMovement {
+  id: string;
+  kind?: string;
+  sku?: string;
+  product?: string;
+  item?: string;
+  shop?: string;
+  onHandDelta?: number;
+  damagedDelta?: number;
+  inTransitDelta?: number;
+  quantityDelta?: number;
+  costMinor?: string | null;
+  costIncomplete?: boolean;
+  provenance?: string;
+  source: string | null;
+  createdAt: string;
+}
+
+export interface AdminJournalLine {
+  account: string;
+  debitMinor: string;
+  creditMinor: string;
+}
+
+export interface AdminJournal {
+  id: string;
+  kind: string;
+  currencyCode: string;
+  memo: string | null;
+  provenance: string;
+  source: string | null;
+  occurredAt: string;
+  status: "POSTED" | "REVERSED" | "REVERSAL";
+  lines: AdminJournalLine[];
 }

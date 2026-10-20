@@ -10,6 +10,7 @@ import { FeatureFlagsPage } from "./pages/FeatureFlagsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SystemHealthPage } from "./pages/SystemHealthPage";
+import { TransactionsPage } from "./pages/TransactionsPage";
 import { GuardPrompts } from "./components/GuardPrompts";
 import { MobileMoneyAlertsPage } from "./pages/MobileMoneyAlertsPage";
 import { PlansPage } from "./pages/PlansPage";
@@ -27,6 +28,16 @@ function App() {
               <ProtectedRoute>
                 <Layout>
                   <BusinessesPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/businesses/:id/transactions"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <TransactionsPage />
                 </Layout>
               </ProtectedRoute>
             }
