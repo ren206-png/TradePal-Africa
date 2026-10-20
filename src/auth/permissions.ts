@@ -1,0 +1,135 @@
+import type { AdminRole, MembershipRole } from "@prisma/client";
+
+/**
+ * The permission matrix (expansion §6). Authorization is decided by asking `can(role, permission)`, never by
+ * comparing role names at call sites, so adding a role or a permission is one reviewed change here.
+ *
+ * Two separate families that never overlap:
+ *  - merchant roles (MembershipRole): what a person may do inside ONE business;
+ *  - platform roles (AdminRole): what TradePal staff may do on the platform. A platform admin is not a
+ *    super-merchant and has no merchant permission by default; viewing a merchant's books is a separate,
+ *    audited "support access" action (admin:view_merchant_financials).
+ */
+
+// ---------------------------------------------------------------- merchant permissions
+export const MERCHANT_PERMISSIONS = [
+  "sales:create",
+  "sales:void", //          reverse a posted sale
+  "expenses:create",
+  "customers:manage",
+  "debts:record",
+  "debts:view",
+  "inventory:view",
+  "inventory:receive", //   goods receipts, stock-ins
+  "inventory:adjust", //    counts and controlled adjustments
+  "prices:manage",
+  "reports:view",
+  "finance:close_day",
+  "finance:export",
+  "finance:reconcile",
+  "payments:view",
+  "payments:connect_provider", // sensitive: step-up verification required
+  "staff:manage",
+  "settings:manage",
+  "business:manage", //     org settings, shops, deletion
+] as const;
+export type MerchantPermission = (typeof MERCHANT_PERMISSIONS)[number];
+
+const ALL_MERCHANT = new Set<MerchantPermission>(MERCHANT_PERMISSIONS);
+
+const MERCHANT_MATRIX: Readonly<Record<MembershipRole, ReadonlySet<MerchantPermission>>> = {
+  OWNER: ALL_MERCHANT,
+  MANAGER: new Set<MerchantPermission>([
+    "sales:create", "sales:void", "expenses:create", "customers:manage", "debts:record", "debts:view",
+    "inventory:view", "inventory:receive", "inventory:adjust", "prices:manage", "reports:view",
+    "finance:close_day", "finance:export", "finance:reconcile", "payments:view", "staff:manage",
+  ]),
+  SALES_CLERK: new Set<MerchantPermission>([
+    "sales:create", "expenses:create", "customers:manage", "debts:record", "debts:view", "inventory:view", "reports:view",
+  ]),
+  INVENTORY_OPERATOR: new Set<MerchantPermission>(["inventory:view", "inventory:receive", "inventory:adjust", "prices:manage"]),
+  FINANCE_OPERATOR: new Set<MerchantPermission>([
+    "expenses:create", "debts:view", "reports:view", "finance:close_day", "finance:export", "finance:reconcile", "payments:view",
+  ]),
+  // Read-only: for a helper or an auditor who must see but never change anything.
+  RESTRICTED_SUPPORT: new Set<MerchantPermission>(["debts:view", "inventory:view", "reports:view", "payments:view"]),
+};
+
+export function canMerchant(role: MembershipRole, permission: MerchantPermission): boolean {
+  return MERCHANT_MATRIX[role].has(permission);
+}
+
+export function merchantPermissionsFor(role: MembershipRole): readonly MerchantPermission[] {
+  return MERCHANT_PERMISSIONS.filter((p) => MERCHANT_MATRIX[role].has(p));
+}
+
+// ---------------------------------------------------------------- platform-admin permissions
+export const PLATFORM_PERMISSIONS = [
+  "admin:view_overview",
+  "admin:view_system_health",
+  "admin:view_orgs", //                  organizations, users, roles, flags (metadata, no financial data)
+  "admin:view_audit_log",
+  "admin:view_merchant_financials", //   opening a merchant's books: needs a recorded reason (support access)
+  "admin:manage_flags", //               per-organization flag overrides
+  "admin:manage_global_flags", //        bulk rollout of a flag default
+  "admin:suspend_org",
+  "admin:revoke_staff",
+  "admin:reverse_transaction", //        creates a reversal, never edits history
+  "admin:resolve_exception", //          payment/reconciliation exception queue
+  "admin:replay_dead_letter",
+  "admin:pause_job_class",
+  "admin:manage_subscriptions",
+  "admin:moderate_listings",
+  "admin:resolve_support_case",
+  "admin:delete_synthetic_org", //       hard delete, synthetic/test organizations only (typed confirmation)
+  "admin:flip_forecast_gate", //         promote forecasting to live for one merchant (owner only)
+  "admin:manage_admins", //              create/disable platform admins
+] as const;
+export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
+
+const PLATFORM_MATRIX: Readonly<Record<AdminRole, ReadonlySet<PlatformPermission>>> = {
+  SUPER_ADMIN: new Set<PlatformPermission>(PLATFORM_PERMISSIONS), // the platform owner
+  OPERATOR: new Set<PlatformPermission>([
+    "admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log",
+    "admin:view_merchant_financials", "admin:manage_flags", "admin:resolve_exception", "admin:replay_dead_letter",
+    "admin:pause_job_class", "admin:reverse_transaction", "admin:resolve_support_case",
+  ]),
+  SUPPORT: new Set<PlatformPermission>([
+    "admin:view_overview", "admin:view_orgs", "admin:view_audit_log", "admin:view_merchant_financials",
+    "admin:revoke_staff", "admin:resolve_support_case",
+  ]),
+  // Read-only analyst (legacy role): metadata and audit only, never merchant financials.
+  ANALYST: new Set<PlatformPermission>(["admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log"]),
+};
+
+export function canPlatform(role: AdminRole, permission: PlatformPermission): boolean {
+  return PLATFORM_MATRIX[role].has(permission);
+}
+
+export function platformPermissionsFor(role: AdminRole): readonly PlatformPermission[] {
+  return PLATFORM_PERMISSIONS.filter((p) => PLATFORM_MATRIX[role].has(p));
+}
+
+/** Permissions that must be re-confirmed with the admin's password (step-up) even inside a valid session. */
+export const PLATFORM_STEP_UP_PERMISSIONS: ReadonlySet<PlatformPermission> = new Set<PlatformPermission>([
+  "admin:view_merchant_financials",
+  "admin:manage_flags",
+  "admin:manage_global_flags",
+  "admin:suspend_org",
+  "admin:revoke_staff",
+  "admin:reverse_transaction",
+  "admin:resolve_exception",
+  "admin:replay_dead_letter",
+  "admin:pause_job_class",
+  "admin:manage_subscriptions",
+  "admin:moderate_listings",
+  "admin:resolve_support_case",
+  "admin:delete_synthetic_org",
+  "admin:flip_forecast_gate",
+  "admin:manage_admins",
+]);
+
+/** Legacy bridge: the two-value MerchantRole used by the WhatsApp flows maps onto membership roles. */
+export function membershipRoleForLegacyMerchantRole(role: "OWNER" | "STAFF"): MembershipRole {
+  return role === "OWNER" ? "OWNER" : "SALES_CLERK";
+}

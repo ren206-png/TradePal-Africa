@@ -1,3 +1,4 @@
+import { syncMembershipFromMerchant } from "../domain/memberships.js";
 import type { Merchant, PrismaClient } from "@prisma/client";
 import { getCountryByCode, getCountryByPhoneNumber, type CountryDefinition } from "../config/countries.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
@@ -79,6 +80,12 @@ export async function startOnboarding(prisma: PrismaClient, phoneNumber: string)
 
   const merchant = await prisma.merchant.create({
     data: { businessId: business.id, phoneNumber, onboardingStep: "AWAITING_BUSINESS_NAME" },
+  });
+
+  // Expansion Phase 1: mirror the new owner into a default shop + membership. Never allowed to break signup; if it
+  // fails, findMembershipDrift reports it and the sync is retried on the next merchant change.
+  await syncMembershipFromMerchant(prisma, merchant).catch((error: unknown) => {
+    console.error("membership sync failed during onboarding (reconcile with findMembershipDrift):", error instanceof Error ? error.message : error);
   });
 
   return {

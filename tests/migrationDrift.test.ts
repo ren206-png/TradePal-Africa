@@ -12,6 +12,8 @@ import { describe, expect, it } from "vitest";
  * without this a migration that forgets a column would pass every other test and fail only in production.)
  */
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "prisma/migrations");
+/** Objects the migrations create that Prisma's datamodel cannot express (partial indexes). */
+const MIGRATION_ONLY_INDEXES = new Set(["Shop.Shop_one_default_per_business"]);
 const SCHEMA_PATH = path.resolve(process.cwd(), "prisma/schema.prisma");
 
 async function shape(db: PGlite) {
@@ -56,7 +58,8 @@ describe("migrations match prisma/schema.prisma", () => {
     const b = await shape(fromMigrations);
     expect(b.columns).toEqual(a.columns);
     expect(b.enums).toEqual(a.enums);
-    expect(b.indexes).toEqual(a.indexes);
+    expect(b.indexes.filter((i) => !MIGRATION_ONLY_INDEXES.has(i))).toEqual(a.indexes);
+    for (const only of MIGRATION_ONLY_INDEXES) expect(b.indexes).toContain(only);
     expect(b.constraints).toEqual(a.constraints);
 
     await fromSchema.close();

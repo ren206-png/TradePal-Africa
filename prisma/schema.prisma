@@ -122,6 +122,8 @@ model Business {
   businessFeatureFlags BusinessFeatureFlag[]
   paymentRequests      PaymentRequest[]
   aiUsageLedgerEntries AiUsageLedger[]
+  shops                Shop[]
+  memberships          Membership[]
 
   @@index([countryCode])
 }
@@ -129,6 +131,71 @@ model Business {
 enum MerchantRole {
   OWNER
   STAFF
+}
+
+/// What a person may do inside one business (expansion Phase 1). The permission matrix lives in src/auth/permissions.ts.
+/// Legacy mapping: Merchant OWNER -> OWNER, Merchant STAFF -> SALES_CLERK.
+enum MembershipRole {
+  OWNER
+  MANAGER
+  SALES_CLERK
+  INVENTORY_OPERATOR
+  FINANCE_OPERATOR
+  RESTRICTED_SUPPORT
+}
+
+enum MembershipStatus {
+  ACTIVE
+  REVOKED
+}
+
+/// A physical or logical shop inside a business (tenant). Every business has exactly one default shop; more can be added
+/// in later phases. Additive: no existing table references Shop yet.
+model Shop {
+  id         String   @id @default(uuid())
+  businessId String
+  name       String
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now()) @db.Timestamptz()
+  updatedAt  DateTime @updatedAt @db.Timestamptz()
+
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  memberships Membership[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+}
+
+/// Links a verified person (their WhatsApp number, normalized) to a business with a role, optionally limited to one shop.
+/// Lets one person belong to several businesses and be revoked without losing history. The legacy `Merchant` row stays the
+/// source of truth for the WhatsApp conversation; memberships are kept in sync by src/domain/memberships.ts.
+model Membership {
+  id          String           @id @default(uuid())
+  businessId  String
+  /// null = every shop of the business.
+  shopId      String?
+  phoneNumber String
+  role        MembershipRole
+  status      MembershipStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now()) @db.Timestamptz()
+  updatedAt   DateTime         @updatedAt @db.Timestamptz()
+  revokedAt   DateTime?        @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  shop     Shop?    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, phoneNumber])
+  @@index([phoneNumber])
+  @@index([businessId])
+}
+
+/// Which business (and shop) a person is currently acting in, when they belong to more than one. Never guessed from
+/// the phone number or the last conversation: set explicitly (src/domain/memberships.ts setActiveContext).
+model ActiveContext {
+  phoneNumber String   @id
+  businessId  String
+  shopId      String?
+  updatedAt   DateTime @updatedAt @db.Timestamptz()
 }
 
 enum OnboardingStep {
@@ -176,6 +243,8 @@ enum AdminRole {
   SUPER_ADMIN
   ANALYST
   SUPPORT
+  /// Platform operator (expansion Phase 1): runs day-to-day operations (replays, exception queues, flags) without owner-only powers.
+  OPERATOR
 }
 
 /// Internal TradePal staff — never tenant-scoped, backs the Phase 2 admin dashboard (read-only first, RBAC before any write).

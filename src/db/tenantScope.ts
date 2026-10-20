@@ -29,6 +29,9 @@ export const TENANT_SCOPED_MODELS = new Set([
   "BusinessFeatureFlag",
   "PaymentRequest",
   "PawaPayDeposit",
+  // Expansion Phase 1: shops and memberships belong to one business.
+  "Shop",
+  "Membership",
   // DeepSeek Integration Phase 3 (INTEGRATION_DESIGN.md §3): carries a
   // required businessId. Deliberately NOT added to APPEND_ONLY_MODELS below —
   // see AiUsageLedger's own schema.prisma docstring for why there is no

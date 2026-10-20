@@ -1,3 +1,4 @@
+import { renameMembershipPhone, syncMembershipFromMerchant } from "./memberships.js";
 import type { Merchant, PrismaClient } from "@prisma/client";
 import { getTenantScopedClient } from "../db/tenantScope.js";
 import { recordAuditLog } from "./auditLog.js";
@@ -8,6 +9,18 @@ import {
   sendWhatsAppTextMessage,
   type OutboundGatewayDeps,
 } from "../whatsapp/outboundGateway.js";
+
+/**
+ * Mirrors a merchant change into memberships. A failure must never break the WhatsApp flow that triggered it: it is
+ * logged, and findMembershipDrift (domain/memberships.ts) will report anything left unreconciled.
+ */
+async function mirrorMembership(work: () => Promise<unknown>): Promise<void> {
+  try {
+    await work();
+  } catch (error) {
+    console.error("membership sync failed (reconcile with findMembershipDrift):", error instanceof Error ? error.message : error);
+  }
+}
 
 export class PhoneNumberAlreadyRegisteredError extends Error {}
 export class MerchantNotFoundError extends Error {}
@@ -87,6 +100,7 @@ export async function changeMerchantPhoneNumber(
     where: { id: input.merchantId },
     data: { phoneNumber: input.newPhoneNumber },
   });
+  await mirrorMembership(() => renameMembershipPhone(prisma, input.businessId, previousPhoneNumber, input.newPhoneNumber));
 
   await recordAuditLog(scoped, {
     businessId: input.businessId,
@@ -233,6 +247,8 @@ export async function addStaffMerchant(
         },
       });
 
+  await mirrorMembership(() => syncMembershipFromMerchant(prisma, staff));
+
   await recordAuditLog(scoped, {
     businessId: input.businessId,
     actorType: "MERCHANT",
@@ -337,6 +353,7 @@ export async function removeStaffMerchant(prisma: PrismaClient, input: RemoveSta
     where: { id: merchant.id },
     data: { removedAt: new Date() },
   });
+  await mirrorMembership(() => syncMembershipFromMerchant(prisma, updated));
 
   await recordAuditLog(scoped, {
     businessId: input.businessId,

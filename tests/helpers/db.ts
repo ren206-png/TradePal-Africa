@@ -25,11 +25,17 @@ function getDdl(): string {
  * default so every suite exercises application code against the real triggers; set TEST_DB_PROTECTION=0 to
  * compare against an unprotected database.
  */
-export const DB_PROTECTION_MIGRATION = "20261020000100_phase1_db_protection";
+/** Phase-1 migrations whose hand-written section (everything from the "-- =====" banner on) the test DB applies. */
+export const HAND_WRITTEN_MIGRATIONS = [
+  "20261020000100_phase1_db_protection",
+  "20261020000200_phase1_shops_memberships",
+] as const;
 export function dbProtectionSql(): string {
-  const full = fs.readFileSync(path.resolve(process.cwd(), "prisma/migrations", DB_PROTECTION_MIGRATION, "migration.sql"), "utf8");
-  // Drop the generated ALTER TABLE (the schema DDL already has the column); keep everything from the hand-written section on.
-  return full.slice(full.indexOf("-- ====="));
+  return HAND_WRITTEN_MIGRATIONS.map((name) => {
+    const full = fs.readFileSync(path.resolve(process.cwd(), "prisma/migrations", name, "migration.sql"), "utf8");
+    // Drop the generated DDL (the schema DDL already has those objects); keep the hand-written section.
+    return full.slice(full.indexOf("-- ====="));
+  }).join("\n");
 }
 
 export interface TestDb {
