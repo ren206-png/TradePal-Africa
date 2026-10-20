@@ -194,6 +194,11 @@ model Business {
   billingAllocations   BillingAllocation[]
   billingRefunds       BillingRefund[]
   entitlementEvents    EntitlementEvent[]
+  contactConsents      ContactConsent[]
+  contactConsentEvents ContactConsentEvent[]
+  pendingActions       PendingAction[]
+  deviceSessions       DeviceSession[]
+  offlineDrafts        OfflineDraft[]
 
   @@index([countryCode])
 }
@@ -3220,4 +3225,248 @@ model BillingAccountBinding {
   boundAt     DateTime @default(now()) @db.Timestamptz()
 
   @@unique([provider, environment])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 7: messaging templates and consent, bound confirmations, offline drafts, alert delivery
+// ─────────────────────────────────────────────────────────────────────────
+
+enum TemplateCategory {
+  UTILITY
+  MARKETING
+  AUTHENTICATION
+  SERVICE
+}
+
+enum TemplateStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  DISABLED
+}
+
+/// Approval state of one outbound message class in one language. The CLASSES themselves are defined in code (src/messaging/registry.ts) and
+/// listed in docs/expansion/message-template-register.md; this table says whether Meta has approved a template for it. No row, or any
+/// status other than APPROVED, means that class cannot be sent. Nothing is APPROVED by default.
+model MessageTemplate {
+  id                   String           @id @default(uuid())
+  messageClass         String
+  language             String           @default("en")
+  category             TemplateCategory
+  status               TemplateStatus   @default(DRAFT)
+  providerTemplateName String?
+  approvalReference    String? // where the approval can be checked (a Meta template id, a ticket)
+  bodyPreview          String
+  paramCount           Int              @default(0)
+  disabledReason       String?
+  updatedBy            String?
+  createdAt            DateTime         @default(now()) @db.Timestamptz()
+  updatedAt            DateTime         @default(now()) @updatedAt @db.Timestamptz()
+
+  @@unique([messageClass, language])
+}
+
+enum ContactPurpose {
+  ORDER_UPDATES
+  MARKETING
+}
+
+enum ContactConsentStatus {
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum ContactConsentBasis {
+  ORDER_CHECKOUT
+  INBOUND_MESSAGE
+  WEB_FORM
+}
+
+/// A person's permission for ONE business to message them on WhatsApp for ONE purpose. Never inferred, never imported from a merchant's
+/// customer list: it exists only because that person said yes themselves (a checkbox at checkout, a message they sent, a form).
+/// Transaction updates and marketing are separate purposes with separate consent.
+model ContactConsent {
+  id          String               @id @default(uuid())
+  businessId  String
+  phone       String // digits, international format
+  purpose     ContactPurpose
+  status      ContactConsentStatus
+  basis       ContactConsentBasis
+  textVersion String // the exact notice wording version the person saw
+  sourceRef   String? // e.g. the order id
+  createdAt   DateTime             @default(now()) @db.Timestamptz()
+  updatedAt   DateTime             @default(now()) @updatedAt @db.Timestamptz()
+
+  business Business              @relation(fields: [businessId], references: [id])
+  events   ContactConsentEvent[]
+
+  @@unique([businessId, phone, purpose])
+  @@index([phone])
+}
+
+/// Every consent change, forever. Append-only.
+model ContactConsentEvent {
+  id          String   @id @default(uuid())
+  businessId  String
+  consentId   String
+  event       String // OPT_IN | OPT_OUT | GLOBAL_STOP | GLOBAL_START | ADMIN_BLOCK | ADMIN_UNBLOCK
+  source      String
+  textVersion String?
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  consent  ContactConsent @relation(fields: [consentId], references: [id])
+
+  @@index([consentId])
+}
+
+/// A number TradePal must never message (a STOP from the person, or an admin block). Platform-wide: it overrides every consent.
+model BlockedNumber {
+  id         String    @id @default(uuid())
+  phone      String    @unique
+  source     String // STOP_KEYWORD | ADMIN
+  reason     String?
+  blockedBy  String?
+  createdAt  DateTime  @default(now()) @db.Timestamptz()
+  liftedAt   DateTime? @db.Timestamptz()
+  liftedBy   String?
+  liftReason String?
+}
+
+enum OutboundDecision {
+  SENT
+  SUPPRESSED
+  FAILED
+}
+
+/// Every attempt to send an outbound message of a registered class, and what was decided and why. Append-only. The recipient is kept as a
+/// hash and the last four digits only.
+model OutboundMessageLog {
+  id                String           @id @default(uuid())
+  businessId        String?
+  messageClass      String
+  audience          String // MERCHANT | CONSUMER | PARTNER
+  toPhoneHash       String
+  toPhoneLast4      String
+  decision          OutboundDecision
+  reason            String?
+  templateKey       String?
+  providerMessageId String?
+  relatedType       String?
+  relatedId         String?
+  idempotencyKey    String?          @unique
+  createdAt         DateTime         @default(now()) @db.Timestamptz()
+
+  @@index([messageClass, createdAt])
+  @@index([businessId, createdAt])
+}
+
+enum PendingActionKind {
+  PROPOSAL
+  CLARIFICATION
+}
+
+enum PendingActionStatus {
+  PENDING
+  EXECUTED
+  CANCELLED
+  EXPIRED
+  SUPERSEDED
+}
+
+/// A consequential change proposed from a message and waiting for the actor's answer. A confirmation is bound to the exact proposal
+/// (`actionDigest` over action, amount, currency, items and counterparty), the actor and an expiry. Only one is pending per actor at a time.
+model PendingAction {
+  id              String              @id @default(uuid())
+  businessId      String
+  merchantId      String
+  sourceMessageId String
+  kind            PendingActionKind
+  status          PendingActionStatus @default(PENDING)
+  actionDigest    String
+  summary         String
+  payload         Json
+  amountMinor     BigInt?
+  currencyCode    String?
+  requiresCode    Boolean             @default(false)
+  codeHash        String?
+  question        Json?
+  expiresAt       DateTime            @db.Timestamptz()
+  resolvedAt      DateTime?           @db.Timestamptz()
+  executedRef     String?
+  createdAt       DateTime            @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@unique([merchantId, sourceMessageId])
+  @@index([businessId, status])
+}
+
+/// A signed-in browser or phone for the offline drafts page. The token is shown once and stored hashed. Short-lived; a shared device gets
+/// the shortest life and its queue is cleared after sync.
+model DeviceSession {
+  id         String    @id @default(uuid())
+  businessId String
+  merchantId String
+  tokenHash  String    @unique
+  label      String?
+  shared     Boolean   @default(false)
+  expiresAt  DateTime  @db.Timestamptz()
+  revokedAt  DateTime? @db.Timestamptz()
+  lastSeenAt DateTime? @db.Timestamptz()
+  createdAt  DateTime  @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, merchantId])
+}
+
+enum DraftStatus {
+  PENDING_REVIEW
+  CONFLICT
+  CONFIRMED
+  DISCARDED
+  REJECTED
+}
+
+/// Something a person captured while offline. It is a DRAFT: not a transaction, not in any total, until the person confirms it after the
+/// server has re-checked it. `clientId` is stable, so syncing the same draft twice is one draft.
+model OfflineDraft {
+  id              String      @id @default(uuid())
+  businessId      String
+  merchantId      String
+  deviceSessionId String?
+  clientId        String
+  kind            String // SALE | EXPENSE
+  payload         Json
+  capturedAt      DateTime    @db.Timestamptz()
+  status          DraftStatus @default(PENDING_REVIEW)
+  conflicts       Json?
+  transactionId   String?
+  createdAt       DateTime    @default(now()) @db.Timestamptz()
+  updatedAt       DateTime    @default(now()) @updatedAt @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, clientId])
+  @@index([businessId, status])
+}
+
+/// What happened when TradePal tried to tell a human about an incident: which channel, whether the provider accepted it. Lets the admin see
+/// whether alerting is verified to deliver. Platform data. Append-only.
+model AlertDelivery {
+  id                String   @id @default(uuid())
+  service           String
+  title             String
+  kind              String // INCIDENT | CHANNEL_CHECK
+  channel           String // EMAIL | WHATSAPP
+  status            String // DELIVERED | FAILED | DEDUPED
+  providerMessageId String?
+  httpStatus        Int?
+  error             String?
+  createdAt         DateTime @default(now()) @db.Timestamptz()
+
+  @@index([createdAt])
+  @@index([kind, status, createdAt])
 }
