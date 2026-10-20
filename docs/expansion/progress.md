@@ -3,10 +3,10 @@
 Resume from this file across sessions. Update after every slice.
 
 ## Current state
-- **Phase 0: approved** (`APPROVED: PHASE 0` received).
-- **Phase 1 (tenancy, permissions, config, purposes, outbox/inbox, DB protection, admin core): complete, awaiting approval.** Gate line: `AWAITING: APPROVED: PHASE 1`.
+- **Phase 0: approved. Phase 1: approved** (`APPROVED: PHASE 1` received).
+- **Phase 2 (catalog, pricing, stock, journals, daily close, admin transactions panel): complete, awaiting approval.** Gate line: `AWAITING: APPROVED: PHASE 2`.
 - Branch `expansion/phase-1` (local only: **not pushed, not merged, nothing deployed, no migration run against any real database**). A push to `main` would deploy production and run `prisma migrate deploy`.
-- Tests: backend 69 files / 761 pass; admin-frontend 6 files / 32 pass + build OK. Self-check: `self-check-phase-1.md`. DB runbook: `db-protection.md`.
+- Tests: backend 75 files / 879 pass; admin-frontend 7 files / 36 pass + build OK. Self-check: `self-check-phase-2.md`.
 - Production at `86a072d`, untouched.
 
 ## Completed slices
@@ -25,6 +25,12 @@ Resume from this file across sessions. Update after every slice.
 | 2026-10-20 | 1a permissions matrices (merchant + platform incl. OPERATOR), Shop/Membership/ActiveContext + backfill, country registry (DB, static fallback) | locally tested |
 | 2026-10-20 | 1d transactional outbox + durable callback inbox (sweep OFF by default, no handlers yet) | locally tested; concurrent claim unproven on PGlite |
 | 2026-10-20 | 1e admin core: platform permissions, step-up, support access (append-only), overview, system health, heartbeat + `/heartbeat`, admin frontend pages + prompts, audit gaps closed | locally tested; step-up and support-access flags default OFF |
+| 2026-10-20 | 2a catalog, packs, price lists, rounding | locally tested (scenario 3) |
+| 2026-10-20 | 2b stock: movements, balances, reservations, counts, transfers, costing, legacy bridge | locally tested (scenario 2; real lock interleaving unverified) |
+| 2026-10-20 | 2c journals (DB-enforced balance), posting rules, legacy bridge | locally tested (scenarios 4, 5, 25) |
+| 2026-10-20 | 2d daily close | locally tested; do not enable for real merchants yet (no payment method in legacy entries) |
+| 2026-10-20 | 2e admin transactions panel, void-by-reversal, formula-safe export, correlation ids, `admin.write` audit guarantee | locally tested (scenarios 28, 30) |
+| 2026-10-20 | 2f WhatsApp commands behind flags, docs, rehearsal script | locally tested; script never run against a DB |
 
 ## Commands run (reproducible)
 - `git log --oneline | head`, `git show --stat dfe8bb6`
@@ -34,11 +40,11 @@ Resume from this file across sessions. Update after every slice.
 - Provider docs fetched 2026-10-20 (URLs in `merchant-provider-matrix.md`)
 
 ## Open blockers
-1. **Migration rehearsal on a copy of production** before any deploy (`db-protection.md` §5).
-2. Owner decisions OPEN-1..11 (`decisions.md`); P1-P4 and P10 applied provisionally in Phase 1, awaiting confirmation.
+1. **Migration rehearsal on a real Postgres / restored backup** before any deploy (`scripts/rehearseMigrations.sh`; no Postgres or Docker daemon was available in this environment).
+2. Owner decisions OPEN-1..11 and Phase 2 decisions D1-D12 (`decisions.md` C3), especially: keep `dailyClose` OFF; web/PWA catalog editing deferred.
 3. Owner actions: external heartbeat monitor polling `/heartbeat`; verified alert sender + second recipient; Railway CLI relink; pawaPay approval/token; mobile-money API approval.
 4. No merchant-sales payment provider established (matrix).
-5. Known gaps carried to Phase 2: support access gates only invoices/payment-requests; membership drift check not scheduled; RLS not activated.
+5. Known gaps: no scheduled drift/reconcile checks; support access gates only some routes (Phase 1 list + new panels); RLS not activated; FOR UPDATE contention untested on a real server.
 
 ## Next concrete step
-On `APPROVED: PHASE 1`: start Phase 2 (catalog, pricing, inventory, accounting, daily close, admin transactions panel). Before any deploy of Phase 1 work: rehearse the migrations on a restored production backup.
+On `APPROVED: PHASE 2`: start Phase 3 (B2B procurement and wholesale slice, reorder engine Tier 1 + Tier 2 shadow + scoring job, admin reorder panel). Before any deploy of Phase 1-2 work: rehearse the migrations on a restored production backup.
