@@ -17,6 +17,7 @@ import { getInboundMessageQueue, INBOUND_MESSAGE_QUEUE_NAME } from "./queue/inbo
 import { startWebhookRedriveSweep } from "./queue/webhookRedrive.js";
 import { outboxSweepEnabled, startOutboxSweep } from "./queue/outboxSweep.js";
 import { CALLBACK_HANDLERS, OUTBOX_HANDLERS } from "./domain/eventHandlers.js";
+import { heartbeatEnabled, startHeartbeat } from "./monitoring/heartbeat.js";
 import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
 
 const SERVICE_NAME = "worker";
@@ -248,6 +249,9 @@ const outboxSweep = outboxSweepEnabled()
   ? startOutboxSweep({ prisma, outboxHandlers: OUTBOX_HANDLERS, callbackHandlers: CALLBACK_HANDLERS, alerts })
   : undefined;
 
+// Expansion Phase 1: liveness heartbeat (OFF unless HEARTBEAT_ENABLED=true).
+const heartbeat = heartbeatEnabled() ? startHeartbeat(prisma, SERVICE_NAME) : undefined;
+
 const webhookRedrive = startWebhookRedriveSweep({
   prisma,
   queue: getInboundMessageQueue(),
@@ -261,6 +265,7 @@ const webhookRedrive = startWebhookRedriveSweep({
 // BullMQ's own Worker.close() finish the one currently active job first.
 installGracefulShutdown(SERVICE_NAME, [
   { name: "webhook-redrive", close: async () => webhookRedrive.stop() },
+  ...(heartbeat ? [{ name: "heartbeat", close: async () => heartbeat.stop() }] : []),
   ...(outboxSweep ? [{ name: "outbox-sweep", close: async () => outboxSweep.stop() }] : []),
   { name: "bullmq-worker", close: () => worker.close() },
   { name: "prisma", close: () => prisma.$disconnect() },

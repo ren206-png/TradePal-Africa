@@ -51,6 +51,9 @@ import { requireAdminAuth, requireAdminRole, type AuthenticatedAdminRequest } fr
 import { parsePaginationParams, paginate } from "./pagination.js";
 import { InMemoryLoginRateLimiter, type LoginRateLimiter } from "./rateLimiter.js";
 import { revokeAdminToken } from "./tokenRevocation.js";
+import { createPlatformAdminRouter, type PlatformAdminOptions } from "./platformAdmin.js";
+import { requireStepUp, requireSupportAccess } from "./platformGuards.js";
+import type { PlatformPermission } from "../auth/permissions.js";
 
 const loginBodySchema = z.object({
   email: z.string().email(),
@@ -159,6 +162,8 @@ export interface CreateAdminRouterOptions {
    * (config/outboundGatewayEnv.ts) for why the full type isn't used here.
    */
   deletionResolutionOutboundGateway?: Omit<DeletionResolutionOutboundGateway, "prisma">;
+  /** Expansion Phase 1: step-up limiter / clock seams for the platform admin core router. */
+  platform?: PlatformAdminOptions;
 }
 
 export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, options: CreateAdminRouterOptions = {}): Router {
@@ -204,6 +209,12 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   );
 
   router.use(requireAdminAuth(prisma, jwtSecret));
+
+  // Expansion Phase 1: admin console core (overview, system health, step-up, support access, admin list).
+  router.use(createPlatformAdminRouter(prisma, jwtSecret, options.platform));
+
+  // Step-up (flag adminStepUp, default off) is layered on top of each write route's existing role check.
+  const stepUp = (permission: PlatformPermission) => requireStepUp(prisma, jwtSecret, permission);
 
   router.post(
     "/logout",
@@ -301,6 +312,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/deletion-requests/:id/complete",
     requireAdminRole("SUPER_ADMIN", "SUPPORT"),
+    stepUp("admin:resolve_support_case"),
     asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
       const parsed = completeDeletionRequestBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -331,6 +343,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/deletion-requests/:id/reject",
     requireAdminRole("SUPER_ADMIN", "SUPPORT"),
+    stepUp("admin:resolve_support_case"),
     asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
       const parsed = rejectDeletionRequestBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -415,6 +428,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/plans",
     requireAdminRole("SUPER_ADMIN"),
+    stepUp("admin:manage_subscriptions"),
     asyncHandler(async (req, res) => {
       const parsed = upsertPlanBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -463,6 +477,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/feature-flags/:key",
     requireAdminRole("SUPER_ADMIN"),
+    stepUp("admin:manage_global_flags"),
     asyncHandler(async (req, res) => {
       const parsed = setGlobalFeatureFlagDefaultBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -483,6 +498,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/businesses/:id/subscription",
     requireAdminRole("SUPER_ADMIN", "SUPPORT"),
+    stepUp("admin:manage_subscriptions"),
     asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
       const parsed = assignSubscriptionBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -514,6 +530,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/businesses/:id/subscription/cancel",
     requireAdminRole("SUPER_ADMIN", "SUPPORT"),
+    stepUp("admin:manage_subscriptions"),
     asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
       const parsed = cancelSubscriptionBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -541,6 +558,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/businesses/:id/suspend",
     requireAdminRole("SUPER_ADMIN"),
+    stepUp("admin:suspend_org"),
     asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
       const parsed = suspendBusinessBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -569,6 +587,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/businesses/:id/reinstate",
     requireAdminRole("SUPER_ADMIN"),
+    stepUp("admin:suspend_org"),
     asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
       const parsed = reinstateBusinessBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -630,6 +649,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   // desynchronize from what Flutterwave actually recorded.
   router.get(
     "/businesses/:id/invoices",
+    requireSupportAccess(prisma, "Invoice"),
     asyncHandler(async (req, res) => {
       const businessId = req.params["id"] as string;
       if (!(await requireBusinessExists(businessId, res))) return;
@@ -662,6 +682,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   // confirmPaymentRequestPayment reacting to a verified Flutterwave webhook.
   router.get(
     "/businesses/:id/payment-requests",
+    requireSupportAccess(prisma, "PaymentRequest"),
     asyncHandler(async (req, res) => {
       const businessId = req.params["id"] as string;
       if (!(await requireBusinessExists(businessId, res))) return;
@@ -683,6 +704,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/businesses/:id/feature-flags/:key",
     requireAdminRole("SUPER_ADMIN", "SUPPORT"),
+    stepUp("admin:manage_flags"),
     asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
       const parsed = setBusinessFeatureFlagBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -715,6 +737,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/businesses/:id/feature-flags/:key/reset",
     requireAdminRole("SUPER_ADMIN", "SUPPORT"),
+    stepUp("admin:manage_flags"),
     asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
       const parsed = removeBusinessFeatureFlagOverrideBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -754,6 +777,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/businesses/:id/inventory/backfill",
     requireAdminRole("SUPER_ADMIN", "SUPPORT"),
+    stepUp("admin:resolve_support_case"),
     asyncHandler(async (req, res) => {
       const businessId = req.params["id"] as string;
       if (!(await requireBusinessExists(businessId, res))) return;
@@ -766,6 +790,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/merchants/:id/phone-number",
     requireAdminRole("SUPER_ADMIN", "SUPPORT"),
+    stepUp("admin:revoke_staff"),
     asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
       const parsed = changePhoneNumberBodySchema.safeParse(req.body);
       if (!parsed.success) return sendZodError(res, parsed.error);
@@ -805,6 +830,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/maintenance/expire-subscriptions",
     requireAdminRole("SUPER_ADMIN"),
+    stepUp("admin:pause_job_class"),
     asyncHandler(async (_req, res) => {
       const result = await expireLapsedSubscriptions(prisma, new Date(), options.outboundGateway);
       res.json(result);
@@ -824,6 +850,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.post(
     "/maintenance/expire-payment-requests",
     requireAdminRole("SUPER_ADMIN"),
+    stepUp("admin:pause_job_class"),
     asyncHandler(async (_req, res) => {
       const result = await expireStalePaymentRequests(prisma);
       res.json(result);

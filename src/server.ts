@@ -22,6 +22,7 @@ import { createPawaPayWebhookPostHandler } from "./pawapay/webhookRoute.js";
 import { installCrashReporting, installGracefulShutdown } from "./monitoring/processGuards.js";
 import { createRequestErrorHandler } from "./monitoring/requestErrorHandler.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
+import { evaluateHeartbeats, heartbeatEnabled, requiredHeartbeatServices, startHeartbeat } from "./monitoring/heartbeat.js";
 import { enqueueInboundMessage } from "./queue/inboundMessageQueue.js";
 import { RedisInboundMessageRateLimiter } from "./whatsapp/inboundRateLimiter.js";
 import { createWebhookPostHandler, verifyWebhookSubscription, type RequestWithRawBody } from "./whatsapp/webhookRoute.js";
@@ -128,6 +129,24 @@ app.use(
 // 404, since the only other routes mounted below are webhook/admin routes.
 app.get("/", (_req, res) => {
   res.status(200).json({ status: "ok", service: "tradepal-africa-api" });
+});
+
+// Expansion Phase 1: dead-man's-switch endpoint for an external monitor (independent of Railway). 404 unless
+// HEARTBEAT_ENABLED=true. Reports only ok/stale: no service names, ages or counts.
+if (heartbeatEnabled()) startHeartbeat(prisma, "api");
+
+app.get("/heartbeat", async (_req, res) => {
+  if (!heartbeatEnabled()) {
+    res.status(404).end();
+    return;
+  }
+  try {
+    const statuses = await evaluateHeartbeats(prisma, requiredHeartbeatServices());
+    const stale = statuses.filter((s) => requiredHeartbeatServices().includes(s.service) && s.stale);
+    res.status(stale.length === 0 ? 200 : 503).json({ status: stale.length === 0 ? "ok" : "stale" });
+  } catch {
+    res.status(503).json({ status: "unknown" });
+  }
 });
 
 app.get("/webhooks/whatsapp", (req, res) => {

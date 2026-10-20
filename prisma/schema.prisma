@@ -124,6 +124,7 @@ model Business {
   aiUsageLedgerEntries AiUsageLedger[]
   shops                Shop[]
   memberships          Membership[]
+  supportAccesses      SupportAccess[]
 
   @@index([countryCode])
 }
@@ -249,12 +250,13 @@ enum AdminRole {
 
 /// Internal TradePal staff — never tenant-scoped, backs the Phase 2 admin dashboard (read-only first, RBAC before any write).
 model AdminUser {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  name         String
-  role         AdminRole
-  passwordHash String // bcrypt hash (see src/admin/auth.ts) — never stores or logs the raw password
-  createdAt    DateTime  @default(now()) @db.Timestamptz()
+  supportAccesses SupportAccess[]
+  id              String          @id @default(uuid())
+  email           String          @unique
+  name            String
+  role            AdminRole
+  passwordHash    String // bcrypt hash (see src/admin/auth.ts) — never stores or logs the raw password
+  createdAt       DateTime        @default(now()) @db.Timestamptz()
 }
 
 /// Revocation list for admin JWTs (see src/admin/tokenRevocation.ts). A stateless JWT can't be
@@ -1028,4 +1030,33 @@ model CallbackInbox {
 
   @@unique([provider, externalId])
   @@index([status, availableAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 1: platform admin console core (docs/expansion §18)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A platform admin's recorded, time-boxed reason for opening one merchant's books ("support access"). Append-only (a
+/// database trigger rejects edits and deletes): it is the audit evidence of who looked at whose data and why.
+model SupportAccess {
+  id          String   @id @default(uuid())
+  adminUserId String
+  businessId  String
+  reason      String
+  openedAt    DateTime @default(now()) @db.Timestamptz()
+  expiresAt   DateTime @db.Timestamptz()
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+  business  Business  @relation(fields: [businessId], references: [id])
+
+  @@index([adminUserId, businessId, expiresAt])
+  @@index([businessId, openedAt])
+}
+
+/// Last time each long-running process reported in. Feeds the admin health view and the public /heartbeat endpoint an
+/// external monitor (independent of Railway) can poll as a dead-man's switch.
+model SystemHeartbeat {
+  service    String   @id
+  lastSeenAt DateTime @db.Timestamptz()
+  meta       Json?
 }
