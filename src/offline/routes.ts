@@ -4,7 +4,9 @@ import { z } from "zod";
 import { asyncHandler } from "../admin/asyncHandler.js";
 import { InMemoryLoginRateLimiter, type LoginRateLimiter } from "../admin/rateLimiter.js";
 import { OFFLINE_PAGE, OFFLINE_SCRIPT, OFFLINE_SERVICE_WORKER } from "./clientAssets.js";
-import { authenticateDevice, exchangeConnectCode, revokeSession, type AuthedDevice } from "./devices.js";
+import { FLAG_OFFLINE_DRAFTS, FLAG_REPORTS_WEB, authenticateDevice, exchangeConnectCode, offlineSwitchOn, reportsWebSwitchOn, revokeSession, type AuthedDevice } from "./devices.js";
+import { REPORT_NAMES, ReportError, canExportReports, canViewReports, isReportName, parseRange, reportToCsv, runReport } from "../reports/index.js";
+import { getTenantScopedClient } from "../db/tenantScope.js";
 import { DraftError, confirmDraft, discardDraft, listDrafts, syncDrafts } from "./drafts.js";
 
 /**
@@ -54,18 +56,22 @@ export function createOfflineRouter(prisma: PrismaClient, opts: OfflineRouterOpt
     const parsed = z.object({ code: z.string().regex(/^\d{8}$/) }).safeParse(req.body);
     const claimed = parsed.success ? await exchangeConnectCode(prisma, parsed.data.code, clock()) : null;
     if (!claimed) { res.status(401).json({ error: "That code did not work. Ask for a new one with /connect." }); return; }
-    const dev = await authenticateDevice(prisma, claimed.token, clock());
-    if (!dev) { res.status(403).json({ error: "Offline drafts are not available for this business." }); return; }
-    res.json({ token: claimed.token, shared: claimed.session.shared, expiresAt: claimed.session.expiresAt, businessName: dev.business.name, currencyCode: dev.business.currencyCode, minorUnitExp: dev.business.currency.minorUnitExp });
+    const drafts = offlineSwitchOn() ? await authenticateDevice(prisma, claimed.token, clock(), FLAG_OFFLINE_DRAFTS) : null;
+    const reports = reportsWebSwitchOn() ? await authenticateDevice(prisma, claimed.token, clock(), FLAG_REPORTS_WEB) : null;
+    const dev = drafts ?? reports;
+    if (!dev) { res.status(403).json({ error: "This is not available for this business." }); return; }
+    res.json({ token: claimed.token, shared: claimed.session.shared, expiresAt: claimed.session.expiresAt, businessName: dev.business.name, currencyCode: dev.business.currencyCode, minorUnitExp: dev.business.currency.minorUnitExp, features: { drafts: !!drafts, reports: !!reports } });
   }));
 
-  const authed = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const authFor = (flag: string, switchOn: () => boolean) => asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const header = req.headers.authorization ?? "";
-    const dev = header.startsWith("Bearer ") ? await authenticateDevice(prisma, header.slice(7).trim(), clock()) : null;
+    const dev = switchOn() && header.startsWith("Bearer ") ? await authenticateDevice(prisma, header.slice(7).trim(), clock(), flag) : null;
     if (!dev) { res.status(401).json({ error: "Please connect this phone again." }); return; }
     (req as Request & { device: AuthedDevice }).device = dev;
     next();
   });
+  const authed = authFor(FLAG_OFFLINE_DRAFTS, offlineSwitchOn);
+  const authedReports = authFor(FLAG_REPORTS_WEB, reportsWebSwitchOn);
   const device = (req: Request): AuthedDevice => (req as Request & { device: AuthedDevice }).device;
   const fail = (res: Response, error: unknown): void => {
     if (error instanceof DraftError) {
@@ -75,7 +81,14 @@ export function createOfflineRouter(prisma: PrismaClient, opts: OfflineRouterOpt
     throw error;
   };
 
-  api.post("/logout", authed, asyncHandler(async (req, res) => {
+  api.post("/logout", asyncHandler(async (req, res, next) => {
+    const header = req.headers.authorization ?? "";
+    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    const dev = (await authenticateDevice(prisma, token, clock(), FLAG_OFFLINE_DRAFTS)) ?? (await authenticateDevice(prisma, token, clock(), FLAG_REPORTS_WEB));
+    if (!dev) { res.status(401).json({ error: "Please connect this phone again." }); return; }
+    (req as Request & { device: AuthedDevice }).device = dev;
+    next();
+  }), asyncHandler(async (req, res) => {
     await revokeSession(prisma, device(req).session.id, clock());
     res.json({ ok: true });
   }));
@@ -111,6 +124,27 @@ export function createOfflineRouter(prisma: PrismaClient, opts: OfflineRouterOpt
       res.json({ ok: true });
     } catch (error) {
       fail(res, error);
+    }
+  }));
+
+  api.get("/reports/:name", authedReports, asyncHandler(async (req, res) => {
+    const dev = device(req);
+    const name = String(req.params["name"] ?? "").replace(/\.csv$/, "");
+    const wantsCsv = String(req.params["name"] ?? "").endsWith(".csv") || req.query["format"] === "csv";
+    if (!isReportName(name)) return void res.status(404).json({ error: "No such report.", reports: REPORT_NAMES });
+    if (!canViewReports(dev.merchant.role) || (wantsCsv && !canExportReports(dev.merchant.role))) return void res.status(403).json({ error: wantsCsv ? "Only the owner or a manager can download reports." : "You do not have permission to see reports." });
+    try {
+      const args = [req.query["from"], req.query["to"]].filter((x): x is string => typeof x === "string");
+      const range = parseRange(args.length === 2 ? args : typeof req.query["period"] === "string" ? [req.query["period"]] : [], dev.business.timezone, clock());
+      const report = await runReport({ scoped: getTenantScopedClient(prisma, dev.business.id), businessId: dev.business.id, currencyCode: dev.business.currencyCode, minorUnitExp: dev.business.currency.minorUnitExp, timezone: dev.business.timezone, now: clock() }, name, range);
+      if (wantsCsv) {
+        res.set({ "Content-Disposition": `attachment; filename="tradepal-${name}-${clock().toISOString().slice(0, 10)}.csv"`, "Content-Type": "text/csv; charset=utf-8" }).send(reportToCsv(report));
+        return;
+      }
+      res.json(report);
+    } catch (error) {
+      if (error instanceof ReportError) return void res.status(error.code === "UNSUPPORTED" ? 422 : 400).json({ error: error.message, code: error.code });
+      throw error;
     }
   }));
 

@@ -19,6 +19,13 @@ button{cursor:pointer}.card{border:1px solid #bbb;border-radius:.5rem;padding:.7
 <div id="login" hidden><p>On WhatsApp send <strong>/connect</strong> to TradePal, then type the 8-digit code here.</p>
 <input id="code" inputmode="numeric" maxlength="8" autocomplete="one-time-code" aria-label="Connect code"><button id="go">Connect this phone</button></div>
 <div id="app" hidden>
+<div id="reportsBox" hidden><h2>Reports</h2>
+<p class="muted">Bookkeeping reports. They are not tax filings and not profit statements; read the notes under each one.</p>
+<select id="rname" aria-label="Report"><option value="sales">Sales</option><option value="cash-flow">Cash flow</option><option value="inventory-valuation">Stock value</option><option value="ar-aging">Money owed to you</option><option value="ap-aging">Money you owe</option><option value="gross-margin">Gross margin</option><option value="payment-reconciliation">Payments</option><option value="stock-discrepancies">Stock differences</option></select>
+<div class="row"><input id="rfrom" type="date" aria-label="From"><input id="rto" type="date" aria-label="To"></div>
+<div class="row"><button id="rview">View</button><button id="rcsv">Download CSV</button></div>
+<div id="rout"></div></div>
+<div id="draftsBox" hidden>
 <p class="warn"><strong>A draft is not a recorded sale or expense.</strong> It only becomes one after you sync it and confirm it while online.</p>
 <div class="card"><select id="kind" aria-label="Type"><option value="SALE">Sale</option><option value="EXPENSE">Expense</option></select>
 <input id="amount" inputmode="decimal" placeholder="Amount" aria-label="Amount">
@@ -26,7 +33,8 @@ button{cursor:pointer}.card{border:1px solid #bbb;border-radius:.5rem;padding:.7
 <input id="who" placeholder="Customer name (needed for credit)" aria-label="Customer">
 <input id="what" placeholder="Note (optional)" aria-label="Note">
 <button id="add">Save as draft on this phone</button></div>
-<div class="row"><button id="sync">Send drafts to TradePal</button><button id="out">Disconnect this phone</button></div>
+<div class="row"><button id="sync">Send drafts to TradePal</button></div></div>
+<div class="row"><button id="out">Disconnect this phone</button></div>
 <p id="msg" class="muted" role="status"></p><div id="list"></div></div>
 <script src="/m/app.js"></script></body></html>`;
 
@@ -97,13 +105,15 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
     $("net").textContent = navigator.onLine ? "Online" : "Offline: drafts are kept on this phone until you reconnect.";
     getMeta("session").then(function (s) {
       meta = s || {}; $("login").hidden = !!meta.token; $("app").hidden = !meta.token;
-      if (meta.token) loadServer();
+      var f = meta.features || { drafts: true, reports: false };
+      $("draftsBox").hidden = !meta.token || !f.drafts; $("reportsBox").hidden = !meta.token || !f.reports;
+      if (meta.token && f.drafts) loadServer();
     });
   }
   $("go").onclick = function () {
     api("/session", { code: $("code").value.trim() }).then(function (x) {
       if (!x.ok) { say(x.body.error || "That code did not work.", "err"); return; }
-      meta = { token: x.body.token, shared: !!x.body.shared, exp: x.body.minorUnitExp, cur: x.body.currencyCode };
+      meta = { token: x.body.token, shared: !!x.body.shared, exp: x.body.minorUnitExp, cur: x.body.currencyCode, features: x.body.features };
       return setMeta("session", meta).then(show);
     }).catch(function (e) { say(e.message, "err"); });
   };
@@ -129,6 +139,31 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
     }).catch(function (e) { say(e.message, "err"); });
   };
   $("out").onclick = function () { (meta.token ? api("/logout", {}).catch(function () {}) : Promise.resolve()).then(wipe); };
+  function reportQuery() { var f = $("rfrom").value, t = $("rto").value; return f && t ? "?from=" + f + "&to=" + t : ""; }
+  function showReport(r) {
+    var out = $("rout"); out.textContent = "";
+    line(out, r.meta.title + " (" + r.meta.currencyCode + ", " + r.meta.timezone + ")", "muted");
+    line(out, r.meta.basis, "muted");
+    var d = r.data, rows = d.rows || d.days || d.attempts || d.buckets || [];
+    if (d.totals) { Object.keys(d.totals).forEach(function (k) { line(out, k + ": " + (/Minor$/.test(k) ? money(Number(d.totals[k])) : d.totals[k])); }); }
+    ["netSalesMinor", "costOfGoodsSoldMinor", "grossMarginMinor", "totalMinor"].forEach(function (k) { if (d[k] !== undefined && d[k] !== null) line(out, k.replace(/Minor$/, "") + ": " + money(Number(d[k]))); });
+    line(out, rows.length + " row(s). Download the CSV for the full table.", "muted");
+    r.meta.warnings.forEach(function (w) { line(out, "Note: " + w.message, "warn"); });
+    line(out, r.meta.notice, "muted");
+  }
+  $("rview").onclick = function () {
+    if (!navigator.onLine) { say("Reports need a connection.", "err"); return; }
+    api("/reports/" + $("rname").value + reportQuery()).then(function (x) { if (!x.ok) { say(x.body.error || "Could not make the report.", "err"); return; } say(""); showReport(x.body); }).catch(function (e) { say(e.message, "err"); });
+  };
+  $("rcsv").onclick = function () {
+    if (!navigator.onLine) { say("Reports need a connection.", "err"); return; }
+    var h = { Authorization: "Bearer " + meta.token };
+    fetch("/m/api/reports/" + $("rname").value + ".csv" + reportQuery(), { headers: h, cache: "no-store" }).then(function (r) {
+      if (r.status === 401) return wipe().then(function () { throw new Error("Please connect this phone again."); });
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || "Could not download."); });
+      return r.blob().then(function (b) { var a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "tradepal-" + $("rname").value + ".csv"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000); });
+    }).catch(function (e) { say(e.message, "err"); });
+  };
   window.addEventListener("online", show); window.addEventListener("offline", show);
   open().then(show);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/m/sw.js", { scope: "/m/" }).catch(function () {});

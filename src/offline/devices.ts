@@ -15,6 +15,10 @@ export const SESSION_DAYS = 14;
 export const SHARED_SESSION_HOURS = 8;
 
 export const offlineSwitchOn = (): boolean => process.env["OFFLINE_DRAFTS_ENABLED"] === "true";
+/** Phase 8: the same phone session can also download bookkeeping reports, behind its own platform switch and the per-business `reportsV2` flag. */
+export const FLAG_REPORTS_WEB = "reportsV2";
+export const reportsWebSwitchOn = (): boolean => process.env["REPORTS_WEB_ENABLED"] === "true";
+export const webRouterEnabled = (): boolean => offlineSwitchOn() || reportsWebSwitchOn();
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
 const codeKey = (code: string): string => sha(`connect-code:${code}`);
 const tokenKey = (token: string): string => sha(`device-token:${token}`);
@@ -54,7 +58,7 @@ export interface AuthedDevice {
 }
 
 /** Looks the token up AND re-checks that the person and the business are still allowed in, every time. */
-export async function authenticateDevice(prisma: PrismaClient, token: string | undefined, now: Date = new Date()): Promise<AuthedDevice | null> {
+export async function authenticateDevice(prisma: PrismaClient, token: string | undefined, now: Date = new Date(), requiredFlag: string = FLAG_OFFLINE_DRAFTS): Promise<AuthedDevice | null> {
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
   const session = await prisma.deviceSession.findUnique({ where: { tokenHash: tokenKey(token) } });
   if (!session || session.revokedAt || !session.lastSeenAt || session.expiresAt.getTime() <= now.getTime()) return null;
@@ -63,7 +67,7 @@ export async function authenticateDevice(prisma: PrismaClient, token: string | u
   if (await isBusinessSuspended(prisma, session.businessId)) return null;
   const business = await prisma.business.findUnique({ where: { id: session.businessId }, include: { currency: true } });
   if (!business) return null;
-  if (!(await isFeatureEnabled(getTenantScopedClient(prisma, business.id), business.id, FLAG_OFFLINE_DRAFTS))) return null;
+  if (!(await isFeatureEnabled(getTenantScopedClient(prisma, business.id), business.id, requiredFlag))) return null;
   await prisma.deviceSession.update({ where: { id: session.id }, data: { lastSeenAt: now } });
   return { session, merchant, business };
 }

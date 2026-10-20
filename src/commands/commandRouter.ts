@@ -148,6 +148,7 @@ const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
   { flag: "catalogV2", line: "/wholesale <sku> <price> [per <pack>] [from <qty>], /publish <sku>, /unpublish <sku> - wholesale prices for your partners" },
   { flag: "storefront", line: "/store - your online shop: set it up, see and move orders, deal with cancellations, refunds and problems (/store help)" },
   { flag: "pawapayBilling", line: "/plans, /billing, /renew <mobile-money number> [plan], /changeplan <plan>, /cancelplan - your TradePal subscription" },
+  { flag: "reportsV2", line: "/report - bookkeeping reports: sales, cash, stock value, money owed, margin, payments, stock differences (/report help)" },
   { flag: "offlineDrafts", line: "/connect [shared], /disconnect - link a phone to write sales and expenses as drafts without a connection" },
   { line: "/help - show this message" },
 ];
@@ -499,7 +500,8 @@ async function handleToday(ctx: CommandContext): Promise<string> {
     `Sales: ${formatMoney(summary.totalSalesMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
     `Expenses: ${formatMoney(summary.totalExpensesMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
     `Payments received: ${formatMoney(summary.totalPaymentsReceivedMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
-    `Net: ${formatMoney(summary.netMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
+    // With the reports flag on the line says what it is: sales minus expenses is NOT profit (stock cost, fees and drawings are not in it).
+    `${(await isFeatureEnabled(ctx.scopedPrisma, ctx.businessId, "reportsV2")) ? "Sales minus expenses (not profit)" : "Net"}: ${formatMoney(summary.netMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
   ].join("\n");
 }
 

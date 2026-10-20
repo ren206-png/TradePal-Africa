@@ -2,7 +2,7 @@ import type { CommandContext } from "./commandRouter.js";
 import { canMerchant, membershipRoleForLegacyMerchantRole } from "../auth/permissions.js";
 import { isFeatureEnabled } from "../domain/featureFlags.js";
 import { t } from "../i18n/index.js";
-import { CODE_MINUTES, FLAG_OFFLINE_DRAFTS, issueConnectCode, offlineSwitchOn, revokeAllForMerchant } from "../offline/devices.js";
+import { CODE_MINUTES, FLAG_OFFLINE_DRAFTS, FLAG_REPORTS_WEB, issueConnectCode, offlineSwitchOn, reportsWebSwitchOn, revokeAllForMerchant } from "../offline/devices.js";
 
 /**
  * `/connect [shared]` and `/disconnect`: link a phone for offline drafts. Behind the per-business `offlineDrafts` flag AND the platform
@@ -12,7 +12,9 @@ export const OFFLINE_COMMANDS = new Set(["/connect", "/disconnect"]);
 
 export async function handleOfflineCommand(ctx: CommandContext, command: string, args: string): Promise<string | null> {
   if (!OFFLINE_COMMANDS.has(command)) return null;
-  if (!offlineSwitchOn() || !(await isFeatureEnabled(ctx.scopedPrisma, ctx.businessId, FLAG_OFFLINE_DRAFTS))) return null;
+  const drafts = offlineSwitchOn() && (await isFeatureEnabled(ctx.scopedPrisma, ctx.businessId, FLAG_OFFLINE_DRAFTS));
+  const reports = reportsWebSwitchOn() && (await isFeatureEnabled(ctx.scopedPrisma, ctx.businessId, FLAG_REPORTS_WEB));
+  if (!drafts && !reports) return null;
   const role = membershipRoleForLegacyMerchantRole(ctx.merchantRole);
   if (!canMerchant(role, "sales:create") && !canMerchant(role, "expenses:create")) return "You do not have permission to record sales or expenses.";
   if (command === "/disconnect") {

@@ -269,7 +269,7 @@ if (process.env["STOREFRONT_ENABLED"] === "true") {
 
 // Offline drafts page and API (expansion Phase 7). Off unless OFFLINE_DRAFTS_ENABLED=true; every request is also checked against the
 // per-business `offlineDrafts` flag. Behind a proxy set TRUST_PROXY so rate limits see the phone's address.
-if (process.env["OFFLINE_DRAFTS_ENABLED"] === "true") {
+if (process.env["OFFLINE_DRAFTS_ENABLED"] === "true" || process.env["REPORTS_WEB_ENABLED"] === "true") {
   if (process.env["TRUST_PROXY"]) app.set("trust proxy", Number(process.env["TRUST_PROXY"]) || process.env["TRUST_PROXY"]);
   app.use(createOfflineRouter(prisma));
 }
