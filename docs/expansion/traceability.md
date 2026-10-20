@@ -45,3 +45,12 @@ Status vocabulary: implemented / locally tested / sandbox verified / partner app
 | 20 scenario 31 Tier 1 arithmetic, draft only | `reorder.ts` | `reorderTier1.test.ts` | locally tested |
 | 20 scenario 32 Tier 2 shadow invisible, scored vs actual and Tier 1, gate rejected below / audited above | `forecast.ts`, `forecastGate.ts` | `forecast.test.ts`, `adminReorder.test.ts` | locally tested |
 | 22 demo: wholesaler -> retailer with simulator; forecast rows and scores in admin | `scripts/demoWholesale.ts` | `demoPath.test.ts` | locally tested (consumer step and pawaPay renewal belong to later phases) |
+| 10 B2C storefront on the same inventory and accounting services | `domain/store/*`, `storefront/routes.ts` | `storeCheckout.test.ts`, `storeOrders.test.ts`, `storefrontWeb.test.ts` | locally tested |
+| 10 pickup and delivery workflows, handover code | `orders.ts`, `/store` commands, order page | `storeOrders.test.ts`, `storefrontWeb.test.ts`, `storeCommands.test.ts` | locally tested |
+| 10 cancellation and refund policy, returns restock at original cost | `cancellationPolicy`, `refundPolicy`, `refunds.ts` | `storeOrders.test.ts` | locally tested |
+| 10 support cases name the responsible party; admin panel | `cases.ts`, `admin/adminSupport.ts`, `SupportCasesPage` | `storeOrders.test.ts`, `adminSupport.test.ts`, `SupportCasesPage.test.tsx` | locally tested |
+| 20 scenario 10 late / duplicate / over / under / wrong-currency payment | `payments.ts`, simulator inbox route | `storeOrders.test.ts`, `storefrontWeb.test.ts` | locally tested |
+| 20 scenario 18 no tenant or cost leakage; token-only order access | `storefront.ts` projection, `resolveOrderByToken`, `publicOrderView` | `storefrontWeb.test.ts`, `storeCheckout.test.ts` | locally tested |
+| 20 scenario 19 pickup and delivery end to end through the web | `storefront/routes.ts` | `storefrontWeb.test.ts` | locally tested |
+| 12 online payment is simulator-only and refused in production | `simulatedPaymentsAllowed`, `/order/:token/pay` | `storefrontWeb.test.ts` | locally tested |
+| 20 scenario 2 no oversell across channels (consumer holds) | reservations, expiry sweep | `storeCheckout.test.ts`, `storeSweep.test.ts` | locally tested |

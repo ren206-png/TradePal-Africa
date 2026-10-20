@@ -15,3 +15,14 @@ A "Delete" control on any financial record is a defect. The admin API exposes no
 Every successful admin write also leaves an `admin.write <METHOD> <route>` audit row with the acting admin, target, stated reason and correlation id, written before the success response is sent (`src/admin/adminAudit.ts`). The correlation id is the caller's `x-correlation-id` if it is a plain token, otherwise generated, and is echoed in the response header.
 
 Export: `GET /admin/businesses/:id/transactions.csv`, capped at 10,000 rows (`X-Export-Truncated` says when it was cut), every text cell that begins with `=`, `+`, `-`, `@`, tab or CR is prefixed with an apostrophe, numeric columns are validated integers, and each export is audited (who, how many rows, date window).
+
+## Phase 4 records
+
+| Record | Admin can | Admin cannot |
+|---|---|---|
+| Store order, line, payment | view (money and status only: no buyer phone, no cost; behind `admin:view_merchant_financials` and support access) | edit, delete (database refuses delete) |
+| Support case | assign, add a note, reassign the responsible party (with a reason), close (with a resolution); each is audited and needs step-up when enabled | edit a note, delete, reopen a closed case |
+| Payment exception | view the queue (`admin:view_support_cases`) | resolve it: the SELLER resolves (refund / re-reserve / apply); admin resolution is not built |
+| Refund request, cancellation request | counted on the overview | decide them: the seller decides |
+
+The consumer's full phone number is shown to an admin only on a case handled by the platform or assigned to that admin; otherwise it is masked.

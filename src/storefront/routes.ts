@@ -71,9 +71,10 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
 
   router.use(express.urlencoded({ extended: false, limit: "20kb", parameterLimit: 200 }));
 
-  const limit = (kind: LoginRateLimiter) =>
+  // The label keeps read, write and order counters apart even when they share one backing store (Redis).
+  const limit = (kind: LoginRateLimiter, label: string) =>
     asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-      const r = await kind.consume(`${req.ip ?? "?"}:${req.path.split("/")[1] ?? ""}`);
+      const r = await kind.consume(`store:${label}:${req.ip ?? "?"}`);
       if (!r.allowed) {
         res.status(429).set("Retry-After", String(r.retryAfterSeconds)).type("html").send(page("Slow down", `<h1>Too many requests</h1><p>Please wait a moment and try again.</p>`));
         return;
@@ -103,7 +104,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
 
   // ------------------------------------------------------------------------------- catalog
 
-  router.get("/shop/:slug", limit(read), asyncHandler(async (req, res) => {
+  router.get("/shop/:slug", limit(read, "read"), asyncHandler(async (req, res) => {
     const sf = await loadPublicStorefront(prisma, req.params["slug"] as string);
     if (!sf) {
       res.status(404).type("html").send(notFoundPage());
@@ -134,7 +135,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
 
   // ------------------------------------------------------------------------------- basket
 
-  router.post("/shop/:slug/add", limit(write), asyncHandler(async (req, res) => {
+  router.post("/shop/:slug/add", limit(write, "write"), asyncHandler(async (req, res) => {
     const sf = await loadPublicStorefront(prisma, req.params["slug"] as string);
     if (!sf) {
       res.status(404).type("html").send(notFoundPage());
@@ -155,7 +156,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
     }
   }));
 
-  router.post("/basket/update", limit(write), asyncHandler(async (req, res) => {
+  router.post("/basket/update", limit(write, "write"), asyncHandler(async (req, res) => {
     privateHeaders(res);
     const parsed = z.object({ lineId: text(80), quantity: z.coerce.number().int() }).safeParse(req.body);
     const token = cookies(req)[BASKET_COOKIE];
@@ -169,7 +170,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
     res.redirect(303, "/basket");
   }));
 
-  router.get("/basket", limit(read), asyncHandler(async (req, res) => {
+  router.get("/basket", limit(read, "read"), asyncHandler(async (req, res) => {
     privateHeaders(res);
     const view = await basketView(prisma, cookies(req)[BASKET_COOKIE], { allowOnlinePayment: allowOnline(), now: clock() });
     if (view.empty) {
@@ -202,7 +203,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
         <p><button type="submit">Place order${view.sellers.length > 1 ? "s" : ""}</button></p></div>` : ""}</form><p><a href="/orders">Your orders</a></p>`));
   }));
 
-  router.post("/basket/checkout", limit(orderLimiter), asyncHandler(async (req, res) => {
+  router.post("/basket/checkout", limit(orderLimiter, "order"), asyncHandler(async (req, res) => {
     privateHeaders(res);
     const token = cookies(req)[BASKET_COOKIE];
     const parsed = checkoutSchema.safeParse(req.body);
@@ -249,7 +250,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
     }
   }));
 
-  router.get("/orders", limit(read), asyncHandler(async (req, res) => {
+  router.get("/orders", limit(read, "read"), asyncHandler(async (req, res) => {
     privateHeaders(res);
     const tokens = (cookies(req)[PLACED_COOKIE] ?? "").split(",").filter(Boolean).slice(-MAX_PLACED);
     const rows: string[] = [];
@@ -302,12 +303,12 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
       <p><a href="/order/${esc(token)}/receipt">Receipt</a> &middot; <a href="/orders">Your orders</a></p>${v.terms ? `<p class="muted">Seller terms: ${esc(v.terms)}</p>` : ""}`);
   };
 
-  router.get("/order/:token", limit(read), withOrder(async ({ req, res, businessId, orderId, token }) => {
+  router.get("/order/:token", limit(read, "read"), withOrder(async ({ req, res, businessId, orderId, token }) => {
     const v = await publicOrderView(prisma, businessId, orderId, clock());
     res.type("html").send(orderPage(v, token, typeof req.query["m"] === "string" ? req.query["m"].slice(0, 200) : ""));
   }));
 
-  router.get("/order/:token/receipt", limit(read), withOrder(async ({ res, businessId, orderId }) => {
+  router.get("/order/:token/receipt", limit(read, "read"), withOrder(async ({ res, businessId, orderId }) => {
     const v = await publicOrderView(prisma, businessId, orderId, clock());
     const m = (x: bigint) => money(x, v.minorUnitExp, v.currencyCode);
     const rows = v.items.map((i) => `<tr><td>${esc(i.description)}</td><td>${i.quantity} x ${esc(i.unit)}</td><td class="n">${m(i.unitPriceMinor)}</td><td class="n">${m(i.lineTotalMinor)}</td></tr>`).join("");
@@ -319,7 +320,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
 
   const back = (res: Response, token: string, message: string) => res.redirect(303, `/order/${encodeURIComponent(token)}?m=${encodeURIComponent(message)}`);
 
-  router.post("/order/:token/cancel", limit(write), withOrder(async ({ req, res, businessId, orderId, token }) => {
+  router.post("/order/:token/cancel", limit(write, "write"), withOrder(async ({ req, res, businessId, orderId, token }) => {
     const parsed = z.object({ reason: text(300).optional() }).safeParse(req.body);
     try {
       const r = await cancelStoreOrderByBuyer(prisma, { businessId, orderId, ...(parsed.success && parsed.data.reason ? { reason: parsed.data.reason } : {}), now: clock() });
@@ -330,7 +331,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
     }
   }));
 
-  router.post("/order/:token/refund", limit(write), withOrder(async ({ req, res, businessId, orderId, token }) => {
+  router.post("/order/:token/refund", limit(write, "write"), withOrder(async ({ req, res, businessId, orderId, token }) => {
     const parsed = z.object({ kind: z.enum(["RETURN", "REFUND_ONLY"]), reason: text(500), amount: text(20).optional() }).safeParse(req.body);
     if (!parsed.success) return back(res, token, "Please tell the seller what is wrong.");
     try {
@@ -350,7 +351,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
     }
   }));
 
-  router.post("/order/:token/problem", limit(write), withOrder(async ({ req, res, businessId, orderId, token }) => {
+  router.post("/order/:token/problem", limit(write, "write"), withOrder(async ({ req, res, businessId, orderId, token }) => {
     const parsed = z.object({ type: z.enum(["DELIVERY", "PRODUCT_COMPLAINT", "PAYMENT_DISPUTE", "OTHER"]), summary: text(1000) }).safeParse(req.body);
     if (!parsed.success) return back(res, token, "Please describe the problem.");
     try {
@@ -366,7 +367,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
 
   // Test-money checkout. Disabled in production and unless a simulator secret is configured. It builds a SIGNED callback exactly
   // as a provider would and sends it through the same durable inbox, so nothing about it bypasses the real path.
-  router.post("/order/:token/pay", limit(write), withOrder(async ({ res, businessId, orderId, token }) => {
+  router.post("/order/:token/pay", limit(write, "write"), withOrder(async ({ res, businessId, orderId, token }) => {
     if (!allowOnline() || !options.simulatorSecret) return back(res, token, "Online payment is not available.");
     const scoped = getTenantScopedClient(prisma, businessId);
     const order = await scoped.storeOrder.findUniqueOrThrow({ where: { id: orderId } });

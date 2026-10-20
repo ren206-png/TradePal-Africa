@@ -4,9 +4,10 @@ Resume from this file across sessions. Update after every slice.
 
 ## Current state
 - **Phases 0, 1, 2: approved.** (`APPROVED: PHASE 2` received.)
-- **Phase 3 (B2B procurement and wholesale, reorder engine Tier 1 + Tier 2 shadow + scoring + gate, admin reorder panel): complete, awaiting approval.** Gate line: `AWAITING: APPROVED: PHASE 3`.
+- **Phase 3: approved.** (`APPROVED: PHASE 3` received.)
+- **Phase 4 (B2C storefront, checkout and fulfilment on the same inventory and accounting services; admin support cases): complete, awaiting approval.** Gate line: `AWAITING: APPROVED: PHASE 4`.
 - Branch `expansion/phase-1` (local only: **not pushed, not merged, nothing deployed, no migration run against any real database**). A push to `main` would deploy production and run `prisma migrate deploy`.
-- Tests: backend 83 files / 944 pass; admin-frontend 8 files / 40 pass + build OK. Self-check: `self-check-phase-3.md`. Demo: `npx tsx scripts/demoWholesale.ts`.
+- Tests: backend 89 files / 1009 pass; admin-frontend 9 files / 43 pass + build OK. Self-check: `self-check-phase-4.md`. Demo (Phase 3): `npx tsx scripts/demoWholesale.ts`.
 - Production at `86a072d`, untouched.
 
 ## Completed slices
@@ -37,6 +38,11 @@ Resume from this file across sessions. Update after every slice.
 | 2026-10-20 | 3d Tier 2 shadow forecasting, scoring, promotion gate with DB guard | locally tested (scenario 32); real-data accuracy unknown |
 | 2026-10-20 | 3e merchant commands, operations sweep, permissions | locally tested; sweeps default off |
 | 2026-10-20 | 3f admin reorder and forecasting panel, trade views, demo, docs | locally tested |
+| 2026-10-20 | 4a storefront schema + migration (12 tenant tables, Basket/BasketLine, flags OFF) | locally tested; migration not run on a real server |
+| 2026-10-20 | 4b store domain: storefront set-up, public catalog projection, basket split, checkout with stock holds, lifecycle, payments + exceptions, refunds/returns, support cases | locally tested (scenarios 10, 18, 2) |
+| 2026-10-20 | 4c public web layer: server-rendered, no JS, cookie basket, secret order links, Origin check, rate limits, escaping, size budget | locally tested (scenario 19) |
+| 2026-10-20 | 4d admin: support cases, payment exceptions, store orders view, overview counts, `admin:view_support_cases` | locally tested |
+| 2026-10-20 | 4e seller `/store` commands, `store:*` permissions, expiry sweep | locally tested; sweeps default off |
 
 ## Commands run (reproducible)
 - `git log --oneline | head`, `git show --stat dfe8bb6`
@@ -51,7 +57,8 @@ Resume from this file across sessions. Update after every slice.
 3. Activation prerequisites to add to the checklist: `OUTBOX_SWEEP_ENABLED=true`, `OPERATIONS_SWEEP_ENABLED=true`, `HEARTBEAT_ENABLED` on both services.
 4. Owner actions: external heartbeat monitor; verified alert sender + second recipient; Railway CLI relink; pawaPay approval/token; mobile-money API approval.
 5. No merchant-sales payment provider established (simulator only).
-6. Known gaps: credit-limit check not atomic under concurrent acceptance; no duplicate-payment detection; no dead-letter replay button; quotes/partial receipts/credit notes lack merchant commands; no web surface; FOR UPDATE contention untested on a real server; forecast quality unknown on real data.
+6. Phase 4 known gaps: no courier integration; no outbound messages to shoppers (Phase 7); online payment is the simulator only (real provider Phase 5); no marketplace discovery or moderation (Phase 5); a shopper who loses the order link cannot look the order up; low-end-device measurements are Phase 8; the web layer was exercised with supertest, not on real phones.
+7. Known gaps: credit-limit check not atomic under concurrent acceptance; no duplicate-payment detection; no dead-letter replay button; quotes/partial receipts/credit notes lack merchant commands; no web surface; FOR UPDATE contention untested on a real server; forecast quality unknown on real data.
 
 ## Next concrete step
-On `APPROVED: PHASE 3`: start Phase 4 (B2C storefront, checkout and fulfilment on the same inventory and accounting services; admin support-cases panel). Before any deploy of Phase 1-3 work: rehearse the migrations on a restored production backup.
+On `APPROVED: PHASE 4`: start Phase 5 (per the master prompt). Before any deploy of Phase 1-4 work: rehearse the migrations on a restored production backup; set `STOREFRONT_ENABLED`, `OPERATIONS_SWEEP_ENABLED`, `OUTBOX_SWEEP_ENABLED` deliberately.

@@ -230,7 +230,15 @@ app.use(
 if (process.env["STOREFRONT_ENABLED"] === "true") {
   if (process.env["TRUST_PROXY"]) app.set("trust proxy", Number(process.env["TRUST_PROXY"]) || process.env["TRUST_PROXY"]);
   const simulatorSecret = process.env["PAYMENT_SIMULATOR_SECRET"];
-  app.use(createStorefrontRouter(prisma, { ...(simulatorSecret ? { simulatorSecret } : {}) }));
+  app.use(
+    createStorefrontRouter(prisma, {
+      ...(simulatorSecret ? { simulatorSecret } : {}),
+      // Shared across instances when Redis is configured (RATE_LIMIT_BACKEND), otherwise per process and reset on restart.
+      ...(rateLimitRedisClient
+        ? { limiters: { read: new RedisLoginRateLimiter(rateLimitRedisClient, 300, 60_000), write: new RedisLoginRateLimiter(rateLimitRedisClient, 120, 10 * 60_000), order: new RedisLoginRateLimiter(rateLimitRedisClient, 10, 60 * 60_000) } }
+        : {}),
+    }),
+  );
 }
 
 // Centralized error handler — MUST be registered last (after every route,

@@ -61,3 +61,23 @@ The database refuses: accepting an order with no lines or an unpriced line, and 
 - Suggestion: PROPOSED -> ACCEPTED (a DRAFT purchase order exists; nothing sent) | DISMISSED | SUPERSEDED (numbers changed or the condition cleared). One PROPOSED per (shop, variant, method).
 - Forecast: written (shadow) -> scored once its period has ended. Never edited.
 - Gate: closed -> OPEN only through the promotion function (thresholds set, scored weeks and improvement met, owner, reason, audited; a rejected attempt is also recorded); OPEN -> closed always allowed.
+
+## Consumer store order (Phase 4)
+
+| From | Event | To | Notes |
+|---|---|---|---|
+| (basket) | checkout | PLACED | stock HELD (reservation); unpaid online hold 60 min, pay-on-collection hold 48 h (per shop); the basket is claimed first so a double submit places once |
+| PLACED | seller confirms (pay-on-collection) / provider payment applied (online) | CONFIRMED | an unpaid online order cannot be confirmed by hand; hold is extended; buyer now sees the handover code |
+| PLACED | buyer cancels | CANCELLED | immediate; hold released |
+| CONFIRMED | buyer asks to cancel | (request) | the seller approves (-> CANCELLED) or declines (order carries on) |
+| CONFIRMED | seller prepares | READY | not cancellable from here on |
+| CONFIRMED / READY | seller dispatches (delivery only) | OUT_FOR_DELIVERY | stock leaves here |
+| CONFIRMED / READY / OUT_FOR_DELIVERY | hand-over with the code (pickup: stock leaves, delivery: already left) | COMPLETED | revenue recognised: Dr Customer advances, Cr Sales (+ Delivery fees); pay-on-collection must be fully collected; a delivery may complete without the code only with an audited reason |
+| OUT_FOR_DELIVERY | delivery failed | CANCELLED | goods restocked at the cost they left at |
+| PLACED / CONFIRMED | hold passes | EXPIRED | stock released; a late payment becomes a held `PaymentException` |
+| EXPIRED | seller re-reserves for a late payment | CONFIRMED | only if every line can be reserved again; the database allows EXPIRED -> CONFIRMED only |
+| any | seller cancels | CANCELLED | paid money must be refunded |
+
+COMPLETED and CANCELLED are final (database trigger `tradepal_store_order_terminal`).
+
+Payment exception: OPEN -> RESOLVED (refund | re-reserve | apply). Refund request: REQUESTED -> APPROVED | DENIED; a return then GOODS_RECEIVED; then REFUNDED (once). Cancellation request: REQUESTED -> APPROVED | DENIED. Support case: OPEN -> ASSIGNED -> CLOSED (closed is final; reassigning the responsible party is allowed while open).

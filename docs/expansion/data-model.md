@@ -62,3 +62,25 @@ Provider settlement (Phase 5)                     Dr Bank  Cr Provider clearing 
 ```
 
 TradePal subscription money (`Invoice`, pawaPay/Flutterwave) is a different table, a different purpose enum and different credentials; the simulator is allowed for `MERCHANT_SALE` only and refuses a body that claims `PLATFORM_SUBSCRIPTION`.
+
+## Consumer storefront (Phase 4)
+
+Tenant tables (RLS policy + tenant scope): `Storefront`, `DeliveryZone`, `Listing`, `StoreOrder`, `StoreOrderLine`, `StorePayment`, `StoreCancellationRequest`, `StoreRefundRequest`, `StoreRefundLine`, `PaymentException`, `SupportCase`, `SupportCaseNote`. Not tenant data: `Basket`, `BasketLine` (the shopper's, reachable only by the secret token; they hold references to sellers' listings and nothing else).
+
+```
+Basket (token hash, 7-day TTL)
+  BasketLine (seller, variant, unit, quantity)            -- split at checkout, one order per seller
+Storefront 1-1 Business   (slug, title, pickup, delivery on/off, return window, terms, enabled)
+  DeliveryZone (name, fee, minimum order, active)
+  Listing (variant, channel DIRECT | MARKETPLACE(reserved), status)
+StoreOrder (seller-owned; reference ORD-000001 per seller; access token hash + expiry; pickup code; terms snapshot)
+  StoreOrderLine (description, unit, quantity, base quantity, price, line total, returned base)
+  StorePayment (IN/OUT, method, evidence, state APPLIED | HELD, provider + externalId unique)
+  StoreCancellationRequest, StoreRefundRequest -> StoreRefundLine
+  PaymentException (LATE_SUCCESS | OVERPAYMENT | UNDERPAYMENT | CURRENCY_MISMATCH; OPEN -> RESOLVED)
+  SupportCase (type, handledBy SELLER|PLATFORM|PROVIDER, OPEN|ASSIGNED|CLOSED) -> SupportCaseNote (append-only)
+```
+
+What a shopper can see about an order (`publicOrderView`): seller name and support phone, items as ordered with prices, delivery fee, status timeline, collection or delivery details, handover code (only after confirmation), payment and refund state, and which actions are available. Never: unit cost, stock numbers, other customers, internal notes, tenant ids.
+
+The CHECK constraints (slug format, totals arithmetic, line arithmetic, delivery fee only for DELIVERY, `refundedMinor <= paidMinor`, positive amounts) are listed in `db-protection.md`.

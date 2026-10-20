@@ -74,3 +74,15 @@ Set `Business.isSynthetic = true` **at creation** (it cannot be changed later). 
 | True concurrent lock contention (`FOR UPDATE`) | **not verified**: PGlite serializes sessions; the logic and atomic checks are tested, interleaving is not |
 | Production Postgres accepts these migrations | **not verified** |
 | RLS active in production | **no** (inert by design until §2) |
+
+## Phase 4 additions
+
+Migration `20261023000000_phase4_storefront_orders_support` (additive: no ALTER/DROP of existing objects, no ALTER TYPE).
+- CHECKs: storefront slug format and values, delivery fee and minimum, basket line quantity, store order amounts (subtotal + fee = total, `paid >= 0`, `refunded <= paid`, delivery fee only for DELIVERY), line arithmetic, positive payment/exception amounts, refund line bounds.
+- Trigger `tradepal_store_order_terminal`: COMPLETED and CANCELLED are final; EXPIRED may only go to CONFIRMED.
+- `SupportCaseNote` is append-only (reuses `tradepal_append_only`).
+- No-delete triggers on `Storefront`, `DeliveryZone`, `StoreOrder`, `StoreOrderLine`, `StorePayment`, `StoreCancellationRequest`, `StoreRefundRequest`, `StoreRefundLine`, `PaymentException`, `SupportCase`; TRUNCATE guards on all of them.
+- RLS `tenant_isolation` policies on the 12 tenant tables (inert until the non-owner role step, like Phases 1-3). `Basket` and `BasketLine` are deliberately outside RLS: they are not tenant data and are reached only by token.
+- Flags `storefront` and `storefrontOnlinePayment` are seeded OFF.
+
+Verification: PGlite only (as before). **Not verified on a real Postgres server**; the migration is part of the same unrehearsed set (`scripts/rehearseMigrations.sh`).

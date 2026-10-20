@@ -107,3 +107,17 @@ Consequences, stated plainly: the books' Receivable is a ledger figure and can d
 Worked example (tested): 3 cartons x 24 at 220,000 = 660,000. Shipment 1 of 48 units invoices 440,000; the retailer receives 40 then 6 accepted + 1 damaged + 1 short; booked payable 430,833 (660,000 x 47/72); the short unit is credited 9,167 (440,000 x 1/48), so the invoice owes 430,833, exactly what the retailer booked. Shipment 2 invoices 220,000; invoices total 660,000. Final payable 650,833 = 660,000 - 9,167.
 
 Limits stated plainly: the buyer's payable is receipt-based, so a credit note for anything other than short delivery (price disputes, returned goods) is not supported in this phase and would need a buyer-side entry; a buyer who pays before receiving carries a debit balance on Payables (a prepayment); inventory value from the payable (value of the order line) can differ by rounding from average cost times units.
+
+## Consumer store orders (Phase 4, flag `accountingJournals`)
+
+| Event | Entry |
+|---|---|
+| Money arrives for an order (cash taken at hand-over, a seller-recorded transfer, or provider/simulator evidence) | Dr cash / wallet / bank (provider evidence: Provider clearing), Cr **Customer advances** |
+| Hand-over (revenue recognised, once) | Dr Customer advances, Cr Sales (items) and Cr **Delivery fees** (4100, revenue). The goods leaving also post Dr COGS, Cr Inventory at average cost (from stock) |
+| Refund of an advance (cancelled or expired order that was paid) | Dr Customer advances, Cr cash / clearing |
+| Refund after hand-over | Dr Sales returns, Cr cash / clearing; a returned item also Dr Inventory, Cr COGS at the cost it left at |
+| Held payment (late, over, under) | the money is real, so it is booked as a customer advance like any payment, but it is NOT applied to the order (`paidMinor` unchanged) until the seller resolves it. A wrong-currency payment is held and **not journaled** (no matching currency account) |
+
+Worked example (tested, pickup): 3 cans at 100.00 = 300.00. Payment: Customer advances -300.00. Hand-over: Sales revenue 300.00 and cost of goods 120.00 (3 x 40.00), Customer advances back to 0, stock down by 3. A delivery order for 2 cans adds a 500.00 delivery fee: revenue 200.00 + Delivery fees 500.00.
+
+Limits: a wrong-currency payment is held and never posted, so the books do not show that money until a person handles it; Provider clearing is cleared only by settlement (Phase 5); a customer advance older than the order's life has no automatic sweep.
