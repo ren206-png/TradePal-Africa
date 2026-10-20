@@ -10,6 +10,8 @@ import { FeatureFlagsPage } from "./pages/FeatureFlagsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ReorderPage } from "./pages/ReorderPage";
 import { SupportCasesPage } from "./pages/SupportCasesPage";
+import { PaymentsPage } from "./pages/PaymentsPage";
+import { ModerationPage } from "./pages/ModerationPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SystemHealthPage } from "./pages/SystemHealthPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
@@ -140,6 +142,26 @@ function App() {
               <ProtectedRoute>
                 <Layout>
                   <SupportCasesPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/payments"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <PaymentsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/moderation"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <ModerationPage />
                 </Layout>
               </ProtectedRoute>
             }

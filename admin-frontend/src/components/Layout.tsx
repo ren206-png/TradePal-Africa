@@ -7,6 +7,8 @@ const navItems = [
   { to: "/system-health", label: "System health" },
   { to: "/reorder", label: "Reorder" },
   { to: "/support-cases", label: "Support cases" },
+  { to: "/payments", label: "Payments" },
+  { to: "/moderation", label: "Moderation" },
   { to: "/businesses", label: "Businesses" },
   { to: "/deletion-requests", label: "Deletion requests" },
   { to: "/audit-logs", label: "Audit logs" },

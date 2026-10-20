@@ -333,3 +333,80 @@ export interface SupportCaseDetail extends Omit<SupportCaseRow, "summary"> {
   order: { reference: string; status: string; fulfilment: string; paymentMethod: string; totalMinor: string; paidMinor: string; refundedMinor: string; currencyCode: string } | null;
   notes: { id: string; authorType: string; body: string; createdAt: string }[];
 }
+
+export interface PaymentsOverview {
+  intents: Record<string, number>;
+  attempts: Record<string, number>;
+  openProviderExceptions: Record<string, number>;
+  openStorePaymentExceptions: Record<string, number>;
+  refunds: Record<string, number>;
+  collectedNotSettled: { currencyCode: string; amountMinor: string | null }[];
+  callbacks: { received: number; processing: number; processed: number; dead: number };
+  providers: string[];
+  connections: { id: string; business: string; provider: string; status: string; consecutiveFailures: number; circuitOpen: boolean }[];
+}
+export interface PaymentAttemptRow {
+  id: string;
+  business: string;
+  provider: string;
+  reference: string;
+  status: string;
+  amountMinor: string | null;
+  capturedMinor: string | null;
+  currencyCode: string;
+  pollCount: number;
+  createdAt: string;
+}
+export interface PaymentExceptionRow {
+  id: string;
+  source: "PROVIDER" | "STORE_ORDER";
+  type: string;
+  status: string;
+  business: string | null;
+  reference: string | null;
+  amountMinor: string | null;
+  currencyCode: string | null;
+  createdAt: string;
+}
+export interface RefundRow {
+  id: string;
+  business: string;
+  reference: string;
+  amountMinor: string | null;
+  status: string;
+  failureReason: string | null;
+}
+export interface SettlementRow {
+  id: string;
+  business: string;
+  reference: string;
+  grossMinor: string | null;
+  feeMinor: string | null;
+  netMinor: string | null;
+  currencyCode: string;
+  payments: number;
+}
+
+export interface ReportRow {
+  id: string;
+  reason: string;
+  details: string;
+  status: string;
+  createdAt: string;
+  openReportsAboutSeller: number;
+  seller: { id: string; name: string; country: string; marketplaceStatus: string } | null;
+  listing: { id: string; item: string; sku: string; moderation: string } | null;
+}
+export interface AppealRow {
+  id: string;
+  seller: string;
+  text: string;
+  status: string;
+  action: { type: string; reason: string };
+}
+export interface SellerModerationRow {
+  businessId: string;
+  name: string;
+  marketplaceStatus: string;
+  note: string | null;
+}
