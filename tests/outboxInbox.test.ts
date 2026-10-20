@@ -204,13 +204,16 @@ describe("durable callback inbox (scenarios 7 and 8)", () => {
 });
 
 describe("outbox sweep wiring", () => {
-  it("is off unless OUTBOX_SWEEP_ENABLED=true, and registers no handlers yet (so enabling it is a no-op until later phases)", async () => {
+  it("is off unless OUTBOX_SWEEP_ENABLED=true; the registered handlers are exactly the Phase 3 trade events and the simulator", async () => {
     const { outboxSweepEnabled } = await import("../src/queue/outboxSweep.js");
-    const { OUTBOX_HANDLERS, CALLBACK_HANDLERS } = await import("../src/domain/eventHandlers.js");
+    const { buildOutboxHandlers, buildCallbackHandlers } = await import("../src/domain/eventHandlers.js");
     expect(outboxSweepEnabled({})).toBe(false);
     expect(outboxSweepEnabled({ OUTBOX_SWEEP_ENABLED: "false" })).toBe(false);
     expect(outboxSweepEnabled({ OUTBOX_SWEEP_ENABLED: "true" })).toBe(true);
-    expect(Object.keys(OUTBOX_HANDLERS)).toEqual([]);
-    expect(Object.keys(CALLBACK_HANDLERS)).toEqual([]);
+    expect(Object.keys(buildOutboxHandlers(prisma)).sort()).toEqual([
+      "trade.credit_note.issued", "trade.order.accepted", "trade.order.closed", "trade.order.quoted", "trade.order.requested",
+      "trade.payment.reported", "trade.payment.resolved", "trade.quote.accepted", "trade.receipt.recorded", "trade.shipment.dispatched",
+    ]);
+    expect(Object.keys(buildCallbackHandlers(prisma))).toEqual(["simulator"]);
   });
 });

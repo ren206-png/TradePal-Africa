@@ -16,7 +16,7 @@ import { getRedisConnectionOptions } from "./queue/connection.js";
 import { getInboundMessageQueue, INBOUND_MESSAGE_QUEUE_NAME } from "./queue/inboundMessageQueue.js";
 import { startWebhookRedriveSweep } from "./queue/webhookRedrive.js";
 import { outboxSweepEnabled, startOutboxSweep } from "./queue/outboxSweep.js";
-import { CALLBACK_HANDLERS, OUTBOX_HANDLERS } from "./domain/eventHandlers.js";
+import { buildCallbackHandlers, buildOutboxHandlers } from "./domain/eventHandlers.js";
 import { heartbeatEnabled, startHeartbeat } from "./monitoring/heartbeat.js";
 import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
 
@@ -246,7 +246,7 @@ console.log(`TradePal inbound-message worker listening on queue "${INBOUND_MESSA
 // was briefly down) — see whatsapp/redrive.ts for why nothing else would ever pick them up.
 // Expansion Phase 1: reliable outbox/inbox delivery. OFF unless OUTBOX_SWEEP_ENABLED=true; no handlers are registered yet.
 const outboxSweep = outboxSweepEnabled()
-  ? startOutboxSweep({ prisma, outboxHandlers: OUTBOX_HANDLERS, callbackHandlers: CALLBACK_HANDLERS, alerts })
+  ? startOutboxSweep({ prisma, outboxHandlers: buildOutboxHandlers(prisma), callbackHandlers: buildCallbackHandlers(prisma), alerts })
   : undefined;
 
 // Expansion Phase 1: liveness heartbeat (OFF unless HEARTBEAT_ENABLED=true).

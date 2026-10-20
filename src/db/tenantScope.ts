@@ -185,5 +185,8 @@ export async function withScopedTransaction<T>(
   work: (tx: TenantScopedClient) => Promise<T>,
   options?: { timeoutMs?: number },
 ): Promise<T> {
+  // Already inside a transaction (the client handed to us came from one): join it, so callers can compose
+  // stock/accounting operations with their own writes atomically.
+  if (typeof (scoped as { $transaction?: unknown }).$transaction !== "function") return work(scoped);
   return scoped.$transaction((tx) => work(asTenantScoped(tx)), { timeout: options?.timeoutMs ?? 15_000 });
 }

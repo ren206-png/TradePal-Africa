@@ -493,6 +493,14 @@ export async function releaseReservation(scoped: TenantScopedClient, reservation
   return withScopedTransaction(scoped, async (tx) => (await closeReservation(tx, reservationId, "RELEASED", now)) !== null);
 }
 
+/** Pushes an ACTIVE reservation's expiry later (never earlier). Returns false if it is no longer active. */
+export async function extendReservation(scoped: TenantScopedClient, reservationId: string, newExpiresAt: Date): Promise<boolean> {
+  const r = await scoped.stockReservation.updateMany({ where: { id: reservationId, status: "ACTIVE", expiresAt: { lt: newExpiresAt } }, data: { expiresAt: newExpiresAt } });
+  if (r.count === 1) return true;
+  const row = await scoped.stockReservation.findUnique({ where: { id: reservationId } });
+  return row?.status === "ACTIVE";
+}
+
 /** Expires every active reservation past its time. Returns how many were released. */
 export async function expireReservations(scoped: TenantScopedClient, now: Date = new Date()): Promise<number> {
   const due = await scoped.stockReservation.findMany({ where: { status: "ACTIVE", expiresAt: { lte: now } }, orderBy: { expiresAt: "asc" }, take: 500 });
@@ -511,7 +519,17 @@ export async function expireReservations(scoped: TenantScopedClient, now: Date =
 export async function fulfilReservation(
   scoped: TenantScopedClient,
   reservationId: string,
-  options: { quantity?: number; actor?: Actor; note?: string; now?: Date; currencyCode?: string; sourceType?: string; sourceId?: string } = {},
+  options: {
+    quantity?: number;
+    /** Ship part of the hold and keep the rest reserved for the next shipment (B2B partial deliveries). */
+    keepRemainder?: boolean;
+    actor?: Actor;
+    note?: string;
+    now?: Date;
+    currencyCode?: string;
+    sourceType?: string;
+    sourceId?: string;
+  } = {},
 ): Promise<PostedMovement> {
   const now = options.now ?? new Date();
   return withScopedTransaction(scoped, async (tx) => {
@@ -522,19 +540,24 @@ export async function fulfilReservation(
     if (quantity > r.quantity) throw new StockError("INVALID", "Cannot fulfil more than was reserved.");
     if (r.status !== "ACTIVE") throw new StockError("RESERVATION_CLOSED", `Reservation is ${r.status.toLowerCase()}.`);
     if (r.expiresAt <= now) throw new StockError("RESERVATION_CLOSED", "Reservation has expired.");
-    const claimed = await tx.stockReservation.updateMany({ where: { id: r.id, status: "ACTIVE" }, data: { status: "CONSUMED", settledAt: now } });
-    if (claimed.count !== 1) throw new StockError("RESERVATION_CLOSED", "Reservation was just closed by someone else.");
+    const keep = Boolean(options.keepRemainder) && quantity < r.quantity;
+    // Claim: a full fulfilment closes the hold; a partial one shrinks it (guarded on the quantity we read).
+    const claimed = keep
+      ? await tx.stockReservation.updateMany({ where: { id: r.id, status: "ACTIVE", quantity: r.quantity }, data: { quantity: r.quantity - quantity } })
+      : await tx.stockReservation.updateMany({ where: { id: r.id, status: "ACTIVE" }, data: { status: "CONSUMED", settledAt: now } });
+    if (claimed.count !== 1) throw new StockError("RESERVATION_CLOSED", "Reservation was just changed by someone else.");
     return postMovementTx(tx, {
       businessId: r.businessId,
       shopId: r.shopId,
       variantId: r.variantId,
       kind: "SALE_FULFILLMENT",
       onHandDelta: -quantity,
-      reservedRelease: r.quantity, // the whole hold ends; any unfulfilled remainder goes back to available
+      // keep: release only what shipped; otherwise the whole hold ends and any unfulfilled remainder goes back to available
+      reservedRelease: keep ? quantity : r.quantity,
       availability: "ALLOW_NEGATIVE",
       sourceType: options.sourceType ?? "RESERVATION",
       sourceId: options.sourceId ?? r.id,
-      idempotencyKey: `fulfil:${r.id}`,
+      idempotencyKey: `fulfil:${r.id}:${r.quantity}`,
       ...(options.currencyCode ? { currencyCode: options.currencyCode } : {}),
       ...(options.actor ? { actor: options.actor } : {}),
       ...(options.note ? { note: options.note } : {}),

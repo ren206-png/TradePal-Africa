@@ -217,6 +217,7 @@ CREATE TABLE "TradeInvoice" (
     "shipmentId" TEXT NOT NULL,
     "counterpartInvoiceId" TEXT,
     "number" TEXT NOT NULL,
+    "externalNumber" TEXT,
     "currencyCode" TEXT NOT NULL,
     "totalMinor" BIGINT NOT NULL,
     "creditedMinor" BIGINT NOT NULL DEFAULT 0,
@@ -276,6 +277,7 @@ CREATE TABLE "CreditNote" (
     "side" "TradeSide" NOT NULL,
     "invoiceId" TEXT NOT NULL,
     "number" TEXT NOT NULL,
+    "externalNumber" TEXT,
     "amountMinor" BIGINT NOT NULL,
     "reason" TEXT NOT NULL,
     "counterpartCreditNoteId" TEXT,
@@ -629,7 +631,7 @@ ALTER TABLE "ForecastGateEvent" ADD CONSTRAINT "ForecastGateEvent_businessId_fke
 -- ---- value constraints
 ALTER TABLE "TradeOrderLine" ADD CONSTRAINT "TradeOrderLine_values_check" CHECK (
   "quantity" > 0 AND "packBaseQuantity" >= 1 AND "baseQuantity" = "quantity" * "packBaseQuantity"
-  AND "unitPriceMinor" > 0 AND "lineTotalMinor" = "unitPriceMinor" * "quantity"
+  AND "unitPriceMinor" >= 0 AND "lineTotalMinor" = "unitPriceMinor" * "quantity"
   AND "shippedBase" >= 0 AND "shippedBase" <= "baseQuantity"
   AND "receivedBase" >= 0 AND "receivedBase" <= "shippedBase");
 ALTER TABLE "TradeOrder" ADD CONSTRAINT "TradeOrder_total_check" CHECK ("totalMinor" >= 0);
@@ -655,6 +657,37 @@ ALTER TABLE "ForecastScore" ADD CONSTRAINT "ForecastScore_values_check" CHECK ("
 ALTER TABLE "ForecastGateConfig" ADD CONSTRAINT "ForecastGateConfig_singleton_check" CHECK ("id" = 1 AND ("minScoredWeeks" IS NULL OR "minScoredWeeks" > 0) AND ("minImprovementBps" IS NULL OR "minImprovementBps" >= 0));
 INSERT INTO "ForecastGateConfig" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING; -- thresholds stay NULL: no invented defaults
 
+-- ---- acceptance freezes terms, enforced by the database:
+-- (1) an order can only become ACCEPTED if it has lines and every line is priced (draft lines from a reorder suggestion may be unpriced);
+-- (2) once an order is ACCEPTED (or beyond), a line's quantity, pack and price can no longer change.
+CREATE OR REPLACE FUNCTION tradepal_order_accept_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW."acceptance" = 'ACCEPTED' AND OLD."acceptance" <> 'ACCEPTED' THEN
+    IF NOT EXISTS (SELECT 1 FROM "TradeOrderLine" WHERE "orderId" = NEW."id")
+       OR EXISTS (SELECT 1 FROM "TradeOrderLine" WHERE "orderId" = NEW."id" AND "unitPriceMinor" <= 0) THEN
+      RAISE EXCEPTION 'TradePal: order % cannot be accepted: it needs at least one line and every line must be priced', NEW."id" USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+  END IF;
+  RETURN NEW;
+END
+$$;
+CREATE TRIGGER "TradeOrder_accept_guard" BEFORE UPDATE OF "acceptance" ON "TradeOrder" FOR EACH ROW EXECUTE FUNCTION tradepal_order_accept_guard();
+
+CREATE OR REPLACE FUNCTION tradepal_order_line_frozen() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE st text;
+BEGIN
+  SELECT "acceptance"::text INTO st FROM "TradeOrder" WHERE "id" = NEW."orderId";
+  IF st IN ('ACCEPTED') AND (NEW."quantity" <> OLD."quantity" OR NEW."unitPriceMinor" <> OLD."unitPriceMinor"
+     OR NEW."packBaseQuantity" <> OLD."packBaseQuantity" OR NEW."unit" <> OLD."unit" OR NEW."variantId" IS DISTINCT FROM OLD."variantId") THEN
+    RAISE EXCEPTION 'TradePal: the terms of an accepted order are frozen (line %)', NEW."id" USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+CREATE TRIGGER "TradeOrderLine_frozen" BEFORE UPDATE ON "TradeOrderLine" FOR EACH ROW EXECUTE FUNCTION tradepal_order_line_frozen();
+
 -- ---- one open suggestion per (shop, variant, method): a re-run supersedes instead of piling up
 CREATE UNIQUE INDEX "ReorderSuggestion_one_open_per_method" ON "ReorderSuggestion" ("shopId", "variantId", "method") WHERE "status" = 'PROPOSED';
 
@@ -670,7 +703,17 @@ CREATE TRIGGER "TradePartner_no_delete"    BEFORE DELETE ON "TradePartner"    FO
 CREATE TRIGGER "BusinessLink_no_delete"    BEFORE DELETE ON "BusinessLink"    FOR EACH ROW EXECUTE FUNCTION tradepal_no_delete();
 CREATE TRIGGER "PriceListShare_no_delete"  BEFORE DELETE ON "PriceListShare"  FOR EACH ROW EXECUTE FUNCTION tradepal_no_delete();
 CREATE TRIGGER "TradeOrder_no_delete"      BEFORE DELETE ON "TradeOrder"      FOR EACH ROW EXECUTE FUNCTION tradepal_no_delete();
-CREATE TRIGGER "TradeOrderLine_no_delete"  BEFORE DELETE ON "TradeOrderLine"  FOR EACH ROW EXECUTE FUNCTION tradepal_no_delete();
+-- order lines of a DRAFT order carry no financial effect and may be edited by replacement; from REQUESTED on they are protected
+CREATE OR REPLACE FUNCTION tradepal_order_line_no_delete() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE st text;
+BEGIN
+  SELECT "acceptance"::text INTO st FROM "TradeOrder" WHERE "id" = OLD."orderId";
+  IF st = 'DRAFT' OR tradepal_is_synthetic(OLD."businessId") THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'TradePal: DELETE on "TradeOrderLine" is not permitted once an order has left DRAFT' USING ERRCODE = 'integrity_constraint_violation';
+END
+$$;
+CREATE TRIGGER "TradeOrderLine_no_delete"  BEFORE DELETE ON "TradeOrderLine"  FOR EACH ROW EXECUTE FUNCTION tradepal_order_line_no_delete();
 CREATE TRIGGER "Shipment_no_delete"        BEFORE DELETE ON "Shipment"        FOR EACH ROW EXECUTE FUNCTION tradepal_no_delete();
 CREATE TRIGGER "ShipmentLine_no_delete"    BEFORE DELETE ON "ShipmentLine"    FOR EACH ROW EXECUTE FUNCTION tradepal_no_delete();
 CREATE TRIGGER "TradeInvoice_no_delete"    BEFORE DELETE ON "TradeInvoice"    FOR EACH ROW EXECUTE FUNCTION tradepal_no_delete();

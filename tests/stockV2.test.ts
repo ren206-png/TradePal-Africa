@@ -10,6 +10,7 @@ import {
   writeOffQuarantined,
 } from "../src/domain/stock.js";
 import { applyStockMovement } from "../src/domain/inventory.js";
+import { asTenantScoped } from "../src/db/tenantScope.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
@@ -269,6 +270,41 @@ describe("reservations: no overselling (scenario 2)", () => {
     await fulfilReservation(s.scoped, r.reservation.id, { quantity: 4 });
     expect(await getStockLevel(s.scoped, s.shopId, s.variant.id)).toMatchObject({ onHand: 6, reserved: 0, available: 6 });
     await expect(fulfilReservation(s.scoped, (await reserveStock(s.scoped, { ...s.common, quantity: 2, reference: "x", idempotencyKey: "part2", expiresAt: soon() })).reservation.id, { quantity: 3 })).rejects.toMatchObject({ code: "INVALID" });
+  });
+});
+
+describe("partial shipments keep the rest of the hold (B2B)", () => {
+  it("ships in instalments without ever releasing the unshipped units, and the last instalment closes the hold", async () => {
+    const s = await setup();
+    await receiveStock(s.scoped, { ...s.common, quantity: 10, unitCostMinor: 100n, currencyCode: "NGN" });
+    const r = await reserveStock(s.scoped, { ...s.common, quantity: 6, reference: "order:b2b", idempotencyKey: "inst-1", expiresAt: soon() });
+    await fulfilReservation(s.scoped, r.reservation.id, { quantity: 2, keepRemainder: true });
+    expect(await getStockLevel(s.scoped, s.shopId, s.variant.id)).toMatchObject({ onHand: 8, reserved: 4, available: 4 });
+    // someone else cannot take the held units in between
+    await expect(reserveStock(s.scoped, { ...s.common, quantity: 5, reference: "other", idempotencyKey: "inst-other", expiresAt: soon() })).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK", available: 4 });
+    await fulfilReservation(s.scoped, r.reservation.id, { quantity: 3, keepRemainder: true });
+    expect(await getStockLevel(s.scoped, s.shopId, s.variant.id)).toMatchObject({ onHand: 5, reserved: 1 });
+    const last = await fulfilReservation(s.scoped, r.reservation.id, { quantity: 1, keepRemainder: true });
+    expect(last.movement.onHandDelta).toBe(-1);
+    expect((await s.scoped.stockReservation.findUniqueOrThrow({ where: { id: r.reservation.id } })).status).toBe("CONSUMED");
+    expect(await getStockLevel(s.scoped, s.shopId, s.variant.id)).toMatchObject({ onHand: 4, reserved: 0 });
+    await expect(fulfilReservation(s.scoped, r.reservation.id, { quantity: 1, keepRemainder: true })).rejects.toMatchObject({ code: "RESERVATION_CLOSED" });
+    expect(await reconcileStock(s.scoped)).toEqual([]);
+  });
+});
+
+describe("stock operations compose inside a caller's transaction", () => {
+  it("a failure after a stock change rolls the stock change back too", async () => {
+    const s = await setup();
+    await receiveStock(s.scoped, { ...s.common, quantity: 5 });
+    await expect(
+      s.scoped.$transaction(async (tx) => {
+        await fulfilSale(asTenantScoped(tx), { ...s.common, quantity: 2 });
+        throw new Error("boom after stock change");
+      }),
+    ).rejects.toThrow("boom after stock change");
+    expect((await getStockLevel(s.scoped, s.shopId, s.variant.id)).onHand).toBe(5);
+    expect(await reconcileStock(s.scoped)).toEqual([]);
   });
 });
 
