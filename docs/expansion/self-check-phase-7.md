@@ -11,7 +11,7 @@ Delivered: a localization framework (English only); a registry of every outbound
 | `npx tsc --noEmit -p .` | clean |
 | Backend `npx vitest run` | **105 files / 1184 tests pass** (Phase 6 ended at 100 / 1103) |
 | `admin-frontend` `npx vitest run` + `npm run build` | 13 files / 57 tests pass; build succeeds |
-| New in Phase 7 | `messaging` 21, `conversation` 23, `offlineDrafts` 17, `aiFailureAlerts` 8, `adminMessaging` 11 (80 backend tests, plus 2 DeepSeek alert cases added to `messageDispatcher`) + 4 frontend |
+| New in Phase 7 | `messaging` 21, `conversation` 22, `offlineDrafts` 17, `aiFailureAlerts` 8, `adminMessaging` 11 (79 backend tests, plus 2 DeepSeek alert cases added to `messageDispatcher`) + 4 frontend |
 | Served offline script | `node --check` syntax OK. **Never executed in a browser.** |
 
 ## 1. Failure scenarios

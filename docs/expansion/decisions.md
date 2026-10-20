@@ -228,7 +228,7 @@ All provisional, all OFF by default. Per-business flags: `consumerMessaging`, `c
 | J14 | AI provider failures: billing and authentication get their OWN incident title per provider (four titles); a refused alert send does not consume the dedupe window; every attempt is recorded in `AlertDelivery`; an admin "channel check" sends a labelled test; system health shows the last proven delivery and warns when none in 7 days or the latest failed. "Delivered" means the email service accepted it (a message id), NOT that it reached an inbox | email and hope | scenario 26 | n/a |
 | J15 | New platform permissions: `admin:view_messaging` (owner, operator, support), `admin:manage_messaging` (owner, operator; step-up), `admin:approve_templates` (owner only; step-up). Nothing in the panel sends a message, edits a consent or deletes a record | | `permission-matrix.md` | n/a |
 
-Open: **OPEN-13** the real template wording, languages and Meta submission (owner action; nothing is submitted); **OPEN-14** whether and when to turn `conversationalConfirmations` on by default, which depends on P9 (confidence re-measured through DeepSeek, still not done).
+Open: **OPEN-13** the real template wording, languages and Meta submission (owner action; nothing is submitted); **OPEN-14** whether and when to turn `conversationalConfirmations` on by default, which depends on P9 (confidence re-measured through DeepSeek, still not done); **OPEN-15** double opt-in for shopper messages (the checkout number is unverified, so a third party's number can be entered; recommended before `consumerMessaging` is turned on for anyone).
 
 ## D. Change log
 - 2026-10-20 — register created in Phase 0; G1-G13 recorded; P1-P10 proposed; OPEN-1..11 listed.
