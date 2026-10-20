@@ -63,6 +63,6 @@ Delivered: bookkeeping reports (sales, cash flow, inventory valuation, money owe
 
 ## 4. What was and was not touched
 
-Nothing pushed, merged, deployed or migrated for real. No credentials read or entered; no production access; no message sent to anyone; no real money. A throwaway local server with synthetic data was run for measurements and stopped; the built-in browser and Chrome were pointed at it only. Two browser tabs were opened for this and closed.
+Nothing pushed, merged, deployed or migrated for real. No credentials read or entered; no production access; no message sent to anyone; no real money. A throwaway local server with synthetic data was run for measurements and stopped; the built-in browser and Chrome were pointed at it only. A Chrome tab was opened for this and closed; the built-in browser pane was also used.
 
 AWAITING: APPROVED: PHASE 8
