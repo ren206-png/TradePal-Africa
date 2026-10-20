@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 const navItems = [
   { to: "/overview", label: "Overview" },
   { to: "/system-health", label: "System health" },
+  { to: "/reorder", label: "Reorder" },
   { to: "/businesses", label: "Businesses" },
   { to: "/deletion-requests", label: "Deletion requests" },
   { to: "/audit-logs", label: "Audit logs" },

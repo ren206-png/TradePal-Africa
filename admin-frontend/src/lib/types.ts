@@ -233,3 +233,73 @@ export interface AdminJournal {
   status: "POSTED" | "REVERSED" | "REVERSAL";
   lines: AdminJournalLine[];
 }
+
+// Expansion Phase 3: reorder and forecasting panel (src/admin/adminReorder.ts).
+export interface ForecastSummary {
+  scoredPredictions: number;
+  countedPredictions: number;
+  excludedStockouts: number;
+  scoredWeeks: number;
+  modelMapeBps: number | null;
+  baselineMapeBps: number | null;
+  modelWapeBps: number | null;
+  baselineWapeBps: number | null;
+  improvementBps: number | null;
+}
+
+export interface ReorderMerchantRow {
+  businessId: string;
+  name: string;
+  country: string;
+  rules: number;
+  suggestions: { issued: number; proposed: number; accepted: number; dismissed: number; superseded: number; tier2Issued: number };
+  flags: { tier1: boolean; shadow: boolean; live: boolean };
+  forecast: ForecastSummary;
+  eligible: boolean;
+}
+
+export interface ReorderOverview {
+  thresholds: { minScoredWeeks: number | null; minImprovementBps: number | null; updatedAt: string };
+  method: string;
+  merchants: ReorderMerchantRow[];
+}
+
+export interface ForecastPredictionRow {
+  id: string;
+  sku: string;
+  unit: string;
+  method: string;
+  periodStart: string;
+  periodEnd: string;
+  predictedUnits: number;
+  tier1Units: number;
+  suggestedReorderQty: number;
+  score: { actualUnits: number; modelApeBps: number | null; tier1ApeBps: number | null; stockout: boolean } | null;
+}
+
+export interface AdminTradeOrder {
+  id: string;
+  reference: string;
+  side: "BUY" | "SELL";
+  partner: string | null;
+  linked: boolean;
+  acceptance: string;
+  movement: string;
+  totalMinor: string;
+  currencyCode: string;
+  createdAt: string;
+}
+
+export interface AdminTradeInvoice {
+  id: string;
+  number: string;
+  externalNumber: string | null;
+  side: "BUY" | "SELL";
+  order: string;
+  totalMinor: string;
+  paidMinor: string;
+  outstandingMinor: string;
+  paymentStatus: string;
+  overdue: boolean;
+  payments: { id: string; direction: string; amountMinor: string; method: string; evidence: string; state: string; reason: string | null }[];
+}

@@ -524,3 +524,4 @@ label {
 .tab-row { display: flex; gap: 8px; margin: 8px 0 12px; }
 .tab { border: 1px solid #d0d5dd; background: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
 .tab.active { background: #101828; color: #fff; border-color: #101828; }
+.link-button { background: none; border: none; padding: 0; color: #175cd3; text-decoration: underline; cursor: pointer; font: inherit; }

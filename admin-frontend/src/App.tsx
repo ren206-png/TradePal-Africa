@@ -8,6 +8,7 @@ import { BusinessesPage } from "./pages/BusinessesPage";
 import { DeletionRequestsPage } from "./pages/DeletionRequestsPage";
 import { FeatureFlagsPage } from "./pages/FeatureFlagsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ReorderPage } from "./pages/ReorderPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SystemHealthPage } from "./pages/SystemHealthPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
@@ -118,6 +119,16 @@ function App() {
               <ProtectedRoute>
                 <Layout>
                   <SystemHealthPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reorder"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <ReorderPage />
                 </Layout>
               </ProtectedRoute>
             }

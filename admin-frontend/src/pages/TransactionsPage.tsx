@@ -3,13 +3,13 @@ import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { Pager } from "../components/Pager";
 import { apiFetch, buildQuery } from "../lib/apiClient";
-import type { AdminJournal, AdminStockMovement, AdminTransaction, PaginationMeta } from "../lib/types";
+import type { AdminJournal, AdminStockMovement, AdminTradeInvoice, AdminTradeOrder, AdminTransaction, PaginationMeta } from "../lib/types";
 
 const TAKE = 20;
 /** Mirrors requirePlatformPermission("admin:reverse_transaction") on the server. The server is the real gate. */
 const REVERSE_ROLES = new Set(["SUPER_ADMIN", "OPERATOR"]);
 
-type Tab = "transactions" | "stock" | "journals";
+type Tab = "transactions" | "stock" | "journals" | "orders" | "invoices";
 
 function formatMinor(amountMinor: string): string {
   const value = BigInt(amountMinor);
@@ -30,6 +30,8 @@ export function TransactionsPage() {
   const [transactions, setTransactions] = useState<AdminTransaction[]>([]);
   const [movements, setMovements] = useState<AdminStockMovement[]>([]);
   const [journals, setJournals] = useState<AdminJournal[]>([]);
+  const [tradeOrders, setTradeOrders] = useState<AdminTradeOrder[]>([]);
+  const [tradeInvoices, setTradeInvoices] = useState<AdminTradeInvoice[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta>({ take: TAKE, skip: 0, hasMore: false });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,6 +54,12 @@ export function TransactionsPage() {
       } else if (tab === "stock") {
         const r = await apiFetch<{ movements: AdminStockMovement[]; pagination: PaginationMeta }>(`${base}/stock-movements${buildQuery({ take: TAKE, skip, log: log === "legacy" ? "legacy" : undefined })}`);
         if (!cancelled) { setMovements(r.movements); setPagination(r.pagination); }
+      } else if (tab === "orders") {
+        const r = await apiFetch<{ orders: AdminTradeOrder[]; pagination: PaginationMeta }>(`${base}/trade-orders${buildQuery({ take: TAKE, skip })}`);
+        if (!cancelled) { setTradeOrders(r.orders); setPagination(r.pagination); }
+      } else if (tab === "invoices") {
+        const r = await apiFetch<{ invoices: AdminTradeInvoice[]; pagination: PaginationMeta }>(`${base}/trade-invoices${buildQuery({ take: TAKE, skip })}`);
+        if (!cancelled) { setTradeInvoices(r.invoices); setPagination(r.pagination); }
       } else {
         const r = await apiFetch<{ journals: AdminJournal[]; pagination: PaginationMeta }>(`${base}/journals${buildQuery({ take: TAKE, skip })}`);
         if (!cancelled) { setJournals(r.journals); setPagination(r.pagination); }
@@ -114,9 +122,9 @@ export function TransactionsPage() {
       <p className="muted">Nothing here can be deleted. Voiding creates a reversal and keeps the original.</p>
 
       <div className="tab-row" role="tablist">
-        {(["transactions", "stock", "journals"] as Tab[]).map((t) => (
+        {(["transactions", "stock", "journals", "orders", "invoices"] as Tab[]).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? "tab active" : "tab"} onClick={() => switchTab(t)}>
-            {t === "transactions" ? "Transactions" : t === "stock" ? "Stock movements" : "Journals"}
+            {t === "transactions" ? "Transactions" : t === "stock" ? "Stock movements" : t === "journals" ? "Journals" : t === "orders" ? "Trade orders" : "Trade invoices"}
           </button>
         ))}
       </div>
@@ -214,6 +222,46 @@ export function TransactionsPage() {
           ))}
           {journals.length === 0 ? <p>No journal entries (accounting is off for this business, or nothing has been posted).</p> : null}
         </div>
+      ) : null}
+
+      {!loading && tab === "orders" ? (
+        <table className="data-table">
+          <thead><tr><th>Order</th><th>Direction</th><th>Partner</th><th>Total</th><th>Acceptance</th><th>Goods</th><th>On TradePal</th></tr></thead>
+          <tbody>
+            {tradeOrders.map((o) => (
+              <tr key={o.id}>
+                <td>{o.reference}</td>
+                <td>{o.side === "BUY" ? "buying" : "selling"}</td>
+                <td>{o.partner ?? "-"}</td>
+                <td>{formatMinor(o.totalMinor)} {o.currencyCode}</td>
+                <td>{o.acceptance}</td>
+                <td>{o.movement.replace(/_/g, " ")}</td>
+                <td>{o.linked ? "linked" : "no"}</td>
+              </tr>
+            ))}
+            {tradeOrders.length === 0 ? <tr><td colSpan={7}>No trade orders.</td></tr> : null}
+          </tbody>
+        </table>
+      ) : null}
+
+      {!loading && tab === "invoices" ? (
+        <table className="data-table">
+          <thead><tr><th>Invoice</th><th>Order</th><th>Total</th><th>Paid</th><th>Owing</th><th>Status</th><th>Payments (evidence)</th></tr></thead>
+          <tbody>
+            {tradeInvoices.map((i) => (
+              <tr key={i.id}>
+                <td>{i.number}{i.externalNumber ? ` (supplier ${i.externalNumber})` : ""}</td>
+                <td>{i.order}</td>
+                <td>{formatMinor(i.totalMinor)}</td>
+                <td>{formatMinor(i.paidMinor)}</td>
+                <td>{formatMinor(i.outstandingMinor)}</td>
+                <td>{i.paymentStatus.replace("_", " ")}{i.overdue ? " (overdue)" : ""}</td>
+                <td>{i.payments.length === 0 ? "-" : i.payments.map((p) => `${formatMinor(p.amountMinor)} ${p.method.toLowerCase()} - ${p.state.toLowerCase()}, ${p.evidence.toLowerCase().replace(/_/g, " ")}`).join("; ")}</td>
+              </tr>
+            ))}
+            {tradeInvoices.length === 0 ? <tr><td colSpan={7}>No trade invoices.</td></tr> : null}
+          </tbody>
+        </table>
       ) : null}
 
       <Pager pagination={pagination} onPrev={() => setSkip(Math.max(0, skip - TAKE))} onNext={() => setSkip(skip + TAKE)} />
