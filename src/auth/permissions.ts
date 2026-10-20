@@ -40,6 +40,8 @@ export const MERCHANT_PERMISSIONS = [
   "store:manage", //        the shop's web page, delivery areas, which products are listed
   "store:fulfil", //        confirm, prepare, dispatch and hand over consumer orders; record payments taken at hand-over
   "store:refund", //        decide cancellations and refunds, take returns back, pay refunds out
+  "billing:view", //        see the business's own subscription, invoices and the plans on offer
+  "billing:manage", //      pay or renew the subscription, schedule a plan change, cancel (owner only: it spends the business's money)
 ] as const;
 export type MerchantPermission = (typeof MERCHANT_PERMISSIONS)[number];
 
@@ -51,7 +53,7 @@ const MERCHANT_MATRIX: Readonly<Record<MembershipRole, ReadonlySet<MerchantPermi
     "sales:create", "sales:void", "expenses:create", "customers:manage", "debts:record", "debts:view",
     "inventory:view", "inventory:receive", "inventory:adjust", "prices:manage", "reports:view",
     "finance:close_day", "finance:export", "finance:reconcile", "payments:view", "staff:manage",
-    "trade:buy", "trade:sell", "trade:payments", "trade:partners", "store:manage", "store:fulfil", "store:refund",
+    "trade:buy", "trade:sell", "trade:payments", "trade:partners", "store:manage", "store:fulfil", "store:refund", "billing:view",
   ]),
   SALES_CLERK: new Set<MerchantPermission>([
     "sales:create", "expenses:create", "customers:manage", "debts:record", "debts:view", "inventory:view", "reports:view", "store:fulfil",
