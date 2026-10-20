@@ -12,6 +12,7 @@ import { createAdminSupportRouter } from "./adminSupport.js";
 import { createAdminPaymentsRouter } from "./adminPayments.js";
 import { createAdminModerationRouter } from "./adminModeration.js";
 import { alertChannelStatus } from "../monitoring/alertRecorder.js";
+import { createAdminOpsRouter } from "./adminOps.js";
 import { createAdminMessagingRouter } from "./adminMessaging.js";
 import { createAdminSubscriptionsRouter } from "./adminSubscriptions.js";
 import { correlationIdOf } from "./adminAudit.js";
@@ -64,6 +65,7 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
   router.use(createAdminModerationRouter(prisma, jwtSecret));
   router.use(createAdminSubscriptionsRouter(prisma, jwtSecret, { ...(options.sendRenewalReminder ? { sendReminder: options.sendRenewalReminder } : {}), ...(options.now ? { now: options.now } : {}) }));
 
+  router.use(createAdminOpsRouter(prisma, jwtSecret, { alertDeps: options.alertDeps }));
   router.use(createAdminMessagingRouter(prisma, jwtSecret, { alertDeps: options.alertDeps, ...(options.replayInbound ? { replayInbound: options.replayInbound } : {}), ...(options.now ? { now: options.now } : {}) }));
 
   router.get("/me/permissions", (req, res) => {

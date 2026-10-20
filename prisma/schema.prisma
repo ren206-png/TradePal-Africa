@@ -3472,3 +3472,13 @@ model AlertDelivery {
   @@index([createdAt])
   @@index([kind, status, createdAt])
 }
+
+/// Phase 9: an operator can pause a background job class (for an incident) and resume it. Scheduled runs skip a paused class; servicing of
+/// inbound messages is never a pausable class. Platform data, never deleted.
+model JobControl {
+  jobClass  String   @id
+  paused    Boolean  @default(false)
+  reason    String?
+  changedBy String?
+  changedAt DateTime @default(now()) @db.Timestamptz()
+}

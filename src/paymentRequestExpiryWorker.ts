@@ -1,3 +1,4 @@
+import { isJobPaused } from "./ops/jobControl.js";
 import "dotenv/config";
 import { Worker } from "bullmq";
 import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
@@ -51,6 +52,7 @@ async function main() {
   const worker = new Worker(
     PAYMENT_REQUEST_EXPIRY_QUEUE_NAME,
     async () => {
+      if (await isJobPaused(prisma, "payment-request-expiry")) return { paused: true };
       // Settle any PawaPay deposit whose callback never arrived BEFORE expiring stale requests, so a
       // customer who paid just before the 24h mark isn't marked EXPIRED first. A reconcile failure
       // must not stop the expiry sweep itself.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch } from "../lib/apiClient";
 
 interface Health {
@@ -9,31 +9,74 @@ interface Health {
   ai: { lastSuccessfulCallAt: string | null; lastSuccessfulProvider: string | null };
   configured: { alertEmail: boolean; deepseek: boolean; outboxSweep: boolean };
   adminControls: Record<string, boolean>;
+  alertChannel?: { lastDeliveredAt: string | null; lastFailedAt: string | null; failedLast7Days: number; needsAttention: boolean };
   generatedAt: string;
 }
+interface Job { id: string; label: string; paused: boolean; reason: string | null; changedBy: string | null; changedAt: string | null }
+type Action = { kind: "pause" | "resume"; job: Job } | { kind: "incident" };
 
 const yesNo = (v: boolean) => (v ? "Yes" : "No");
 
 export function SystemHealthPage() {
   const [data, setData] = useState<Health | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [action, setAction] = useState<Action | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch<Health>("/admin/system-health")
-      .then((result) => !cancelled && setData(result))
-      .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Failed to load system health."));
+    (async () => {
+      try {
+        const h = await apiFetch<Health>("/admin/system-health");
+        const j = await apiFetch<{ jobs: Job[] }>("/admin/system/jobs");
+        if (cancelled) return;
+        setData(h);
+        setJobs(j.jobs);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load system health.");
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reload]);
 
-  if (error) return <div className="page"><h1>System health</h1><p className="form-error" role="alert">{error}</p></div>;
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!action) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      if (action.kind === "incident") {
+        const r = await apiFetch<{ note: string }>("/admin/system/synthetic-incident", { method: "POST", body: { reason: reason.trim() } });
+        setNotice(r.note);
+      } else {
+        await apiFetch(`/admin/system/jobs/${action.job.id}/${action.kind}`, { method: "POST", body: { reason: reason.trim() } });
+        setNotice(action.kind === "pause" ? "Paused. Scheduled runs will skip it until you resume it." : "Resumed.");
+      }
+      setAction(null);
+      setReason("");
+      setReload((n) => n + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That did not work.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (error && !data) return <div className="page"><h1>System health</h1><p className="form-error" role="alert">{error}</p></div>;
   if (!data) return <div className="page"><h1>System health</h1><p>Loading…</p></div>;
 
   return (
     <div className="page">
       <h1>System health</h1>
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+      {notice ? <p role="status">{notice}</p> : null}
 
       <h2>Heartbeats</h2>
       {!data.heartbeats.enabled ? <p className="muted">Heartbeat writing is off on this API (HEARTBEAT_ENABLED is not true), so these will show as stale.</p> : null}
@@ -60,6 +103,38 @@ export function SystemHealthPage() {
           <tr><th>Callbacks received / dead</th><td>{data.inbox.received} / {data.inbox.dead}</td></tr>
         </tbody>
       </table>
+
+      <h2>Alert channel</h2>
+      {data.alertChannel ? (
+        <p className={data.alertChannel.needsAttention ? "form-error" : "muted"}>
+          {data.alertChannel.needsAttention ? "Needs attention: no alert delivery has been proven in the last 7 days, or the latest attempt failed. " : "An alert delivery was accepted recently. "}
+          Last accepted: {data.alertChannel.lastDeliveredAt ? new Date(data.alertChannel.lastDeliveredAt).toLocaleString() : "never"}. Failures in 7 days: {data.alertChannel.failedLast7Days}.
+        </p>
+      ) : null}
+      <p><button type="button" onClick={() => { setAction({ kind: "incident" }); setReason(""); }}>Send a synthetic incident…</button></p>
+
+      <h2>Background jobs</h2>
+      <table className="data-table">
+        <thead><tr><th>Job</th><th>State</th><th /></tr></thead>
+        <tbody>
+          {jobs.map((j) => (
+            <tr key={j.id}>
+              <td>{j.label}</td>
+              <td>{j.paused ? `PAUSED${j.reason ? `: ${j.reason}` : ""}` : "running"}</td>
+              <td><button type="button" onClick={() => { setAction({ kind: j.paused ? "resume" : "pause", job: j }); setReason(""); }}>{j.paused ? "Resume…" : "Pause…"}</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="muted">Pausing skips scheduled runs only. Inbound WhatsApp messages and payment callbacks are never paused.</p>
+      {action ? (
+        <form onSubmit={submit} className="card" aria-label="Confirm">
+          <h3>{action.kind === "incident" ? "Send a synthetic incident" : `${action.kind === "pause" ? "Pause" : "Resume"}: ${action.job.label}`}</h3>
+          <label>Reason<textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} /></label>
+          <button type="submit" disabled={busy || reason.trim().length < 10}>Confirm</button>
+          <button type="button" onClick={() => setAction(null)}>Cancel</button>
+        </form>
+      ) : null}
 
       <h2>AI</h2>
       <p>

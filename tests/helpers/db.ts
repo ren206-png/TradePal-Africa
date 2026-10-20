@@ -38,6 +38,7 @@ export const HAND_WRITTEN_MIGRATIONS = [
   "20261025000000_phase6_billing_entitlements",
   "20261026000000_phase7_messaging_consent_drafts",
   "20261027000000_phase8_reports_flag",
+  "20261028000000_phase9_job_control",
 ] as const;
 export function dbProtectionSql(): string {
   return HAND_WRITTEN_MIGRATIONS.map((name) => {

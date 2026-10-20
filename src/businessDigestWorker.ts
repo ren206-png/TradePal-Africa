@@ -1,3 +1,4 @@
+import { isJobPaused } from "./ops/jobControl.js";
 import "dotenv/config";
 import { Worker } from "bullmq";
 import { buildBusinessDigestOutboundGatewayFromEnv } from "./config/outboundGatewayEnv.js";
@@ -52,6 +53,7 @@ async function main() {
   const worker = new Worker(
     WEEKLY_DIGEST_QUEUE_NAME,
     async () => {
+      if (await isJobPaused(prisma, "business-digest")) return { paused: true };
       const result = await sendWeeklyBusinessDigests(prisma, new Date(), outboundGateway);
       if (result.processedBusinessIds.length > 0) {
         console.log(`Weekly business digest sweep: processed ${result.processedBusinessIds.length} business(es).`);

@@ -1,3 +1,4 @@
+import { isJobPaused } from "../ops/jobControl.js";
 import type { PrismaClient } from "@prisma/client";
 import { reportIncident, type AlertEmailDeps } from "../monitoring/alerts.js";
 import { processInbox, type CallbackHandler } from "../domain/callbackInbox.js";
@@ -31,6 +32,7 @@ export function startOutboxSweep(deps: OutboxSweepDeps): { stop(): void } {
     if (running) return;
     running = true;
     try {
+      if (await isJobPaused(deps.prisma, "outbox-sweep")) return;
       const outbox = await processOutbox(deps.prisma, deps.outboxHandlers);
       const inbox = await processInbox(deps.prisma, deps.callbackHandlers);
       if (outbox.dead > 0 || inbox.dead > 0) {

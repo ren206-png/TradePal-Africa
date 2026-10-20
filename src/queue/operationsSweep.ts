@@ -1,3 +1,4 @@
+import { isJobPaused } from "../ops/jobControl.js";
 import type { PrismaClient } from "@prisma/client";
 import { getTenantScopedClient } from "../db/tenantScope.js";
 import { reportIncident, type AlertEmailDeps } from "../monitoring/alerts.js";
@@ -92,6 +93,7 @@ export function startOperationsSweep(deps: { prisma: PrismaClient; alerts?: Aler
     if (running) return;
     running = true;
     try {
+      if (await isJobPaused(deps.prisma, "operations-sweep")) return;
       const result = await runOperationsSweep(deps.prisma);
       if (result.failures.length > 0) {
         await reportIncident(deps.alerts, { service: "worker", title: "Operations sweep step failed", detail: result.failures.join("\n").slice(0, 1500) });
