@@ -16,6 +16,8 @@ interface Overview {
     unresolvedPaymentAttempts?: number;
     openReports?: number;
     openAppeals?: number;
+    openBillingExceptions?: number;
+    subscriptionsInGrace?: number;
     outbox: { pending: number; dead: number; oldestPendingAgeSeconds: number | null };
     inbox: { received: number; dead: number; oldestReceivedAgeSeconds?: number | null };
   };
@@ -83,6 +85,8 @@ export function OverviewPage() {
         <Stat label="Payments waiting on a provider" value={q.unresolvedPaymentAttempts ?? 0} />
         <Stat label="Marketplace reports open" value={q.openReports ?? 0} warn={(q.openReports ?? 0) > 0} />
         <Stat label="Moderation appeals open" value={q.openAppeals ?? 0} warn={(q.openAppeals ?? 0) > 0} />
+        <Stat label="Subscription billing exceptions" value={q.openBillingExceptions ?? 0} warn={(q.openBillingExceptions ?? 0) > 0} />
+        <Stat label="Subscriptions in grace" value={q.subscriptionsInGrace ?? 0} />
         <Stat label="Outbox dead-lettered" value={q.outbox.dead} warn={q.outbox.dead > 0} />
         <Stat label="Callbacks dead-lettered" value={q.inbox.dead} warn={q.inbox.dead > 0} />
       </div>

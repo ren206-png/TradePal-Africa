@@ -8,6 +8,7 @@ const navItems = [
   { to: "/reorder", label: "Reorder" },
   { to: "/support-cases", label: "Support cases" },
   { to: "/payments", label: "Payments" },
+  { to: "/subscriptions", label: "Subscriptions" },
   { to: "/moderation", label: "Moderation" },
   { to: "/businesses", label: "Businesses" },
   { to: "/deletion-requests", label: "Deletion requests" },

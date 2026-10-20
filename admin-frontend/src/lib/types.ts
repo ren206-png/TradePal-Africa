@@ -410,3 +410,48 @@ export interface SellerModerationRow {
   marketplaceStatus: string;
   note: string | null;
 }
+
+export interface SubscriptionsOverview {
+  states: Record<string, number>;
+  invoices: Record<string, number>;
+  attempts: Record<string, number>;
+  openExceptions: Record<string, number>;
+  refunds: Record<string, number>;
+  callbackAuthFailuresLast24h: number;
+  switches: { id: string; provider: string; countryCode: string; purpose: string; newAttemptsEnabled: boolean; reason: string | null }[];
+  configuration: { configured: true; environment: string; requireSignedCallbacks: boolean; productionActivated: boolean } | { configured: false; reason: string };
+}
+export interface SubscriptionRow {
+  id: string;
+  business: string;
+  country: string;
+  securitySuspended: boolean;
+  planCode: string;
+  planVersion: number | null;
+  status: string;
+  state: string;
+  currentPeriodEnd: string;
+  cancelAtPeriodEnd: boolean;
+}
+export interface SubscriptionDetail extends SubscriptionRow {
+  invoices: { id: string; reference: string | null; status: string; amountMinor: string | null; paidMinor: string | null; refundedMinor: string | null; currencyCode: string }[];
+  history: { id: string; kind: string; from: string | null; to: string | null; source: string; reason: string | null; at: string }[];
+}
+export interface BillingExceptionRow {
+  id: string;
+  type: string;
+  business: string | null;
+  amountMinor: string | null;
+  createdAt: string;
+}
+export interface PlanVersionRow {
+  id: string;
+  planCode: string;
+  version: number;
+  status: string;
+  graceDays: number;
+  billingPeriodDays: number;
+  features: string[];
+  subscribers: number;
+  prices: { countryCode: string; currencyCode: string; priceMinor: string | null }[];
+}

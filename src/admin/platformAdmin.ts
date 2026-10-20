@@ -167,6 +167,8 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
       const openProviderExceptions = await prisma.providerException.count({ where: { status: "OPEN" } });
       const unresolvedPaymentAttempts = await prisma.paymentAttempt.count({ where: { status: { in: ["PENDING", "UNKNOWN"] } } });
       const openReports = await prisma.marketplaceReport.count({ where: { status: "OPEN" } });
+      const openBillingExceptions = await prisma.billingException.count({ where: { status: "OPEN" } });
+      const subscriptionsInGrace = await prisma.subscription.count({ where: { status: { in: ["ACTIVE", "PAST_DUE"] }, currentPeriodEnd: { lt: now, gte: new Date(now.getTime() - 3 * 86_400_000) } } });
       const openAppeals = await prisma.appeal.count({ where: { status: "OPEN" } });
       const pendingRefundRequests = await prisma.storeRefundRequest.count({ where: { status: { in: ["REQUESTED", "APPROVED", "GOODS_RECEIVED"] } } });
       const outbox = await getOutboxStats(prisma, now);
@@ -176,7 +178,7 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
         merchants: { active: merchants },
         activity: { transactionsLast24h: transactions24h, transactionsLast7d: transactions7d },
         subscriptions: Object.fromEntries(subs.map((s) => [s.status, s._count._all])),
-        queues: { pendingDeletionRequests: deletions, unmatchedMobileMoneyAlerts: unmatchedAlerts, openSupportCases, openPaymentExceptions, pendingRefundRequests, openProviderExceptions, unresolvedPaymentAttempts, openReports, openAppeals, outbox, inbox },
+        queues: { pendingDeletionRequests: deletions, unmatchedMobileMoneyAlerts: unmatchedAlerts, openSupportCases, openPaymentExceptions, pendingRefundRequests, openProviderExceptions, unresolvedPaymentAttempts, openReports, openAppeals, openBillingExceptions, subscriptionsInGrace, outbox, inbox },
         generatedAt: now,
       });
     }),
