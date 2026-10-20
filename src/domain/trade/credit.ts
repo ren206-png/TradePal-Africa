@@ -51,3 +51,12 @@ export async function evaluateTradeCredit(
   }
   return { allowed: reasons.length === 0, reasons, exposureMinor: exposure, limitMinor: partner.creditLimitMinor, oldestOverdueDays };
 }
+
+/**
+ * Serialises credit decisions for one customer: takes a row lock on the partner for the rest of the transaction, so two acceptances for the
+ * same customer cannot both read the same "exposure" and both pass (Phase 3 gap). The second one waits, then sees the first one's accepted
+ * order in its exposure. Must be called first inside the transaction that accepts the order.
+ */
+export async function lockPartnerForCredit(tx: TenantScopedClient, partnerId: string): Promise<void> {
+  await (tx as unknown as { $queryRaw: (q: TemplateStringsArray, ...v: unknown[]) => Promise<unknown> }).$queryRaw`SELECT "id" FROM "TradePartner" WHERE "id" = ${partnerId} FOR UPDATE`;
+}

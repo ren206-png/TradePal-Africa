@@ -330,13 +330,13 @@ async function handleInvoices(ctx: CommandContext): Promise<string> {
 
 async function handlePayInvoice(ctx: CommandContext, args: string): Promise<string> {
   if (!can(ctx, "trade:payments")) return NOT_ALLOWED;
-  const m = /^(\S+)\s+(\S+)(?:\s+(cash|momo|bank))?$/i.exec(args.trim());
+  const m = /^(\S+)\s+(\S+)(?:\s+(cash|momo|bank))?(?:\s+(anyway))?$/i.exec(args.trim());
   if (!m) return 'Usage: /payinvoice <invoice number> <amount> [cash|momo|bank]\nExample: "/payinvoice BILL-000001 2000 cash"';
   const invoice = await ctx.scopedPrisma.tradeInvoice.findFirst({ where: { number: (m[1] as string).toUpperCase() } });
   if (!invoice) return "I can't find that invoice. Send /invoices to see yours.";
   const method = ((m[3] ?? "").toLowerCase() === "momo" ? "MOBILE_MONEY" : (m[3] ?? "").toLowerCase() === "bank" ? "BANK" : (m[3] ?? "").toLowerCase() === "cash" ? "CASH" : "OTHER") as "CASH" | "MOBILE_MONEY" | "BANK" | "OTHER";
   const amount = parseAmountToMinorUnits(m[2] as string, ctx.minorUnitExp);
-  await recordPayment(ctx.prisma, { businessId: ctx.businessId, invoiceId: invoice.id, amountMinor: amount, method, actor: ctx.merchantId });
+  await recordPayment(ctx.prisma, { businessId: ctx.businessId, invoiceId: invoice.id, amountMinor: amount, method, actor: ctx.merchantId, allowDuplicate: !!m[4] });
   await deliverTradeEvents(ctx.prisma);
   return invoice.side === "SELL"
     ? `Recorded ${money(ctx, amount)} received on ${invoice.number}. The other business is asked to confirm it.`
@@ -346,7 +346,8 @@ async function handlePayInvoice(ctx: CommandContext, args: string): Promise<stri
 async function handleConfirmPayment(ctx: CommandContext, args: string): Promise<string> {
   if (!can(ctx, "trade:payments")) return NOT_ALLOWED;
   const open = await ctx.scopedPrisma.tradePayment.findMany({ where: { state: "PROPOSED" }, orderBy: { createdAt: "asc" } });
-  const n = Number(args.trim());
+  const anyway = /\s+anyway$/i.test(args.trim());
+  const n = Number(args.trim().replace(/\s+anyway$/i, ""));
   if (!args.trim()) {
     if (open.length === 0) return "No payments are waiting for your confirmation.";
     const invs = await ctx.scopedPrisma.tradeInvoice.findMany({ where: { id: { in: open.map((p) => p.invoiceId) } } });
@@ -354,7 +355,7 @@ async function handleConfirmPayment(ctx: CommandContext, args: string): Promise<
   }
   const p = Number.isInteger(n) ? open[n - 1] : undefined;
   if (!p) return `There is no waiting payment number ${args.trim()}.`;
-  await confirmPayment(ctx.prisma, { businessId: ctx.businessId, paymentId: p.id, actor: ctx.merchantId });
+  await confirmPayment(ctx.prisma, { businessId: ctx.businessId, paymentId: p.id, actor: ctx.merchantId, allowDuplicate: anyway });
   await deliverTradeEvents(ctx.prisma);
   return `Confirmed ${money(ctx, p.amountMinor)}. The invoice is updated.`;
 }

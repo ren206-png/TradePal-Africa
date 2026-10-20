@@ -222,6 +222,29 @@ describe("payments are tracked as evidence, never a second sale", () => {
     await expect(confirmPayment(prisma, { businessId: w.W.businessId, paymentId: proposal.id })).rejects.toMatchObject({ code: "WRONG_STATE" });
   });
 
+  it("the same payment reported by the buyer AND recorded by the seller is caught, not applied twice; a genuine second payment needs 'anyway'", async () => {
+    const { w, wInvoice, bill } = await shippedAndReceived();
+    await recordPayment(prisma, { businessId: w.R.businessId, invoiceId: bill.id, amountMinor: 100_000n, method: "CASH" });
+    await deliverTradeEvents(prisma);
+    const proposal = await w.W.scoped.tradePayment.findFirstOrThrow({ where: { invoiceId: wInvoice.id, state: "PROPOSED" } });
+    // the seller ALSO recorded the same money themselves (same amount, same method)
+    await recordPayment(prisma, { businessId: w.W.businessId, invoiceId: wInvoice.id, amountMinor: 100_000n, method: "CASH" });
+    // confirming the buyer's report on top of it would count it twice: refused, with the way out explained
+    const err = await confirmPayment(prisma, { businessId: w.W.businessId, paymentId: proposal.id }).catch((e) => e);
+    expect(err).toMatchObject({ code: "DUPLICATE_SUSPECTED" });
+    expect(err.message).toContain("anyway");
+    expect((await w.W.scoped.tradeInvoice.findUniqueOrThrow({ where: { id: wInvoice.id } })).paidMinor).toBe(100_000n); // nothing was applied twice
+    // a second identical payment recorded by hand is caught too
+    await expect(recordPayment(prisma, { businessId: w.W.businessId, invoiceId: wInvoice.id, amountMinor: 100_000n, method: "CASH" })).rejects.toMatchObject({ code: "DUPLICATE_SUSPECTED" });
+    // a different amount or method is not a duplicate
+    await recordPayment(prisma, { businessId: w.W.businessId, invoiceId: wInvoice.id, amountMinor: 100_000n, method: "BANK" });
+    // a person who says it really is a second payment can go ahead
+    await confirmPayment(prisma, { businessId: w.W.businessId, paymentId: proposal.id, allowDuplicate: true });
+    expect((await w.W.scoped.tradeInvoice.findUniqueOrThrow({ where: { id: wInvoice.id } })).paidMinor).toBe(300_000n);
+    // the window is 72 hours: the same amount a week later is not suspected
+    await recordPayment(prisma, { businessId: w.W.businessId, invoiceId: wInvoice.id, amountMinor: 100_000n, method: "CASH", now: new Date(Date.now() + 7 * 86_400_000) }).catch((e) => { throw e; });
+  });
+
   it("a payment can never take an invoice past what is owing", async () => {
     const { w, wInvoice, bill } = await shippedAndReceived();
     await expect(recordPayment(prisma, { businessId: w.R.businessId, invoiceId: bill.id, amountMinor: 660_001n, method: "BANK" })).rejects.toMatchObject({ code: "OVER_PAYMENT" });

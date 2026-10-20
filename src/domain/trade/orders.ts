@@ -9,7 +9,7 @@ import { resolvePrice } from "../pricing.js";
 import { ensureDefaultShopFor } from "../shops.js";
 import { releaseReservation, reserveStock, extendReservation } from "../stock.js";
 import { recordAuditLog } from "../auditLog.js";
-import { evaluateTradeCredit } from "./credit.js";
+import { evaluateTradeCredit, lockPartnerForCredit } from "./credit.js";
 import { FLAG_STOCK, TradeError, isUniqueViolation, nextReference, requireTradeEnabled } from "./common.js";
 import { getActiveLink, resolveSharedPrice, type ActiveLink } from "./partners.js";
 
@@ -368,13 +368,15 @@ export async function acceptSalesOrder(
   if (order.validUntil && order.validUntil <= now) throw new TradeError("EXPIRED", "This order's validity has passed.");
   if (order.lines.some((l) => l.unitPriceMinor <= 0n)) throw new TradeError("UNPRICED", "Every line needs a price before the order can be accepted.");
 
-  const credit = await evaluateTradeCredit(scoped, { partnerId: order.partnerId, additionalMinor: order.totalMinor, now });
-  if (!credit.allowed) {
-    if (!input.creditOverride?.reason.trim() || !input.creditOverride.by) throw new TradeError("CREDIT_BLOCKED", credit.reasons.map((r) => r.message).join(" "), credit);
-  }
   const holdUntil = new Date(now.getTime() + (input.holdDays ?? DEFAULT_HOLD_DAYS) * DAY);
 
   return withScopedTransaction(scoped, async (tx) => {
+    // the credit decision and the acceptance are ONE serialised step per customer (see lockPartnerForCredit)
+    await lockPartnerForCredit(tx, order.partnerId);
+    const credit = await evaluateTradeCredit(tx, { partnerId: order.partnerId, additionalMinor: order.totalMinor, now });
+    if (!credit.allowed) {
+      if (!input.creditOverride?.reason.trim() || !input.creditOverride.by) throw new TradeError("CREDIT_BLOCKED", credit.reasons.map((r) => r.message).join(" "), credit);
+    }
     const claimed = await tx.tradeOrder.updateMany({ where: { id: order.id, acceptance: order.acceptance }, data: { holdUntil } });
     if (claimed.count !== 1) throw new TradeError("WRONG_STATE", "The order was just changed by someone else.");
     await holdLines(tx, order, holdUntil, "accept");

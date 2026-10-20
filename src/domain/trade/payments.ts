@@ -39,10 +39,26 @@ async function journalPayment(
   });
 }
 
+/**
+ * The same amount, by the same method, already applied to this invoice in the last 72 hours is probably the SAME payment recorded twice (for
+ * example the buyer reported it and the seller also recorded it). Phase 3 had no detection: only a person would notice. Now the second one is
+ * refused until the person says "anyway" (a genuine second instalment of an equal amount is allowed, just not by accident).
+ */
+export const DUPLICATE_WINDOW_MS = 72 * 3_600_000;
+async function assertNotSuspectedDuplicate(scoped: TenantScopedClient, args: { invoiceId: string; amountMinor: bigint; method: TradePayment["method"]; excludeId?: string; now: Date }): Promise<void> {
+  const prior = await scoped.tradePayment.findFirst({
+    where: { invoiceId: args.invoiceId, state: "APPLIED", amountMinor: args.amountMinor, method: args.method, createdAt: { gte: new Date(args.now.getTime() - DUPLICATE_WINDOW_MS) }, ...(args.excludeId ? { id: { not: args.excludeId } } : {}) },
+    orderBy: { createdAt: "desc" },
+  });
+  if (prior) {
+    throw new TradeError("DUPLICATE_SUSPECTED", `A payment of the same amount by the same method was already recorded on this invoice on ${prior.createdAt.toISOString().slice(0, 10)}. If this is that same payment, do not record it again (reject it if it was reported by the other business). If it really is a second payment, repeat the command with the word "anyway" at the end.`, { priorPaymentId: prior.id });
+  }
+}
+
 /** The business records a payment it made (buyer) or received (seller) on one of ITS invoices. */
 export async function recordPayment(
   prisma: PrismaClient,
-  input: { businessId: string; invoiceId: string; amountMinor: bigint; method: TradePaymentMethod; reference?: string; actor?: string; now?: Date },
+  input: { businessId: string; invoiceId: string; amountMinor: bigint; method: TradePaymentMethod; reference?: string; actor?: string; allowDuplicate?: boolean; now?: Date },
 ): Promise<TradePayment> {
   const now = input.now ?? new Date();
   const scoped = getTenantScopedClient(prisma, input.businessId);
@@ -52,6 +68,7 @@ export async function recordPayment(
   if (!invoice) throw new TradeError("NOT_FOUND", "Invoice not found.");
   if (invoice.status !== "ISSUED") throw new TradeError("WRONG_STATE", "This invoice is not open for payment.");
   const direction = invoice.side === "SELL" ? "IN" : "OUT";
+  if (!input.allowDuplicate) await assertNotSuspectedDuplicate(scoped, { invoiceId: invoice.id, amountMinor: input.amountMinor, method: input.method, now });
 
   return withScopedTransaction(scoped, async (tx) => {
     if (!(await applyToInvoice(tx, input.businessId, invoice.id, input.amountMinor))) {
@@ -75,13 +92,14 @@ export async function recordPayment(
 }
 
 /** Confirms a PROPOSED payment (what the other business reported). Only now does it reduce what is owing. */
-export async function confirmPayment(prisma: PrismaClient, input: { businessId: string; paymentId: string; actor?: string; now?: Date }): Promise<TradePayment> {
+export async function confirmPayment(prisma: PrismaClient, input: { businessId: string; paymentId: string; actor?: string; allowDuplicate?: boolean; now?: Date }): Promise<TradePayment> {
   const now = input.now ?? new Date();
   const scoped = getTenantScopedClient(prisma, input.businessId);
   const payment = await scoped.tradePayment.findUnique({ where: { id: input.paymentId } });
   if (!payment) throw new TradeError("NOT_FOUND", "Payment not found.");
   if (payment.state !== "PROPOSED") throw new TradeError("WRONG_STATE", `This payment is already ${payment.state.toLowerCase()}.`);
   const invoice = await scoped.tradeInvoice.findUniqueOrThrow({ where: { id: payment.invoiceId } });
+  if (!input.allowDuplicate) await assertNotSuspectedDuplicate(scoped, { invoiceId: invoice.id, amountMinor: payment.amountMinor, method: payment.method, excludeId: payment.id, now });
 
   const updated = await withScopedTransaction(scoped, async (tx) => {
     const claimed = await tx.tradePayment.updateMany({ where: { id: payment.id, state: "PROPOSED" }, data: { state: "APPLIED", evidence: "COUNTERPARTY_CONFIRMED", appliedAt: now } });
