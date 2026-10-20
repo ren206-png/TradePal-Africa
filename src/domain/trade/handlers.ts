@@ -3,7 +3,8 @@ import { getTenantScopedClient, withScopedTransaction } from "../../db/tenantSco
 import { processInbox, type CallbackHandler } from "../callbackInbox.js";
 import { processOutbox, type OutboxHandler } from "../outbox.js";
 import { PriceError } from "../pricing.js";
-import { simulatorCallbackHandler, SIMULATOR_PROVIDER } from "../../payments/simulator.js";
+import { providerCallbackHandler } from "../merchantPayments/outcomes.js";
+import { getAdapterRegistry } from "../../payments/registry.js";
 import { TradeError, isUniqueViolation, nextReference } from "./common.js";
 import { enqueueTradeEvent, finaliseQuoteAcceptance, freezeTerms, closeOrderRow, loadOrder } from "./orders.js";
 import { getActiveLink, resolveSharedPrice } from "./partners.js";
@@ -364,8 +365,11 @@ export function buildTradeOutboxHandlers(prisma: PrismaClient): Record<string, O
   };
 }
 
+/** One inbox handler per registered merchant-payment provider (Phase 5: the same pipeline serves B2B invoices and consumer orders). */
 export function buildTradeCallbackHandlers(prisma: PrismaClient): Record<string, CallbackHandler> {
-  return { [SIMULATOR_PROVIDER]: simulatorCallbackHandler(prisma) };
+  const registry = getAdapterRegistry(prisma);
+  const handler = providerCallbackHandler(prisma, registry);
+  return Object.fromEntries(registry.ids().map((id) => [id, handler]));
 }
 
 /**

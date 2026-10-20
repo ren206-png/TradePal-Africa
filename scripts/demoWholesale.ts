@@ -18,7 +18,11 @@ import { acceptSuggestion, generateReorderSuggestions, listOpenSuggestions, setR
 import { receiveShipment, shipOrder } from "../src/domain/trade/fulfilment.js";
 import { deliverTradeEvents } from "../src/domain/trade/handlers.js";
 import { acceptSalesOrder, submitPurchaseOrder } from "../src/domain/trade/orders.js";
-import { receiveSimulatorCallback, simulateSuccessfulPayment } from "../src/payments/simulator.js";
+import { AdapterRegistry } from "../src/payments/adapter.js";
+import { SimulatorAdapter } from "../src/payments/simulatorAdapter.js";
+import { setAdapterRegistry } from "../src/payments/registry.js";
+import { createPaymentIntent, ensureSimulatorConnection, startPaymentAttempt } from "../src/domain/merchantPayments/intents.js";
+import { receiveProviderCallback } from "../src/domain/merchantPayments/outcomes.js";
 
 export interface DemoResult {
   suggestion: { method: string; suggestedBaseQty: number; arithmetic: string };
@@ -66,10 +70,17 @@ export async function runDemo(log: (line: string) => void = () => undefined): Pr
     await deliverTradeEvents(prisma);
 
     log("6. The retailer pays through the SIMULATED provider (no money moves): a signed callback arrives, is stored, then applied once.");
-    const secret = "demo-simulator-secret";
-    const evt = simulateSuccessfulPayment({ secret, externalId: "demo-payment-0001", sellerBusinessId: w.W.businessId, invoiceId: shipped.invoice.id, amountMinor: shipped.invoice.totalMinor, currencyCode: "NGN" });
-    log(`   callback: ${JSON.stringify(await receiveSimulatorCallback(prisma, evt.body, evt.signature, secret))}`);
-    log(`   redelivered: ${JSON.stringify(await receiveSimulatorCallback(prisma, evt.body, evt.signature, secret))}`);
+    process.env["STOREFRONT_SIMULATOR_ENABLED"] = "true"; // the simulator exists only outside production
+    const simulator = new SimulatorAdapter(prisma, "demo-simulator-secret");
+    const registry = new AdapterRegistry().register(simulator);
+    setAdapterRegistry(registry);
+    await ensureSimulatorConnection(prisma, w.W.businessId);
+    const intent = await createPaymentIntent(prisma, { businessId: w.W.businessId, subjectType: "TRADE_INVOICE", subjectId: shipped.invoice.id });
+    const { attempt } = await startPaymentAttempt(prisma, registry, { businessId: w.W.businessId, intentId: intent.id, provider: "simulator" });
+    log(`   provider accepted the request: ${attempt.status} (not paid yet)`);
+    const evt = await simulator.completePayment(attempt.externalRef!);
+    log(`   callback: ${JSON.stringify(await receiveProviderCallback(prisma, registry, "simulator", evt.body, evt.headers))}`);
+    log(`   redelivered: ${JSON.stringify(await receiveProviderCallback(prisma, registry, "simulator", evt.body, evt.headers))}`);
     await deliverTradeEvents(prisma);
 
     const net = (b: typeof w.W, k: Parameters<typeof accountNet>[1]) => accountNet(b.scoped, k, { currencyCode: "NGN" });

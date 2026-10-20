@@ -56,11 +56,13 @@ export async function recordStorePayment(
 export interface ProviderPaymentInput {
   sellerBusinessId: string;
   orderId: string;
-  provider: "simulator";
+  provider: string;
   externalId: string;
   amountMinor: bigint;
   currencyCode: string;
   evidence: Extract<TradePaymentEvidence, "SIMULATOR_CONFIRMED" | "PROVIDER_CONFIRMED">;
+  /** The payment intent this money was collected for is no longer open (expired or cancelled): hold it, whatever the order looks like. */
+  forceHold?: boolean;
   now?: Date;
 }
 
@@ -77,6 +79,7 @@ export async function applyStoreProviderPayment(prisma: PrismaClient, input: Pro
   const holdLapsed = order.status === "PLACED" && order.reservedUntil !== null && order.reservedUntil <= now;
   let exceptionType: PaymentException["type"] | null = null;
   if (input.amountMinor <= 0n) exceptionType = "UNDERPAYMENT";
+  else if (input.forceHold) exceptionType = "LATE_SUCCESS";
   else if (input.currencyCode !== order.currencyCode) exceptionType = "CURRENCY_MISMATCH";
   else if (order.status === "EXPIRED" || order.status === "CANCELLED" || holdLapsed) exceptionType = "LATE_SUCCESS";
   else if (order.status === "COMPLETED" || remaining <= 0n || input.amountMinor > remaining) exceptionType = "OVERPAYMENT";
@@ -173,6 +176,14 @@ export async function resolvePaymentException(
       if (!(await addPaid(tx, input.businessId, order.id, held.amountMinor))) throw new StoreError("OVER_PAYMENT", "The order cannot take that payment.");
       await tx.storePayment.update({ where: { id: held.id }, data: { state: "APPLIED", reason: `Applied as a part-payment (exception ${ex.id})` } });
       resolution = "APPLIED_PARTIAL";
+    }
+    // keep the payment layer's record of where this money went in step with what the seller decided
+    const alloc = await tx.paymentAllocation.findFirst({ where: { storePaymentId: held.id, state: "HELD" } });
+    if (alloc) {
+      await tx.paymentAllocation.updateMany({ where: { id: alloc.id, state: "HELD" }, data: { state: resolution === "REFUNDED" ? "REFUNDED" : "APPLIED" } });
+      if (resolution !== "REFUNDED") {
+        await tx.$executeRaw`UPDATE "PaymentIntent" SET "paidMinor" = "paidMinor" + ${held.amountMinor} WHERE "id" = ${alloc.intentId} AND "businessId" = ${input.businessId}`;
+      }
     }
     const done = await tx.paymentException.update({ where: { id: ex.id }, data: { status: "RESOLVED", resolution, resolvedBy: input.actor ?? null, resolvedAt: now } });
     return { exception: done, order: await loadStoreOrder(tx, order.id) };

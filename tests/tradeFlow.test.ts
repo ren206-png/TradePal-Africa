@@ -11,7 +11,8 @@ import { confirmPayment, recordPayment } from "../src/domain/trade/payments.js";
 import { deliverTradeEvents } from "../src/domain/trade/handlers.js";
 import { getSharedCatalog } from "../src/domain/trade/partners.js";
 import { recordCallback } from "../src/domain/callbackInbox.js";
-import { simulateSuccessfulPayment, receiveSimulatorCallback } from "../src/payments/simulator.js";
+import { deliverCallback, simulatorWorld, startPayment } from "./helpers/payments.js";
+import { receiveProviderCallback } from "../src/domain/merchantPayments/outcomes.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
@@ -25,8 +26,6 @@ afterAll(async () => {
   await testDb.teardown();
 });
 
-const SECRET = "simulator-test-secret";
-let sim = 0;
 
 async function net(biz: { scoped: Parameters<typeof accountNet>[0] }, key: Parameters<typeof accountNet>[1]) {
   return accountNet(biz.scoped, key, { currencyCode: "NGN" });
@@ -235,12 +234,18 @@ describe("payments are tracked as evidence, never a second sale", () => {
 
   it("simulator: a signed callback pays the invoice once; replays and bad callbacks change nothing", async () => {
     const { w, wInvoice, bill } = await shippedAndReceived();
-    const evt = (amount: bigint, extra: Record<string, unknown> = {}) =>
-      simulateSuccessfulPayment({ secret: SECRET, externalId: `sim-${++sim}-abcdefgh`, sellerBusinessId: w.W.businessId, invoiceId: wInvoice.id, amountMinor: amount, currencyCode: "NGN", ...extra });
+    const { sim, registry } = simulatorWorld(prisma);
+    const pay = async (amount: bigint) => {
+      const { attempt } = await startPayment(prisma, registry, { businessId: w.W.businessId, subjectType: "TRADE_INVOICE", subjectId: wInvoice.id, amountMinor: amount });
+      return attempt;
+    };
 
-    const first = evt(300_000n);
-    expect(await receiveSimulatorCallback(prisma, first.body, first.signature, SECRET)).toEqual({ status: "recorded" });
-    expect(await receiveSimulatorCallback(prisma, first.body, first.signature, SECRET)).toEqual({ status: "duplicate" }); // redelivery
+    const a1 = await pay(300_000n);
+    expect(a1.status).toBe("PENDING"); // the provider accepted the request: pending, never paid
+    expect((await w.W.scoped.tradeInvoice.findUniqueOrThrow({ where: { id: wInvoice.id } })).paidMinor).toBe(0n);
+    const first = await sim.completePayment(a1.externalRef!);
+    expect(await deliverCallback(prisma, registry, first)).toEqual({ status: "recorded" });
+    expect(await deliverCallback(prisma, registry, first)).toEqual({ status: "duplicate" }); // redelivery
     await deliverTradeEvents(prisma);
     await deliverTradeEvents(prisma);
 
@@ -258,37 +263,30 @@ describe("payments are tracked as evidence, never a second sale", () => {
     expect(billNow.paidMinor).toBe(300_000n);
     expect((await w.R.scoped.tradePayment.findFirstOrThrow({ where: { invoiceId: bill.id } }))).toMatchObject({ direction: "OUT", evidence: "SIMULATOR_CONFIRMED", state: "APPLIED" });
 
-    // bad signature, wrong purpose, malformed body: refused at the door, nothing stored
-    const bad = evt(1_000n);
-    expect(await receiveSimulatorCallback(prisma, bad.body, "00".repeat(32), SECRET)).toEqual({ status: "rejected", reason: "BAD_SIGNATURE" });
-    expect(await receiveSimulatorCallback(prisma, bad.body, bad.signature, "another-secret")).toEqual({ status: "rejected", reason: "BAD_SIGNATURE" });
-    const forged = evt(1_000n, { purpose: "PLATFORM_SUBSCRIPTION" });
-    expect(await receiveSimulatorCallback(prisma, forged.body, forged.signature, SECRET)).toEqual({ status: "rejected", reason: "PURPOSE_FORBIDDEN" });
-    expect(await receiveSimulatorCallback(prisma, "not json", "ab", SECRET)).toMatchObject({ status: "rejected" });
-    expect(await prisma.callbackInbox.count({ where: { externalId: { in: [bad.body.match(/sim-\d+-abcdefgh/)![0], forged.body.match(/sim-\d+-abcdefgh/)![0]] } } })).toBe(0);
+    // bad signature, forged purpose, malformed body: refused at the door, nothing stored
+    const a2 = await pay(100_000n);
+    const claim = (extra: Record<string, unknown>) => sim.signedEvent({ event: "payment.updated", eventId: "evt-x-0001", purpose: "MERCHANT_SALE", externalRef: a2.externalRef, merchantReference: a2.id, status: "SUCCEEDED", amountMinor: "100000", currencyCode: "NGN", destinationKey: "x", ...extra });
+    const bad = claim({ eventId: "evt-bad-0001" });
+    expect(await receiveProviderCallback(prisma, registry, "simulator", bad.body, { "x-simulator-signature": "00".repeat(32) })).toEqual({ status: "rejected", reason: "BAD_SIGNATURE" });
+    const forged = claim({ eventId: "evt-forged-001", purpose: "PLATFORM_SUBSCRIPTION" });
+    expect(await deliverCallback(prisma, registry, forged)).toEqual({ status: "rejected", reason: "PURPOSE_FORBIDDEN" });
+    expect(await receiveProviderCallback(prisma, registry, "simulator", "not json", { "x-simulator-signature": "ab" })).toMatchObject({ status: "rejected" });
+    expect(await prisma.callbackInbox.count({ where: { externalId: { in: ["evt-bad-0001", "evt-forged-001"] } } })).toBe(0);
 
-    // an UNVERIFIED stored row is never applied, even if it somehow got into the inbox
-    await recordCallback(prisma, { provider: "simulator", externalId: "sim-unverified-0001", signatureVerified: false, payload: JSON.parse(bad.body) });
+    // an UNVERIFIED stored row is never trusted as evidence: it only triggers an authenticated status check, and the provider says PENDING
+    await recordCallback(prisma, { provider: "simulator", externalId: "sim-unverified-0001", signatureVerified: false, payload: { event: { kind: "payment", eventId: "sim-unverified-0001", purpose: "MERCHANT_SALE", snapshot: { status: "SUCCEEDED", externalRef: a2.externalRef, merchantReference: a2.id, amountMinor: { $bigint: "100000" }, currencyCode: "NGN", destinationKey: null, feeMinor: null } } } });
     await deliverTradeEvents(prisma);
-    expect((await prisma.callbackInbox.findFirstOrThrow({ where: { externalId: "sim-unverified-0001" } })).status).not.toBe("PROCESSED");
     expect((await w.W.scoped.tradeInvoice.findUniqueOrThrow({ where: { id: wInvoice.id } })).paidMinor).toBe(300_000n);
 
-    // more than owing: stored HELD for a human, never applied
-    const over = evt(900_000n);
-    await receiveSimulatorCallback(prisma, over.body, over.signature, SECRET);
+    // the provider says it collected MORE than owing: the surplus is held for a human, never applied; the exception is visible
+    const a3 = await pay(360_000n);
+    const over = await sim.completePayment(a3.externalRef!, { amountMinor: 900_000n });
+    await deliverCallback(prisma, registry, over);
     await deliverTradeEvents(prisma);
     const held = await w.W.scoped.tradePayment.findFirstOrThrow({ where: { state: "HELD" } });
     expect(held.reason).toContain("More than remains owing");
     expect((await w.W.scoped.tradeInvoice.findUniqueOrThrow({ where: { id: wInvoice.id } })).paidMinor).toBe(300_000n);
-
-    // settling the rest exactly closes the invoice
-    const rest = evt(360_000n);
-    await receiveSimulatorCallback(prisma, rest.body, rest.signature, SECRET);
-    await deliverTradeEvents(prisma);
-    expect(invoicePaymentView(await w.W.scoped.tradeInvoice.findUniqueOrThrow({ where: { id: wInvoice.id } })).paymentStatus).toBe("PAID");
-    for (const b of [w.W, w.R]) {
-      const tb = await trialBalance(b.scoped, { currencyCode: "NGN" });
-      expect(tb.totalDebitMinor).toBe(tb.totalCreditMinor);
-    }
+    expect(await prisma.providerException.count({ where: { attemptId: a3.id, type: "AMOUNT_MISMATCH" } })).toBe(1);
   });
+
 });

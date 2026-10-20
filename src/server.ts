@@ -5,6 +5,7 @@ import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
 import { createStorefrontRouter } from "./storefront/routes.js";
+import { getAdapterRegistry } from "./payments/registry.js";
 import { RedisLoginRateLimiter } from "./admin/rateLimiter.js";
 import {
   buildDeletionResolutionOutboundGatewayFromEnv,
@@ -229,10 +230,10 @@ app.use(
 // secret and are refused whenever NODE_ENV=production.
 if (process.env["STOREFRONT_ENABLED"] === "true") {
   if (process.env["TRUST_PROXY"]) app.set("trust proxy", Number(process.env["TRUST_PROXY"]) || process.env["TRUST_PROXY"]);
-  const simulatorSecret = process.env["PAYMENT_SIMULATOR_SECRET"];
+  const paymentRegistry = getAdapterRegistry(prisma);
   app.use(
     createStorefrontRouter(prisma, {
-      ...(simulatorSecret ? { simulatorSecret } : {}),
+      payments: { registry: paymentRegistry },
       // Shared across instances when Redis is configured (RATE_LIMIT_BACKEND), otherwise per process and reset on restart.
       ...(rateLimitRedisClient
         ? { limiters: { read: new RedisLoginRateLimiter(rateLimitRedisClient, 300, 60_000), write: new RedisLoginRateLimiter(rateLimitRedisClient, 120, 10 * 60_000), order: new RedisLoginRateLimiter(rateLimitRedisClient, 10, 60 * 60_000) } }

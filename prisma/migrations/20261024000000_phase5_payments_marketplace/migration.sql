@@ -164,6 +164,7 @@ CREATE TABLE "ProviderRefund" (
     "idempotencyKey" TEXT NOT NULL,
     "storeRefundRequestId" TEXT,
     "storeOrderId" TEXT,
+    "storeExceptionId" TEXT,
     "createdBy" TEXT,
     "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMPTZ NOT NULL,

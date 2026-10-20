@@ -204,7 +204,7 @@ describe("durable callback inbox (scenarios 7 and 8)", () => {
 });
 
 describe("outbox sweep wiring", () => {
-  it("is off unless OUTBOX_SWEEP_ENABLED=true; the registered handlers are exactly the Phase 3 trade events and the simulator", async () => {
+  it("is off unless OUTBOX_SWEEP_ENABLED=true; the registered handlers are exactly the Phase 3 trade events and the registered payment providers", async () => {
     const { outboxSweepEnabled } = await import("../src/queue/outboxSweep.js");
     const { buildOutboxHandlers, buildCallbackHandlers } = await import("../src/domain/eventHandlers.js");
     expect(outboxSweepEnabled({})).toBe(false);
@@ -214,6 +214,14 @@ describe("outbox sweep wiring", () => {
       "trade.credit_note.issued", "trade.order.accepted", "trade.order.closed", "trade.order.quoted", "trade.order.requested",
       "trade.payment.reported", "trade.payment.resolved", "trade.quote.accepted", "trade.receipt.recorded", "trade.shipment.dispatched",
     ]);
+    // callback handlers follow the registered payment providers: none by default (and none in production), the simulator only when allowed
+    const { setAdapterRegistry } = await import("../src/payments/registry.js");
+    setAdapterRegistry(null);
+    expect(Object.keys(buildCallbackHandlers(prisma))).toEqual([]);
+    const { simulatorWorld } = await import("./helpers/payments.js");
+    simulatorWorld(prisma);
     expect(Object.keys(buildCallbackHandlers(prisma))).toEqual(["simulator"]);
+    delete process.env["STOREFRONT_SIMULATOR_ENABLED"];
+    setAdapterRegistry(null);
   });
 });

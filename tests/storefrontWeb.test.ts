@@ -5,10 +5,9 @@ import type { PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
 import { enableFlag, seedReference } from "./helpers/phase2.js";
 import { makeSeller, type Seller } from "./helpers/store.js";
+import { drainInbox, simulatorWorld } from "./helpers/payments.js";
 import { createStorefrontRouter } from "../src/storefront/routes.js";
 import { InMemoryLoginRateLimiter } from "../src/admin/rateLimiter.js";
-import { processInbox } from "../src/domain/callbackInbox.js";
-import { buildTradeCallbackHandlers } from "../src/domain/trade/handlers.js";
 import { completeStoreOrder, confirmStoreOrder, dispatchStoreOrder, loadStoreOrder } from "../src/domain/store/orders.js";
 import { createProduct, createVariant } from "../src/domain/catalog.js";
 import { addPriceRule } from "../src/domain/pricing.js";
@@ -21,14 +20,15 @@ let testDb: TestDb;
 let prisma: PrismaClient;
 let app: express.Express;
 let k = 0;
-const SECRET = "sim-secret-for-tests-only";
 
 beforeAll(async () => {
   testDb = await createTestDb();
   prisma = testDb.prisma;
   await seedReference(prisma);
   app = express();
-  app.use(createStorefrontRouter(prisma, { simulatorSecret: SECRET }));
+  const { registry } = simulatorWorld(prisma);
+  delete process.env["STOREFRONT_SIMULATOR_ENABLED"]; // each test switches it on only where it needs it
+  app.use(createStorefrontRouter(prisma, { payments: { registry } }));
 }, 60_000);
 afterAll(async () => {
   await testDb.teardown();
@@ -277,7 +277,7 @@ describe("online test payment through the web (scenario 10)", () => {
       expect((await request(app).get(link)).text).toContain("Pay now");
       const pay = await request(app).post(`${link}/pay`);
       expect(pay.status).toBe(303);
-      await processInbox(prisma, buildTradeCallbackHandlers(prisma));
+      await drainInbox(prisma);
       const order = await s.scoped.storeOrder.findFirstOrThrow({ where: {} });
       expect(await loadStoreOrder(s.scoped, order.id)).toMatchObject({ status: "CONFIRMED", paidMinor: 20_000n });
       expect((await request(app).get(link)).text).not.toContain("Pay now");

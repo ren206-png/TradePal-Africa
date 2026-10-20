@@ -10,6 +10,7 @@ import { loadBasket } from "./basket.js";
 import {
   FLAG_ONLINE_PAYMENT, StoreError, isUniqueViolation, loadPublicStorefrontById, newPickupCode, newToken, nextStoreReference, sha256, simulatedPaymentsAllowed, toE164,
 } from "./common.js";
+import { closeIntentsForSubject } from "../merchantPayments/close.js";
 import { journalStoreHandover, journalStorePaymentIn } from "./journal.js";
 import { retailListOf } from "./storefront.js";
 
@@ -311,6 +312,11 @@ async function transition(
     const data = await work(tx, order);
     const claimed = await tx.storeOrder.updateMany({ where: { id: order.id, status: order.status }, data: data as Prisma.StoreOrderUncheckedUpdateManyInput });
     if (claimed.count !== 1) throw new StoreError("WRONG_STATE", "The order was just changed by someone else.");
+    // the offer to pay online closes with the order: a payment that still arrives is then a held, recoverable exception
+    const newStatus = (data as { status?: string }).status;
+    if (newStatus === "CANCELLED" || newStatus === "EXPIRED" || newStatus === "COMPLETED") {
+      await closeIntentsForSubject(tx, "STORE_ORDER", order.id, newStatus === "EXPIRED" ? "EXPIRED" : "CANCELLED");
+    }
     return loadStoreOrder(tx, order.id);
   });
 }

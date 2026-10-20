@@ -128,7 +128,7 @@ export async function rejectPayment(prisma: PrismaClient, input: { businessId: s
  */
 export async function applyProviderPayment(
   prisma: PrismaClient,
-  input: { sellerBusinessId: string; invoiceId: string; provider: "simulator"; externalId: string; amountMinor: bigint; currencyCode: string; evidence: "SIMULATOR_CONFIRMED" | "PROVIDER_CONFIRMED"; now?: Date },
+  input: { sellerBusinessId: string; invoiceId: string; provider: string; externalId: string; amountMinor: bigint; currencyCode: string; evidence: "SIMULATOR_CONFIRMED" | "PROVIDER_CONFIRMED"; forceHold?: string; now?: Date },
 ): Promise<{ payment: TradePayment; replayed: boolean }> {
   const now = input.now ?? new Date();
   const scoped = getTenantScopedClient(prisma, input.sellerBusinessId);
@@ -138,7 +138,8 @@ export async function applyProviderPayment(
   if (!invoice || invoice.side !== "SELL") throw new TradeError("NOT_FOUND", "No such sales invoice for this seller.");
 
   const reason =
-    input.amountMinor <= 0n ? "Amount must be positive."
+    input.forceHold ? input.forceHold
+    : input.amountMinor <= 0n ? "Amount must be positive."
     : input.currencyCode !== invoice.currencyCode ? `Currency ${input.currencyCode} does not match the invoice (${invoice.currencyCode}).`
     : invoice.status !== "ISSUED" ? "The invoice is not open."
     : input.amountMinor > invoice.totalMinor - invoice.creditedMinor - invoice.paidMinor ? "More than remains owing on the invoice."
@@ -167,7 +168,7 @@ export async function applyProviderPayment(
 /** The buyer's matching record of a payment made through authenticated evidence on the seller's invoice. Idempotent. */
 export async function applyProviderPaymentToBuyer(
   prisma: PrismaClient,
-  input: { buyerBusinessId: string; buyerInvoiceId: string; provider: "simulator"; externalId: string; amountMinor: bigint; evidence: "SIMULATOR_CONFIRMED" | "PROVIDER_CONFIRMED"; counterpartPaymentId: string; now?: Date },
+  input: { buyerBusinessId: string; buyerInvoiceId: string; provider: string; externalId: string; amountMinor: bigint; evidence: "SIMULATOR_CONFIRMED" | "PROVIDER_CONFIRMED"; counterpartPaymentId: string; now?: Date },
 ): Promise<TradePayment | null> {
   const now = input.now ?? new Date();
   const scoped = getTenantScopedClient(prisma, input.buyerBusinessId);

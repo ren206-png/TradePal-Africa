@@ -2736,6 +2736,7 @@ model ProviderRefund {
   idempotencyKey       String
   storeRefundRequestId String?
   storeOrderId         String?
+  storeExceptionId     String?
   createdBy            String?
   createdAt            DateTime             @default(now()) @db.Timestamptz()
   updatedAt            DateTime             @updatedAt @db.Timestamptz()

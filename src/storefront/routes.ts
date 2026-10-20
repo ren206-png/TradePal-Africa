@@ -13,7 +13,11 @@ import { requestRefund } from "../domain/store/refunds.js";
 import { publicCatalog } from "../domain/store/storefront.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
 import { esc, money, notFoundPage, page } from "./html.js";
-import { receiveSimulatorCallback, simulateSuccessfulPayment } from "../payments/simulator.js";
+import type { AdapterRegistry } from "../payments/adapter.js";
+import { SimulatorAdapter } from "../payments/simulatorAdapter.js";
+import { createPaymentIntent, ensureSimulatorConnection, startPaymentAttempt } from "../domain/merchantPayments/intents.js";
+import { receiveProviderCallback } from "../domain/merchantPayments/outcomes.js";
+import { PaymentsError } from "../domain/merchantPayments/common.js";
 
 /**
  * The public storefront (expansion Phase 4): server-rendered HTML, no JavaScript. Security posture:
@@ -25,8 +29,8 @@ import { receiveSimulatorCallback, simulateSuccessfulPayment } from "../payments
  *  - pages carrying a secret are `no-store`, `noindex` and send no referrer.
  */
 export interface StorefrontOptions {
-  /** Allow the "pay online" choice at all (also needs the seller's flag and a non-production environment). */
-  simulatorSecret?: string;
+  /** Payment providers available to this process. Online payment is offered only when the simulator is in it, the environment is not production and the seller's flag is on. */
+  payments?: { registry: AdapterRegistry };
   limiters?: { read?: LoginRateLimiter; write?: LoginRateLimiter; order?: LoginRateLimiter };
   secureCookies?: boolean;
   now?: () => Date;
@@ -67,7 +71,8 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
   const orderLimiter = options.limiters?.order ?? new InMemoryLoginRateLimiter(10, 60 * 60_000);
   const clock = options.now ?? (() => new Date());
   const secure = options.secureCookies ?? process.env["NODE_ENV"] === "production";
-  const allowOnline = () => Boolean(options.simulatorSecret) && simulatedPaymentsAllowed();
+  const simulator = () => { const a = options.payments?.registry.get("simulator"); return a instanceof SimulatorAdapter ? a : null; };
+  const allowOnline = () => simulator() !== null && simulatedPaymentsAllowed();
 
   router.use(express.urlencoded({ extended: false, limit: "20kb", parameterLimit: 200 }));
 
@@ -365,19 +370,26 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
     }
   }));
 
-  // Test-money checkout. Disabled in production and unless a simulator secret is configured. It builds a SIGNED callback exactly
-  // as a provider would and sends it through the same durable inbox, so nothing about it bypasses the real path.
+  // Test-money checkout (development and CI only; refused in production). The page creates a payment request through the SAME intent /
+  // attempt / callback pipeline a real provider would use: the provider ACCEPTS it (pending), the "payer" completes it at the simulated
+  // provider, and the signed callback comes back through the durable inbox. Nothing marks an order paid directly.
   router.post("/order/:token/pay", limit(write, "write"), withOrder(async ({ res, businessId, orderId, token }) => {
-    if (!allowOnline() || !options.simulatorSecret) return back(res, token, "Online payment is not available.");
-    const scoped = getTenantScopedClient(prisma, businessId);
-    const order = await scoped.storeOrder.findUniqueOrThrow({ where: { id: orderId } });
-    if (order.paymentMethod !== "ONLINE_SIMULATED" || order.paidMinor >= order.totalMinor) return back(res, token, "Nothing to pay.");
-    const evt = simulateSuccessfulPayment({
-      secret: options.simulatorSecret, externalId: `sim-${order.id.slice(0, 8)}-${Date.now().toString(36)}`, sellerBusinessId: businessId, storeOrderId: order.id,
-      amountMinor: order.totalMinor - order.paidMinor, currencyCode: order.currencyCode,
-    });
-    await receiveSimulatorCallback(prisma, evt.body, evt.signature, options.simulatorSecret);
-    back(res, token, "Test payment sent. It will show on your order in a moment.");
+    const sim = simulator();
+    if (!sim || !allowOnline() || !options.payments) return back(res, token, "Online payment is not available.");
+    try {
+      const scoped = getTenantScopedClient(prisma, businessId);
+      const order = await scoped.storeOrder.findUniqueOrThrow({ where: { id: orderId } });
+      if (order.paymentMethod !== "ONLINE_SIMULATED" || order.paidMinor >= order.totalMinor) return back(res, token, "Nothing to pay.");
+      await ensureSimulatorConnection(prisma, businessId);
+      const intent = await createPaymentIntent(prisma, { businessId, subjectType: "STORE_ORDER", subjectId: orderId, now: clock() });
+      const { attempt } = await startPaymentAttempt(prisma, options.payments.registry, { businessId, intentId: intent.id, provider: "simulator", now: clock() });
+      const cb = await sim.completePayment(attempt.externalRef!);
+      await receiveProviderCallback(prisma, options.payments.registry, "simulator", cb.body, cb.headers);
+      return back(res, token, "Test payment sent. It will show on your order in a moment.");
+    } catch (error) {
+      if (error instanceof PaymentsError) return back(res, token, error.message);
+      throw error;
+    }
   }));
 
   return router;
