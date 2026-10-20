@@ -3,7 +3,9 @@ import type { PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
 import {
   confirmPaymentRequestPayment,
-  initiatePaymentRequest,
+  // The guarded entry point always refuses (decisions G6-G7, tests/purposeBoundary.test.ts); these tests keep
+  // covering the retained, quarantined logic.
+  initiatePaymentRequestQuarantined as initiatePaymentRequest,
   PaymentRequestNotFoundError,
 } from "../src/domain/paymentRequests.js";
 import { MerchantNotFoundError } from "../src/domain/payments.js";

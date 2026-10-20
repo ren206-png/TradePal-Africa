@@ -1,4 +1,5 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY } from "../src/domain/paymentPurpose.js";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { createTestDb, type TestDb } from "./helpers/db.js";
 import { getTenantScopedClient, type TenantScopedClient } from "../src/db/tenantScope.js";
@@ -1033,34 +1034,17 @@ describe("handleCommand", () => {
         expect(reply).toMatch(/aren't configured/i);
       });
 
-      it("requests a payment link and returns it as forwardable text, creating a PENDING PaymentRequest", async () => {
-        const reply = await handleCommand(payLinksCtx, "/paylink John the tailor 750");
-        expect(reply).toContain("https://checkout.example/paylink-abc");
-        expect(reply).toContain("John the tailor");
-        expect(reply).toContain("750.00");
+      it("refuses to create a merchant-sale payment link even with the flag on and Flutterwave configured (decisions G6-G7)", async () => {
+        const fetchImpl = vi.fn();
+        const ctx: CommandContext = { ...payLinksCtx, flutterwave: { secretKey: "test-secret", fetchImpl } };
+        const customersBefore = await prisma.customer.count({ where: { businessId: payLinksBusinessId } });
 
-        const paymentRequest = await prisma.paymentRequest.findFirstOrThrow({
-          where: { businessId: payLinksBusinessId, description: "Payment from John the tailor" },
-        });
-        expect(paymentRequest.status).toBe("PENDING");
-        expect(paymentRequest.amountMinor).toBe(75000n);
-        expect(paymentRequest.checkoutUrl).toBeNull(); // checkoutUrl isn't persisted on the row itself — only providerReference/tx_ref is
+        const reply = await handleCommand(ctx, "/paylink John the tailor 750");
 
-        const customer = await prisma.customer.findFirstOrThrow({ where: { businessId: payLinksBusinessId, name: "John the tailor" } });
-        expect(paymentRequest.customerId).toBe(customer.id);
-      });
-
-      it("finds an existing customer by name instead of creating a duplicate", async () => {
-        await handleCommand(payLinksCtx, "/paylink Amina 200");
-        await handleCommand(payLinksCtx, "/paylink Amina 300");
-
-        const customers = await prisma.customer.findMany({ where: { businessId: payLinksBusinessId, name: "Amina" } });
-        expect(customers).toHaveLength(1);
-
-        const requests = await prisma.paymentRequest.findMany({
-          where: { businessId: payLinksBusinessId, customerId: customers[0]!.id },
-        });
-        expect(requests).toHaveLength(2);
+        expect(reply).toBe(ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY);
+        expect(fetchImpl).not.toHaveBeenCalled(); // the provider was never contacted
+        expect(await prisma.paymentRequest.count({ where: { businessId: payLinksBusinessId } })).toBe(0);
+        expect(await prisma.customer.count({ where: { businessId: payLinksBusinessId } })).toBe(customersBefore); // no side effect at all
       });
     });
   });

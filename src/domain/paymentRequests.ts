@@ -1,3 +1,4 @@
+import { assertProviderAllowedForPurpose } from "./paymentPurpose.js";
 import crypto from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { recordAuditLog } from "./auditLog.js";
@@ -57,7 +58,13 @@ export interface InitiatePaymentRequestResult {
  * since the merchant is who's initiating and forwarding the link, not the
  * customer who eventually opens it.
  */
-export async function initiatePaymentRequest(
+/**
+ * QUARANTINED (expansion decisions G6-G7 / P2): a Flutterwave link for a merchant's customer would credit
+ * TradePal's own Flutterwave account (one credential, no sub-account, no settlement to the merchant). The
+ * guarded entry point below refuses; this unguarded implementation is exported only so its retained logic
+ * stays tested (see tests/purposeBoundary.test.ts, which blocks any other importer).
+ */
+export async function initiatePaymentRequestQuarantined(
   prisma: PrismaClient,
   input: InitiatePaymentRequestInput,
   flutterwave: FlutterwaveDeps,
@@ -199,6 +206,16 @@ export async function notifyMerchantsOfPaymentReceived(
       });
     }
   }
+}
+
+/** The entry point callers use. Refuses before any side effect: Flutterwave may not serve merchant sales yet. */
+export async function initiatePaymentRequest(
+  prisma: PrismaClient,
+  input: InitiatePaymentRequestInput,
+  flutterwave: FlutterwaveDeps,
+): Promise<InitiatePaymentRequestResult> {
+  assertProviderAllowedForPurpose("flutterwave", "MERCHANT_SALE");
+  return initiatePaymentRequestQuarantined(prisma, input, flutterwave);
 }
 
 /**

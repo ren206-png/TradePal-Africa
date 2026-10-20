@@ -1,3 +1,4 @@
+import { assertProviderAllowedForPurpose } from "./paymentPurpose.js";
 import crypto from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { recordAuditLog } from "./auditLog.js";
@@ -105,7 +106,13 @@ function rejectionMessage(code: string | undefined): string {
   return (code && REJECTION_MESSAGES[code]) || "The payment request was rejected. Please check the number and try again.";
 }
 
-export async function initiatePawaPayCollection(
+/**
+ * QUARANTINED (expansion decision G5): pawaPay is for TradePal subscription billing only, and this flow
+ * collects a merchant's customer's payment for the merchant. The guarded entry point below always refuses;
+ * this unguarded implementation is exported only so its retained logic stays tested. An architecture test
+ * (tests/purposeBoundary.test.ts) fails the build if anything outside this file or the tests imports it.
+ */
+export async function initiatePawaPayCollectionQuarantined(
   prisma: PrismaClient,
   input: InitiatePawaPayCollectionInput,
   pawapay: PawaPayDeps,
@@ -267,6 +274,18 @@ export type SettlePawaPayDepositOutcome = "paid" | "failed" | "already_processed
 export interface SettlePawaPayDepositResult {
   outcome: SettlePawaPayDepositOutcome;
   transactionId?: string;
+}
+
+/**
+ * The entry point callers use. Refuses before any side effect: pawaPay may not serve merchant sales.
+ */
+export async function initiatePawaPayCollection(
+  prisma: PrismaClient,
+  input: InitiatePawaPayCollectionInput,
+  pawapay: PawaPayDeps,
+): Promise<InitiatePawaPayCollectionResult> {
+  assertProviderAllowedForPurpose("pawapay", "MERCHANT_SALE");
+  return initiatePawaPayCollectionQuarantined(prisma, input, pawapay);
 }
 
 /**

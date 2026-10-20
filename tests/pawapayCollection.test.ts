@@ -1,3 +1,4 @@
+import { ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY } from "../src/domain/paymentPurpose.js";
 import express from "express";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +7,9 @@ import { createTestDb, type TestDb } from "./helpers/db.js";
 import { getTenantScopedClient } from "../src/db/tenantScope.js";
 import { handleCommand, type CommandContext } from "../src/commands/commandRouter.js";
 import {
-  initiatePawaPayCollection,
+  // The guarded entry point always refuses (decision G5, tests/purposeBoundary.test.ts); these tests keep
+  // covering the retained, quarantined logic.
+  initiatePawaPayCollectionQuarantined as initiatePawaPayCollection,
   InvalidPayerPhoneError,
   PawaPayAmountError,
   PawaPayDepositNotFoundError,
@@ -586,24 +589,19 @@ describe("/collect command", () => {
     expect(reply).toContain("isn't configured for your account yet");
   });
 
-  it("starts a collection and replies with the provider and only the last 4 digits", async () => {
+  it("is hard-locked: pawaPay cannot collect a merchant sale even with the flag forced on and a configured provider (decision G5, scenario 14)", async () => {
     const b = await makeSierraLeoneBusiness("Cmd Shop 4");
     await enableFlag(b.businessId);
-    const reply = await handleCommand(await ctxFor(b), "/collect Aminata Kamara 500 23276123456");
-    expect(reply).toContain("Aminata Kamara");
-    expect(reply).toContain("Afrimoney");
-    expect(reply).toContain("ending 3456");
-    expect(reply).toContain("500.00");
-    expect(reply).not.toContain("23276123456");
-    expect(await prisma.pawaPayDeposit.count({ where: { businessId: b.businessId, status: "ACCEPTED" } })).toBe(1);
-  });
+    fake.fetchImpl.mockClear();
+    const customersBefore = await prisma.customer.count({ where: { businessId: b.businessId } });
 
-  it("shows the merchant a plain-language reason when the payment can't be started", async () => {
-    const b = await makeSierraLeoneBusiness("Cmd Shop 5");
-    await enableFlag(b.businessId);
-    fake.operational = false;
-    const reply = await handleCommand(await ctxFor(b), "/collect Aminata 500 23276123456");
-    expect(reply).toContain("isn't accepting payments right now");
+    const reply = await handleCommand(await ctxFor(b), "/collect Aminata Kamara 500 23276123456");
+
+    expect(reply).toBe(ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY);
+    expect(fake.fetchImpl).not.toHaveBeenCalled(); // pawaPay was never contacted
+    expect(await prisma.pawaPayDeposit.count({ where: { businessId: b.businessId } })).toBe(0);
+    expect(await prisma.paymentRequest.count({ where: { businessId: b.businessId } })).toBe(0);
+    expect(await prisma.customer.count({ where: { businessId: b.businessId } })).toBe(customersBefore);
   });
 });
 

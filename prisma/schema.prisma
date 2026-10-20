@@ -683,15 +683,23 @@ model Subscription {
   @@index([businessId])
 }
 
+/// Which kind of money a payment record is (expansion decisions G5-G7; see src/domain/paymentPurpose.ts).
+/// PLATFORM_SUBSCRIPTION = a business paying TradePal; MERCHANT_SALE = a merchant's customer paying that merchant.
+enum PaymentPurpose {
+  PLATFORM_SUBSCRIPTION
+  MERCHANT_SALE
+}
+
 model Invoice {
-  id                String    @id @default(uuid())
+  id                String         @id @default(uuid())
   subscriptionId    String
   amountMinor       BigInt
   currencyCode      String
   status            String // PENDING, PAID, FAILED
-  dueDate           DateTime  @db.Timestamptz()
-  paidAt            DateTime? @db.Timestamptz()
-  createdAt         DateTime  @default(now()) @db.Timestamptz()
+  purpose           PaymentPurpose @default(PLATFORM_SUBSCRIPTION)
+  dueDate           DateTime       @db.Timestamptz()
+  paidAt            DateTime?      @db.Timestamptz()
+  createdAt         DateTime       @default(now()) @db.Timestamptz()
   // Phase 22: reconciles a Flutterwave webhook back to this Invoice. tx_ref is
   // a string we generate at checkout-link creation time and pass to
   // Flutterwave; it comes back unchanged on both the webhook payload and the
@@ -702,7 +710,7 @@ model Invoice {
   // instead of creating a duplicate charge record. providerCode is nullable
   // because every Invoice created before Phase 22 has no provider at all.
   providerCode      String?
-  providerReference String?   @unique
+  providerReference String?        @unique
 
   subscription Subscription     @relation(fields: [subscriptionId], references: [id])
   currency     Currency         @relation(fields: [currencyCode], references: [code])
@@ -728,23 +736,24 @@ model PaymentProvider {
 /// Flutterwave (`/paylink`), as opposed to Invoice which is TradePal's own subscription
 /// billing of the merchant. Tenant-scoped (direct businessId), unlike Invoice.
 model PaymentRequest {
-  id                String    @id @default(uuid())
+  id                String         @id @default(uuid())
   businessId        String
   customerId        String?
   description       String
   amountMinor       BigInt
   currencyCode      String
   status            String // PENDING, PAID, FAILED, EXPIRED
+  purpose           PaymentPurpose @default(MERCHANT_SALE)
   // Phase 24: same reconciliation role as Invoice.providerReference (see comment there),
   // but prefixed "tpr_" (vs Invoice's "tp_") so the two txRef namespaces never collide even
   // though they live in different tables/unique constraints.
   providerCode      String?
-  providerReference String?   @unique
+  providerReference String?        @unique
   checkoutUrl       String?
   // Set once confirmPaymentRequestPayment records the sale via recordTransaction.
   transactionId     String?
-  createdAt         DateTime  @default(now()) @db.Timestamptz()
-  paidAt            DateTime? @db.Timestamptz()
+  createdAt         DateTime       @default(now()) @db.Timestamptz()
+  paidAt            DateTime?      @db.Timestamptz()
 
   business       Business         @relation(fields: [businessId], references: [id])
   customer       Customer?        @relation(fields: [customerId], references: [id])

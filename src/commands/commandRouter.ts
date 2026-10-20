@@ -1,3 +1,4 @@
+import { isProviderAllowedForPurpose, ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY } from "../domain/paymentPurpose.js";
 import type { MerchantRole, PrismaClient } from "@prisma/client";
 import type { TenantScopedClient } from "../db/tenantScope.js";
 import {
@@ -792,6 +793,10 @@ async function handlePayLink(ctx: CommandContext, args: string): Promise<string>
     return "Payment links aren't configured for your account yet. Please contact support.";
   }
 
+  // Hard lock (expansion decisions G6-G7): a Flutterwave link for a merchant sale would pay TradePal's own
+  // account, so it is refused before any side effect until proceeds can settle to the merchant.
+  if (!isProviderAllowedForPurpose("flutterwave", "MERCHANT_SALE")) return ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY;
+
   const customer = await findOrCreateCustomerByName(ctx.scopedPrisma, ctx.businessId, split.name);
   const result = await initiatePaymentRequest(
     ctx.prisma,
@@ -852,6 +857,10 @@ async function handleCollect(ctx: CommandContext, args: string): Promise<string>
   if (!ctx.pawapay) {
     return "Mobile-money collection isn't configured for your account yet. Please contact support.";
   }
+
+  // Hard lock (expansion decision G5): pawaPay may not collect merchant sales, whatever the flag says.
+  // Checked before any side effect (no customer is created, no provider is called).
+  if (!isProviderAllowedForPurpose("pawapay", "MERCHANT_SALE")) return ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY;
 
   const customer = await findOrCreateCustomerByName(ctx.scopedPrisma, ctx.businessId, split.name);
   try {
