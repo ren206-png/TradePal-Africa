@@ -97,3 +97,14 @@ Migration `20261024000000_phase5_payments_marketplace` (additive; the only chang
 - Flag `marketplace` seeded OFF.
 
 Verification: PGlite only (see sections 5-6). **Not verified on a real Postgres server.**
+
+## Phase 6 additions
+
+Migration `20261025000000_phase6_billing_entitlements` (additive: new columns with defaults on `Invoice` and `Subscription`; no `ALTER TYPE`, no drops; the `Invoice` table now has foreign keys pointing at it, so `TRUNCATE "Invoice"` needs `CASCADE` to even be attempted, and the TRUNCATE guard still refuses it).
+- CHECKs: `BillingSwitch.purpose = 'PLATFORM_SUBSCRIPTION'` (billing can never be switched for merchant sales); `Invoice.refundedMinor <= paidMinor`; amounts and period bounds; `PlanVersion` period 1-366 days and grace 0-30; positive prices; `BillingAttempt.environment` is SANDBOX or PRODUCTION; a COMPLETED attempt has a positive capture.
+- Partial unique index `BillingAttempt_one_active_per_invoice`; unique `BillingAllocation` per invoice and per attempt; unique exception fingerprints.
+- Triggers: a COMPLETED, FAILED or REJECTED billing attempt cannot change status; a PAID invoice cannot become unpaid and a refunded one cannot become anything but refunded; a published `PlanVersion` is frozen (only PUBLISHED -> RETIRED) and so are its `PlanPrice` rows; `EntitlementEvent` and `BillingAllocation` are append-only; no-delete and TRUNCATE guards on every new table.
+- RLS `tenant_isolation` on the 4 tenant tables. Plans, prices, switches, signing keys, exceptions and the account binding are platform data.
+- Flags `pawapayBilling` and `subscriptionEntitlements` seeded OFF.
+
+Verification: PGlite only. **Not verified on a real Postgres server.**

@@ -68,3 +68,37 @@ Proposed migration (additive; nothing deleted; **needs owner approval, Phase 1**
 | 10 | Owner activation conditions met and recorded in `decisions.md` | Owner | Not started |
 
 Sources: pawaPay docs fetched 2026-10-20 — signatures, what_to_know, going_live, active-configuration, markets (URLs in `merchant-provider-matrix.md` §Sources).
+
+## 7. Phase 6 status (subscriptions through pawaPay)
+
+Date: 2026-10-20 · all items **implemented** and **locally tested** against an in-memory reading of pawaPay's documentation; **none** sandbox verified, partner approved, production configured or production activated.
+
+**API version and reuse (section 13 asks for a migration-cost assessment before any rewrite).** The existing client targets pawaPay v2 and works, so it was extended, not replaced: `getAvailability`, `initiateRefund`, `checkRefundStatus`, `getPublicKeys`, `pawaPayEnvironmentOf` and the account's `signatureConfiguration` were added. Migration cost avoided: nil. The quarantined merchant collection code and its `/webhooks/pawapay` route are unchanged.
+
+**What was built**: versioned plans and country prices; customer-authorised renewal invoices and charges; callbacks verified per RFC 9421 + Content-Digest; an authenticated lookup before any entitlement; idempotent allocation to invoice and period; the entitlement matrix and its history; refunds of subscription charges; reconciliation; the admin subscriptions panel; owner commands; a per-country new-charge switch. See `decisions.md` C7.
+
+**pawaPay documentation used (fetched 2026-10-20)** and where it is silent:
+- Signatures (`/v2/docs/signatures`): headers `Signature: sig-pp=:<base64>:`, `Signature-Input`, `Signature-Date`, `Content-Type`, `Content-Digest` (sha-256 or sha-512); covered components `@method`, `@authority`, `@path`, `signature-date`, `content-digest`, `content-type`; parameters `alg`, `keyid`, `created`, `expires` (sample window 60 s); algorithms `rsa-pss-sha512`, `rsa-v1_5-sha256`, `ecdsa-p256-sha256`, `ecdsa-p384-sha384`; keys from `GET /v2/public-key/http` returning `[{id, key (PEM)}]`. **Silent on**: key rotation, replay or clock-skew rules, verification pseudocode, how `keyid` relates to the key endpoint's `id`. Our choices: require `@method`, `@authority`, `@path` and `content-digest`; require `created` and `expires`; 60 s skew; maximum lifetime 10 minutes; one key refresh (at most every 30 s) on an unknown `keyid`; `@authority` and path come from OUR configuration, never the Host header.
+- Callbacks (`what_to_know`): up to 8 deliveries over about 25 minutes, 200 OK required, 10 s to connect and 30 s to answer, respond immediately and process asynchronously, callback handlers must be idempotent, resend available for 90 days. Our route answers 200 after persisting and the inbox handler is idempotent.
+- Refunds (`/v2/docs/refunds`): `POST /v2/refunds` with `refundId`, `depositId`, optional `amount` and `currency`; statuses ACCEPTED/REJECTED on initiation; status values ACCEPTED, ENQUEUED, PROCESSING, IN_RECONCILIATION, COMPLETED, FAILED; partial refunds allowed up to the deposit; one refund at a time per deposit (`REFUND_IN_PROGRESS`); recheck cycle suggested after 15 minutes; on HTTP 500 do not assume failure. The page names the status check `/payouts/{id}` in prose while the API reference says `GET /v2/refunds/{refundId}`: **we use the API reference path; verify in the sandbox.**
+- Active configuration: top-level `companyName` and `signatureConfiguration { signedRequestsOnly, signedCallbacks }`; the schema says `minAmount`/`maxAmount`, an example says `minTransactionLimit`/`maxTransactionLimit`: both are accepted until a sandbox settles it.
+- Availability (`GET /v2/availability`): `OPERATIONAL | DELAYED | CLOSED` per provider and operation. We refuse a new charge unless `OPERATIONAL` (the DELAYED behaviour is documented for payouts only; refusing is the conservative reading).
+
+**Dashboard configuration required before activation** (nothing here has been done): enable signed callbacks; set the DEPOSIT and REFUND callback URLs to `https://<public host>/webhooks/pawapay/billing` (not the older `/webhooks/pawapay`); allow pawaPay's callback addresses if IP allow-listing is used (the list is on their page, not reproduced here); create sandbox and production tokens separately.
+
+**Environment variables** (all unset by default, which means billing is unavailable): `PAWAPAY_API_TOKEN`, `PAWAPAY_API_BASE_URL` (`https://api.sandbox.pawapay.io/v2` or `https://api.pawapay.io/v2`), `PAWAPAY_ENVIRONMENT` (`SANDBOX` or `PRODUCTION`, must match the URL and `NODE_ENV`), `PAWAPAY_BILLING_CALLBACK_AUTHORITY` (our public host, exactly as in the dashboard URL), `PAWAPAY_BILLING_PRODUCTION_ACTIVATED=true` (production only, set by the owner when the conditions below are met), `PAWAPAY_REQUIRE_SIGNED_CALLBACKS` (default on). Also the per-business flags `pawapayBilling` and `subscriptionEntitlements`, and the per-country switch in the admin console (default off).
+
+**Activation checklist, updated** (still: nothing authorises production use):
+
+| # | Condition | Status |
+|---|---|---|
+| 1 | pawaPay account approved for the subscription use case | **Pending** (owner) |
+| 2 | Sandbox token; sandbox base URL in a non-production environment | Not started (owner) |
+| 3 | Active configuration retrieved for SL (and LR/GM if used); operators, limits, decimals recorded | Not started (needs #2) |
+| 4 | Signed callbacks enabled in the dashboard; RFC 9421 verification, digest, window checks and key rotation implemented and tested | **Verification implemented and locally tested** (vectors made by an independent signer in the test, not captured from pawaPay); dashboard step pending (owner) |
+| 5 | Subscription purpose boundary and negative tests (scenarios 13-16) green | **Done locally** |
+| 6 | Sandbox end to end: success, failure, timeout, duplicate callback, late success | Not started (needs #2); the same scenarios pass against the in-memory fake |
+| 7 | Production token and URL per environment; fail closed on environment or account mismatch | **Guards implemented and tested**; credentials pending (owner) |
+| 8 | Controlled live verification per operator (SIM, wallet, balance, PIN within ~1-20 s) | Not started (owner) |
+| 9 | Production feature flag exists, default off; tested in production before launch | **Flags and switch exist, default off**; production test pending |
+| 10 | Owner's activation conditions met and recorded in `decisions.md` | Not started (owner) |

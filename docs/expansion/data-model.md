@@ -104,3 +104,19 @@ MarketplaceReport -> ModerationAction (append-only) -> Appeal
 ```
 
 Every payment application also keeps the Phase 3/4 per-subject rows (`TradePayment`, `StorePayment`) unique per (provider, provider reference), so a replay converges. The payment layer never edits an order or invoice itself: it asks the subject how much is owed and tells it about confirmed money.
+
+## Plan versions, subscription billing and entitlements (Phase 6)
+
+Platform data (not tenant): `PlanVersion`, `PlanPrice`, `BillingException`, `BillingSwitch`, `ProviderSigningKey`, `BillingAccountBinding`. Tenant tables (RLS + tenant scope): `BillingAttempt`, `BillingAllocation`, `BillingRefund`, `EntitlementEvent`. The existing `Invoice` gains `planVersionId`, `kind` (NEW | RENEWAL | PLAN_CHANGE), `reference` (the support reference `INV-XXXXXXXX`), `paidMinor`, `refundedMinor`, `periodStart/End` (set only when payment is allocated) and `cancelledAt`; `Subscription` gains `planVersionId`, `pendingPlanVersionId`, `cancelAtPeriodEnd`, `cancelledAt`.
+
+```
+Plan 1-n PlanVersion (DRAFT -> PUBLISHED -> RETIRED; period days, grace days, features, caps) 1-n PlanPrice (country -> currency, price)
+Subscription -> planVersion (sold) / pendingVersion (scheduled change)
+  Invoice (purpose PLATFORM_SUBSCRIPTION; PENDING | OVERDUE | PAID | PARTIALLY_REFUNDED | REFUNDED | CANCELLED | FAILED)
+    BillingAttempt (id == pawaPay depositId; environment; one active per invoice)
+      BillingAllocation (unique per invoice and per attempt: the period it bought)
+    BillingRefund (id == pawaPay refundId)
+  EntitlementEvent (append-only: GRANTED, EXTENDED, PLAN_CHANGE_SCHEDULED, PLAN_CHANGED, CANCEL_REQUESTED, CANCELLED, EXPIRY_NOTED, MANUAL_ADJUSTMENT, REFUND_REVOKED)
+```
+
+None of these tables has any link to a journal, store, trade or merchant-payment record. TradePal's subscription revenue is not recorded in any merchant's ledger and merchant money is not recorded here.

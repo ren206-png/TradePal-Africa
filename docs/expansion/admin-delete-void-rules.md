@@ -38,3 +38,14 @@ The consumer's full phone number is shown to an admin only on a case handled by 
 | Marketplace report | dismiss with a note, or act on it through a takedown | delete |
 | Listing / seller moderation | unpublish, suspend, reinstate (a reason of 10+ characters; recorded append-only with the admin) | delete a listing; block order servicing; edit a recorded decision |
 | Appeal | decide once (overturning reinstates) | decide twice |
+
+## Phase 6 records
+
+| Record | Admin can | Admin cannot |
+|---|---|---|
+| Plan version and price | create a draft, set its prices, publish (owner, step-up, reason); retire a published version | edit a published version or its prices (database refuses), delete |
+| Subscription, entitlement | adjust the paid-until date or plan version with a reason (writes an `EntitlementEvent` naming the admin; the date must be within a year of today), send the owner a plain reminder | edit or delete history, mark an invoice paid, delete anything |
+| Invoice, billing attempt, allocation | view, export (formula-safe CSV, audited), ask pawaPay to check an attempt (an authenticated lookup is the only way an admin makes money apply) | edit, delete, mark paid |
+| Billing refund | request a refund of a SUBSCRIPTION charge (owner, reason, audited); optionally revoke entitlement on a full refund | refund anything that is not a subscription charge, exceed what was paid |
+| Billing exception | resolve with an outcome from a fixed list and a note | delete |
+| New-charge switch | turn new charges on or off per provider and country (owner, reason); never affects servicing | create a switch for merchant sales (database refuses) |

@@ -69,3 +69,16 @@ Status vocabulary: implemented / locally tested / sandbox verified / partner app
 | 20 scenario 24 suspended listings unavailable by URL and search; servicing continues | `marketplace.ts`, `moderation.ts`, storefront loaders | `marketplace.test.ts` | locally tested |
 | 10 marketplace discovery, filters, seller identity, ranking inputs, reports, moderation, appeals | `domain/marketplace.ts`, `domain/moderation.ts`, marketplace routes | `marketplace.test.ts`, `storeCommandsPayments.test.ts` | locally tested |
 | 18 admin payments and exceptions panel; listings and moderation panel | `admin/adminPayments.ts`, `admin/adminModeration.ts`, `PaymentsPage`, `ModerationPage` | `adminPayments.test.ts`, `adminModeration.test.ts`, page tests | locally tested |
+| 13 versioned plans, country prices, no invented price points | `domain/subscriptions/plans.ts`, DB freeze triggers | `billingRenewal.test.ts`, `adminSubscriptions.test.ts` | locally tested |
+| 13 renewal checkout customer-authorised, no recurring mandates | `domain/subscriptions/renewal.ts` | `billingRenewal.test.ts`, `billingCommands.test.ts` | locally tested (against an in-memory fake of pawaPay) |
+| 13 account-enabled configuration, sandbox/production distinct, fail closed | `common.ts` config builder, active-conf, account binding | `billingRenewal.test.ts` | locally tested |
+| 13 RFC 9421 callback verification, digest, replay window, key rotation | `pawapay/signature.ts`, `billingWebhook.ts` | `pawapaySignature.test.ts`, `billingRenewal.test.ts` | locally tested (self-generated vectors; not verified against pawaPay) |
+| 13 idempotent allocation to invoice and period; duplicate/over/under/mismatch handling | `collection.ts` | `billingRenewal.test.ts` | locally tested |
+| 13 early renewal, late payment, plan change, cancellation defaults (no proration) | `renewal.ts`, `collection.ts` | `billingRenewal.test.ts` | locally tested |
+| 13 refunds for subscription charges only, audited | `collection.ts`, `adminSubscriptions.ts` | `billingEntitlements.test.ts`, `adminSubscriptions.test.ts` | locally tested |
+| 13 entitlement matrix, grace, expiry, servicing continues, security suspension separate | `entitlements.ts` | `billingEntitlements.test.ts` | locally tested |
+| 13 billing flags do not block servicing; separate switch for new charges | `assertNewChargeAllowed`, `BillingSwitch` | `billingEntitlements.test.ts`, `adminSubscriptions.test.ts` | locally tested |
+| 13 billing money never enters merchant ledgers; merchant routes cannot reach pawaPay | schema separation, purpose policy | `billingEntitlements.test.ts`, `paymentsLifecycle.test.ts` | locally tested |
+| 20 scenario 15 duplicate subscription callbacks cannot double-extend; mismatched payments grant no access | `allocateBillingPayment` | `billingRenewal.test.ts` | locally tested |
+| 20 scenario 16 expiry restricts configured features while pending payments, reconciliation, servicing, refunds, renewal continue | `assertEntitled`, call-site gates | `billingEntitlements.test.ts` | locally tested |
+| 18 admin subscriptions panel: plans, versions, subscriptions, invoices, entitlements, attempts, exceptions, refunds, manual adjustment, switches, reminder, export | `admin/adminSubscriptions.ts`, `SubscriptionsPage` | `adminSubscriptions.test.ts`, `SubscriptionsPage.test.tsx` | locally tested |

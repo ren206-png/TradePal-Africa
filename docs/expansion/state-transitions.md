@@ -118,3 +118,23 @@ Provider settlement: reported -> POSTED (or an exception and nothing posted). On
 | Listing | UNPUBLISHED | admin reinstates, or an appeal is overturned | VISIBLE |
 | Report | OPEN | admin dismisses / acts on it | DISMISSED / ACTIONED |
 | Appeal | OPEN | admin decides | UPHELD / OVERTURNED (once) |
+
+## Subscription billing (Phase 6)
+
+Billing attempt (what pawaPay reported as final stays final; the database refuses to change COMPLETED, FAILED or REJECTED):
+
+| From | Event | To | Notes |
+|---|---|---|---|
+| (new) | we create it before calling pawaPay | INITIATED | the one-active-attempt-per-invoice index is checked here |
+| INITIATED | pawaPay accepts | ACCEPTED | the payer now has a PIN prompt; nothing is paid |
+| INITIATED | pawaPay rejects | REJECTED | e.g. payer not found |
+| INITIATED | no answer | UNKNOWN | it may still prompt the payer; blocks another attempt |
+| any active | authenticated lookup: no record | FAILED | only for INITIATED or UNKNOWN (never for an accepted deposit) |
+| any active | authenticated lookup: completed | COMPLETED | then allocated if it matches the invoice exactly, otherwise held with an exception |
+| ACCEPTED / UNKNOWN | lookup: still processing | ACCEPTED / PROCESSING | bounded polling: 30 s doubling to 30 min, 8 checks, then an exception |
+
+Invoice: PENDING -> OVERDUE (past due, by the sweep) -> PAID (one guarded update, once) -> PARTIALLY_REFUNDED -> REFUNDED (only when pawaPay confirms a refund). PENDING/OVERDUE -> CANCELLED (when the owner cancels and nothing is in flight; a payment that still arrives is held). A paid invoice never becomes unpaid (database trigger).
+
+Entitlement state (computed from stored state and the clock, never from a sweep): no paid subscription = FREE; before the period end = ACTIVE; for `graceDays` after it = GRACE (same entitlements); then EXPIRED (FREE caps; new premium operations refused); a suspended business = SECURITY_SUSPENDED whatever else is true. Cancelling sets `cancelAtPeriodEnd`: access continues to the end, the sweep marks the subscription CANCELED afterwards, and a later renewal starts a new subscription row (the old one stays as history).
+
+Billing refund: REQUESTED -> ACCEPTED -> PROCESSING -> COMPLETED | FAILED | REJECTED. Funds are reserved on the invoice before sending and released on failure.
