@@ -27,6 +27,7 @@ model Country {
 }
 
 model Currency {
+  storeOrders    StoreOrder[]
   tradeOrders    TradeOrder[]
   priceLists     PriceList[]
   journalEntries JournalEntry[]
@@ -79,9 +80,21 @@ enum BusinessStatus {
 }
 
 model Business {
+  storefronts         Storefront[]
+  deliveryZones       DeliveryZone[]
+  listings            Listing[]
+  storeOrders         StoreOrder[]
+  storeOrderLines     StoreOrderLine[]
+  storePayments       StorePayment[]
+  storeCancellations  StoreCancellationRequest[]
+  storeRefunds        StoreRefundRequest[]
+  storeRefundLines    StoreRefundLine[]
+  paymentExceptions   PaymentException[]
+  supportCases        SupportCase[]
+  supportCaseNotes    SupportCaseNote[]
   tradePartners       TradePartner[]
-  linksInvited        BusinessLink[]       @relation("LinkInviter")
-  linksReceived       BusinessLink[]       @relation("LinkInvitee")
+  linksInvited        BusinessLink[]             @relation("LinkInviter")
+  linksReceived       BusinessLink[]             @relation("LinkInvitee")
   priceListShares     PriceListShare[]
   tradeOrders         TradeOrder[]
   tradeOrderLines     TradeOrderLine[]
@@ -116,7 +129,7 @@ model Business {
   journalLines        JournalLine[]
   dailyCloses         DailyClose[]
   stockPolicy         StockPolicy?
-  id                  String               @id @default(uuid())
+  id                  String                     @id @default(uuid())
   name                String
   countryCode         String
   currencyCode        String
@@ -128,14 +141,14 @@ model Business {
   // violation. suspendedAt/suspensionReason are null whenever status is
   // ACTIVE (reinstateBusiness clears them). Enforced in the live message path
   // by messageDispatcher.ts's own gate, not just by hiding admin UI.
-  status              BusinessStatus       @default(ACTIVE)
-  suspendedAt         DateTime?            @db.Timestamptz()
+  status              BusinessStatus             @default(ACTIVE)
+  suspendedAt         DateTime?                  @db.Timestamptz()
   /// True only for synthetic/test/demo organizations. The ONLY businesses whose financial rows may ever be hard-deleted
   /// (database triggers enforce this); set at creation and immutable afterwards. See docs/expansion/db-protection.md.
-  isSynthetic         Boolean              @default(false)
+  isSynthetic         Boolean                    @default(false)
   suspensionReason    String?
-  createdAt           DateTime             @default(now()) @db.Timestamptz()
-  updatedAt           DateTime             @updatedAt @db.Timestamptz()
+  createdAt           DateTime                   @default(now()) @db.Timestamptz()
+  updatedAt           DateTime                   @updatedAt @db.Timestamptz()
 
   country  Country  @relation(fields: [countryCode], references: [code])
   currency Currency @relation(fields: [currencyCode], references: [code])
@@ -1143,6 +1156,8 @@ model Product {
 }
 
 model ProductVariant {
+  listings            Listing[]
+  storeOrderLines     StoreOrderLine[]
   tradeOrderLines     TradeOrderLine[]
   reorderRules        ReorderRule[]
   reorderSuggestions  ReorderSuggestion[]
@@ -2090,4 +2105,422 @@ model ForecastGateEvent {
   business Business @relation(fields: [businessId], references: [id])
 
   @@index([businessId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 4: B2C storefront, checkout, fulfilment, returns, support cases.
+// A seller owns its OWN orders. The shopper's basket is the one cross-seller object (it holds only references and is reachable
+// only by an unguessable token); checkout splits it into independent per-seller orders, each with its own payment, receipt and terms.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ListingChannel {
+  STOREFRONT
+  MARKETPLACE
+}
+
+enum ListingStatus {
+  ACTIVE
+  PAUSED
+}
+
+/// A seller's own shop front. Nothing is public until `enabled` AND the `storefront` flag are both on.
+model Storefront {
+  id                 String   @id @default(uuid())
+  businessId         String   @unique
+  slug               String   @unique
+  enabled            Boolean  @default(false)
+  title              String
+  about              String?
+  supportPhone       String?
+  pickupEnabled      Boolean  @default(true)
+  pickupLocation     String? // landmark-style directions, not a map pin
+  pickupInstructions String?
+  deliveryEnabled    Boolean  @default(false)
+  reservationMinutes Int      @default(60) // how long stock is held for an unpaid online order
+  pickupHoldHours    Int      @default(48) // how long a confirmed pay-on-collection order is held
+  returnWindowDays   Int? // null = this seller does not accept returns by default
+  termsText          String? // shown to the buyer and snapshotted onto each order
+  createdAt          DateTime @default(now()) @db.Timestamptz()
+  updatedAt          DateTime @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  zones    DeliveryZone[]
+}
+
+/// A merchant-defined delivery area with its own fee. There is no courier integration: delivery is the seller's.
+model DeliveryZone {
+  id            String   @id @default(uuid())
+  businessId    String
+  storefrontId  String
+  name          String
+  feeMinor      BigInt
+  minOrderMinor BigInt?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @db.Timestamptz()
+
+  business   Business   @relation(fields: [businessId], references: [id])
+  storefront Storefront @relation(fields: [storefrontId], references: [id])
+
+  @@unique([storefrontId, name])
+  @@index([businessId])
+}
+
+/// Which variants a seller shows on which channel. Separate from wholesale publishing (a different audience).
+model Listing {
+  id         String         @id @default(uuid())
+  businessId String
+  variantId  String
+  channel    ListingChannel
+  status     ListingStatus  @default(ACTIVE)
+  createdAt  DateTime       @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([variantId, channel])
+  @@index([businessId, channel, status])
+}
+
+enum BasketStatus {
+  OPEN
+  CHECKED_OUT
+  EXPIRED
+}
+
+/// The shopper's basket. NOT tenant data: it holds only references to sellers' listings and is reachable only by its secret token.
+model Basket {
+  id        String       @id @default(uuid())
+  tokenHash String       @unique
+  status    BasketStatus @default(OPEN)
+  expiresAt DateTime     @db.Timestamptz()
+  createdAt DateTime     @default(now()) @db.Timestamptz()
+  updatedAt DateTime     @updatedAt @db.Timestamptz()
+
+  lines  BasketLine[]
+  orders StoreOrder[]
+}
+
+model BasketLine {
+  id               String   @id @default(uuid())
+  basketId         String
+  sellerBusinessId String
+  variantId        String
+  unit             String
+  quantity         Int
+  addedAt          DateTime @default(now()) @db.Timestamptz()
+
+  basket Basket @relation(fields: [basketId], references: [id])
+
+  @@unique([basketId, variantId, unit])
+  @@index([basketId])
+}
+
+enum StoreFulfilment {
+  PICKUP
+  DELIVERY
+}
+
+enum StoreOrderStatus {
+  PLACED
+  CONFIRMED
+  READY
+  OUT_FOR_DELIVERY
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum StorePaymentMethod {
+  PAY_ON_COLLECTION
+  ONLINE_SIMULATED
+}
+
+model StoreOrder {
+  id               String             @id @default(uuid())
+  businessId       String
+  reference        String
+  basketId         String?
+  status           StoreOrderStatus   @default(PLACED)
+  fulfilment       StoreFulfilment
+  paymentMethod    StorePaymentMethod
+  buyerName        String
+  buyerPhone       String // E.164 digits
+  contactConsent   Boolean            @default(false)
+  buyerNote        String?
+  addressLine      String?
+  landmark         String?
+  area             String?
+  latitude         Float?
+  longitude        Float?
+  deliveryZoneId   String?
+  deliveryZoneName String?
+  deliveryFeeMinor BigInt             @default(0)
+  subtotalMinor    BigInt
+  totalMinor       BigInt
+  currencyCode     String
+  paidMinor        BigInt             @default(0)
+  refundedMinor    BigInt             @default(0)
+  accessTokenHash  String             @unique
+  accessExpiresAt  DateTime           @db.Timestamptz()
+  pickupCode       String
+  reservedUntil    DateTime?          @db.Timestamptz()
+  terms            Json // seller identity, delivery/pickup terms and returns policy as they were when the order was placed
+  deliveryRef      String?
+  carrier          String?
+  cancelReason     String?
+  cancelledBy      String?
+  placedAt         DateTime           @default(now()) @db.Timestamptz()
+  confirmedAt      DateTime?          @db.Timestamptz()
+  readyAt          DateTime?          @db.Timestamptz()
+  dispatchedAt     DateTime?          @db.Timestamptz()
+  completedAt      DateTime?          @db.Timestamptz()
+  cancelledAt      DateTime?          @db.Timestamptz()
+  createdAt        DateTime           @default(now()) @db.Timestamptz()
+
+  business      Business                   @relation(fields: [businessId], references: [id])
+  currency      Currency                   @relation(fields: [currencyCode], references: [code])
+  basket        Basket?                    @relation(fields: [basketId], references: [id])
+  lines         StoreOrderLine[]
+  payments      StorePayment[]
+  cancellations StoreCancellationRequest[]
+  refunds       StoreRefundRequest[]
+  exceptions    PaymentException[]
+  cases         SupportCase[]
+
+  @@unique([businessId, reference])
+  @@unique([basketId, businessId])
+  @@index([businessId, status])
+}
+
+model StoreOrderLine {
+  id               String  @id @default(uuid())
+  businessId       String
+  orderId          String
+  lineNo           Int
+  variantId        String
+  sku              String
+  description      String
+  unit             String
+  packBaseQuantity Int
+  quantity         Int
+  baseQuantity     Int
+  unitPriceMinor   BigInt
+  lineTotalMinor   BigInt
+  reservationId    String?
+  fulfilMovementId String?
+  returnedBase     Int     @default(0)
+
+  business Business       @relation(fields: [businessId], references: [id])
+  order    StoreOrder     @relation(fields: [orderId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([orderId, lineNo])
+  @@index([businessId])
+}
+
+enum StorePaymentState {
+  APPLIED
+  HELD
+}
+
+model StorePayment {
+  id           String               @id @default(uuid())
+  businessId   String
+  orderId      String
+  direction    PaymentDirection
+  amountMinor  BigInt
+  currencyCode String
+  method       TradePaymentMethod
+  evidence     TradePaymentEvidence
+  state        StorePaymentState
+  provider     String?
+  externalId   String?
+  reason       String?
+  createdBy    String?
+  createdAt    DateTime             @default(now()) @db.Timestamptz()
+
+  business Business   @relation(fields: [businessId], references: [id])
+  order    StoreOrder @relation(fields: [orderId], references: [id])
+
+  @@unique([businessId, provider, externalId])
+  @@index([orderId])
+}
+
+enum StoreRequestStatus {
+  REQUESTED
+  APPROVED
+  DENIED
+}
+
+/// The buyer asks to cancel an order that is already confirmed. A request is not a cancellation: the seller decides.
+model StoreCancellationRequest {
+  id         String             @id @default(uuid())
+  businessId String
+  orderId    String
+  reason     String
+  status     StoreRequestStatus @default(REQUESTED)
+  decidedBy  String?
+  decidedAt  DateTime?          @db.Timestamptz()
+  createdAt  DateTime           @default(now()) @db.Timestamptz()
+
+  business Business   @relation(fields: [businessId], references: [id])
+  order    StoreOrder @relation(fields: [orderId], references: [id])
+
+  @@index([businessId, status])
+}
+
+enum StoreRefundKind {
+  RETURN
+  REFUND_ONLY
+}
+
+enum StoreRefundStatus {
+  REQUESTED
+  APPROVED
+  DENIED
+  GOODS_RECEIVED
+  REFUNDED
+  CLOSED
+}
+
+/// A return or refund REQUEST. Nothing is refunded until the seller approves and records it, bounded by what was actually paid.
+model StoreRefundRequest {
+  id                   String            @id @default(uuid())
+  businessId           String
+  orderId              String
+  kind                 StoreRefundKind
+  reason               String
+  status               StoreRefundStatus @default(REQUESTED)
+  requestedAmountMinor BigInt?
+  approvedAmountMinor  BigInt?
+  decisionNote         String?
+  decidedBy            String?
+  decidedAt            DateTime?         @db.Timestamptz()
+  createdAt            DateTime          @default(now()) @db.Timestamptz()
+
+  business Business          @relation(fields: [businessId], references: [id])
+  order    StoreOrder        @relation(fields: [orderId], references: [id])
+  lines    StoreRefundLine[]
+
+  @@index([businessId, status])
+}
+
+model StoreRefundLine {
+  id           String @id @default(uuid())
+  businessId   String
+  requestId    String
+  orderLineId  String
+  quantityBase Int
+  receivedBase Int    @default(0)
+
+  business Business           @relation(fields: [businessId], references: [id])
+  request  StoreRefundRequest @relation(fields: [requestId], references: [id])
+
+  @@unique([requestId, orderLineId])
+}
+
+enum PaymentExceptionType {
+  LATE_SUCCESS
+  OVERPAYMENT
+  UNDERPAYMENT
+  CURRENCY_MISMATCH
+}
+
+enum PaymentExceptionStatus {
+  OPEN
+  RESOLVED
+}
+
+/// Money that arrived but does not fit the order (late, too much, too little, wrong currency). Recoverable: re-reserve, refund or settle.
+model PaymentException {
+  id          String                 @id @default(uuid())
+  businessId  String
+  orderId     String
+  type        PaymentExceptionType
+  status      PaymentExceptionStatus @default(OPEN)
+  amountMinor BigInt
+  paymentId   String?
+  details     Json?
+  resolution  String?
+  resolvedBy  String?
+  resolvedAt  DateTime?              @db.Timestamptz()
+  createdAt   DateTime               @default(now()) @db.Timestamptz()
+
+  business Business   @relation(fields: [businessId], references: [id])
+  order    StoreOrder @relation(fields: [orderId], references: [id])
+
+  @@index([businessId, status])
+}
+
+enum SupportCaseType {
+  DELIVERY
+  PRODUCT_COMPLAINT
+  PAYMENT_DISPUTE
+  REFUND
+  OTHER
+}
+
+/// Who is responsible for sorting it out. The seller is responsible for goods and delivery; a provider dispute names the provider.
+enum SupportParty {
+  SELLER
+  PLATFORM
+  PROVIDER
+}
+
+enum SupportCaseStatus {
+  OPEN
+  ASSIGNED
+  CLOSED
+}
+
+enum SupportOpenedBy {
+  CONSUMER
+  SELLER
+  ADMIN
+}
+
+model SupportCase {
+  id              String            @id @default(uuid())
+  businessId      String
+  orderId         String?
+  type            SupportCaseType
+  handledBy       SupportParty
+  status          SupportCaseStatus @default(OPEN)
+  openedBy        SupportOpenedBy
+  contactName     String?
+  contactPhone    String?
+  summary         String
+  assignedAdminId String?
+  resolution      String?
+  closedAt        DateTime?         @db.Timestamptz()
+  createdAt       DateTime          @default(now()) @db.Timestamptz()
+
+  business Business          @relation(fields: [businessId], references: [id])
+  order    StoreOrder?       @relation(fields: [orderId], references: [id])
+  notes    SupportCaseNote[]
+
+  @@index([businessId, status])
+  @@index([status, handledBy])
+}
+
+enum SupportNoteAuthor {
+  CONSUMER
+  SELLER
+  ADMIN
+}
+
+/// Append-only: the case history is never rewritten.
+model SupportCaseNote {
+  id         String            @id @default(uuid())
+  businessId String
+  caseId     String
+  authorType SupportNoteAuthor
+  authorId   String?
+  body       String
+  createdAt  DateTime          @default(now()) @db.Timestamptz()
+
+  business Business    @relation(fields: [businessId], references: [id])
+  case     SupportCase @relation(fields: [caseId], references: [id])
+
+  @@index([caseId])
 }

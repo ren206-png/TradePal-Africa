@@ -69,6 +69,19 @@ export const TENANT_SCOPED_MODELS = new Set([
   "ForecastPrediction",
   "ForecastScore",
   "ForecastGateEvent",
+  // Expansion Phase 4: storefront, store orders, returns, support cases (Basket and BasketLine are shopper-owned, not tenant data).
+  "Storefront",
+  "DeliveryZone",
+  "Listing",
+  "StoreOrder",
+  "StoreOrderLine",
+  "StorePayment",
+  "StoreCancellationRequest",
+  "StoreRefundRequest",
+  "StoreRefundLine",
+  "PaymentException",
+  "SupportCase",
+  "SupportCaseNote",
   // DeepSeek Integration Phase 3 (INTEGRATION_DESIGN.md §3): carries a
   // required businessId. Deliberately NOT added to APPEND_ONLY_MODELS below —
   // see AiUsageLedger's own schema.prisma docstring for why there is no
