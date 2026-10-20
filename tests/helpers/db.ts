@@ -12,7 +12,7 @@ let cachedDdl: string | null = null;
 function getDdl(): string {
   if (cachedDdl) return cachedDdl;
   cachedDdl = execSync(
-    `npx prisma migrate diff --from-empty --to-schema-datamodel ${SCHEMA_PATH} --script`,
+    `npx prisma migrate diff --from-empty --to-schema-datamodel ${JSON.stringify(SCHEMA_PATH)} --script`,
     { encoding: "utf-8" },
   );
   return cachedDdl;
