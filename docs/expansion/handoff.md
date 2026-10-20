@@ -12,7 +12,7 @@ TradePal was a WhatsApp bookkeeping bot. It is now also, behind default-OFF flag
 |---|---|
 | production activated | only the pre-expansion WhatsApp features, unchanged behind OFF flags |
 | production configured / partner approved / sandbox verified | **nothing** |
-| locally tested | everything the expansion built: 113 backend test files / 1254 tests, 14 admin-console files / 59 tests, a build, a release demo, a migration rehearsal on legacy data, route-table security walks, byte budgets |
+| locally tested | everything the expansion built: 114 backend test files / 1257 tests, 14 admin-console files / 59 tests, a build, a release demo, a migration rehearsal on legacy data, route-table security walks, byte budgets |
 | implemented only | localization (English only), runbooks and other documents, a few admin script-level controls |
 | not built | see section 5 |
 
