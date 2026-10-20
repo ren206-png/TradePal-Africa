@@ -139,3 +139,6 @@ AlertDelivery (append-only; incident or channel check; DELIVERED | FAILED; provi
 
 Phone numbers are stored in full only where a consent or block needs them (digits, in the consent and block tables); the outbound log keeps a keyed hash and the last four digits, and every admin view masks to the last four. `Transaction.whatsappMessageId` carries `draft:<clientId>` for a confirmed offline draft and the ORIGINAL message id for a confirmed AI proposal. No messaging table links to a journal, payment or order total.
 
+## Phase 8
+
+One column: `AdminUser.disabledAt` (nullable). Reports read existing tables and add none. `Invoice.paidMinor` is now back-filled for invoices that were already PAID.

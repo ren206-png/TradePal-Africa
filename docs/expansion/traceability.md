@@ -92,4 +92,9 @@ Status vocabulary: implemented / locally tested / sandbox verified / partner app
 | 14 message template register complete, generated from code | `messaging/registerDoc.ts` | `messaging.test.ts` | locally tested |
 | 14 localization framework, English only, no invented dialect strings | `src/i18n` | `messaging.test.ts` | locally tested; coverage unmeasured |
 | 18 admin messaging and consent panel | `admin/adminMessaging.ts`, `MessagingPage` | `adminMessaging.test.ts`, `MessagingPage.test.tsx` | locally tested |
-
+| 20 scenario 22 migration rehearsal preserves balances, ownership, references, subscription status | `tests/migrationRehearsal.test.ts` over every migration | `migrationRehearsal.test.ts` | locally tested on PGlite with a legacy dataset; **not on a real server or backup** |
+| 20 scenario 27 admin routes reject every merchant role and unauthenticated access; an admin is not a merchant | route-table walk of the admin router; `authMiddleware` re-check | `securityAdminRoutes.test.ts` | locally tested (automated; not a human pen test) |
+| 22 reports: sales, cash flow, inventory valuation, AR/AP aging, gross margin with completeness warnings, payment reconciliation, stock discrepancies, exports | `src/reports/*`, `/report`, `/m/api/reports` | `reports.test.ts`, `reportsWeb.test.ts` | locally tested |
+| 22 every report has date range, currency, timezone, provenance, tenant authorization; CSV formula-safe | `reports/common.ts`, `reportToCsv`, `csvText` | `reports.test.ts`, `reportsWeb.test.ts` | locally tested |
+| 22 performance baselines and budgets recorded | `perfServer.ts`, `perfMeasure.ts`, `perfBudgets.test.ts`, `performance-baseline.md` | `perfBudgets.test.ts` | byte budgets enforced; **speed on low-end hardware / throttled links NOT measured** |
+| 22 public-surface hostile input | route-table walk of storefront, phone, webhook routers | `securityPublic.test.ts` | locally tested |

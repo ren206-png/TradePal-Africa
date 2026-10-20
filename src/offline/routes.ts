@@ -7,7 +7,7 @@ import { asyncHandler } from "../admin/asyncHandler.js";
 import { InMemoryLoginRateLimiter, type LoginRateLimiter } from "../admin/rateLimiter.js";
 import { OFFLINE_PAGE, OFFLINE_SCRIPT, OFFLINE_SERVICE_WORKER } from "./clientAssets.js";
 import { FLAG_OFFLINE_DRAFTS, FLAG_REPORTS_WEB, authenticateDevice, exchangeConnectCode, offlineSwitchOn, reportsWebSwitchOn, revokeSession, type AuthedDevice } from "./devices.js";
-import { REPORT_NAMES, ReportError, canExportReports, canViewReports, isReportName, parseRange, reportToCsv, runReport } from "../reports/index.js";
+import { REPORT_NAMES, ReportError, canExportReports, canRunReport, canViewReports, isReportName, parseRange, reportToCsv, runReport } from "../reports/index.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
 import { DraftError, confirmDraft, discardDraft, listDrafts, syncDrafts } from "./drafts.js";
 
@@ -138,6 +138,7 @@ export function createOfflineRouter(prisma: PrismaClient, opts: OfflineRouterOpt
     const wantsCsv = String(req.params["name"] ?? "").endsWith(".csv") || req.query["format"] === "csv";
     if (!isReportName(name)) return void res.status(404).json({ error: "No such report.", reports: REPORT_NAMES });
     if (!canViewReports(dev.merchant.role) || (wantsCsv && !canExportReports(dev.merchant.role))) return void res.status(403).json({ error: wantsCsv ? "Only the owner or a manager can download reports." : "You do not have permission to see reports." });
+    if (!canRunReport(dev.merchant.role, name)) return void res.status(403).json({ error: "That report shows costs and money balances. Ask the owner or a manager." });
     try {
       const args = [req.query["from"], req.query["to"]].filter((x): x is string => typeof x === "string");
       const range = parseRange(args.length === 2 ? args : typeof req.query["period"] === "string" ? [req.query["period"]] : [], dev.business.timezone, clock());

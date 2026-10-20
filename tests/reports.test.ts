@@ -86,6 +86,18 @@ describe("sales report", () => {
   });
 });
 
+describe("other currencies", () => {
+  it("entries in another currency are left out and the report says so (no silent conversion)", async () => {
+    const s = await seller();
+    await soldThroughShop(s);
+    await prisma.currency.upsert({ where: { code: "USD" }, update: {}, create: { code: "USD", name: "US Dollar", minorUnitExp: 2 } });
+    await recordTransaction(s.scoped, { businessId: s.businessId, type: "SALE", amountMinor: 9_999n, currencyCode: "USD", paymentStatus: "PAID" });
+    const r = await salesReport(ctxOf(s), wide());
+    expect(r.data.totals.netSalesMinor).toBe("30000");
+    expect(r.meta.warnings.find((w) => w.code === "OTHER_CURRENCY")?.message).toContain("does not convert");
+  });
+});
+
 describe("cash flow", () => {
   it("opening + in - out = closing per method, and warns when a method was not recorded", async () => {
     const s = await seller();
@@ -284,9 +296,11 @@ describe("the /report command", () => {
     expect(t).not.toContain("Net:");
   });
 
-  it("a staff member (sales clerk) can read reports but not request a download link", async () => {
+  it("a staff member (sales clerk) reads sales but not cost or balance reports, and cannot request a download link", async () => {
     const on = await seller();
     expect(await handleCommand(cmdCtx(on, "STAFF"), "/report sales")).toContain("Net sales");
+    for (const r of ["margin", "stock", "cash", "payments"]) expect(await handleCommand(cmdCtx(on, "STAFF"), `/report ${r}`), r).toContain("shows costs and money balances");
+    expect(await handleCommand(cmdCtx(on, "OWNER"), "/report margin")).toContain("Gross margin");
     expect(await handleCommand(cmdCtx(on, "STAFF"), "/report link")).toContain("Only the owner or a manager");
   });
 });

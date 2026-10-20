@@ -21,6 +21,14 @@ async function legacyNotJournaled(ctx: ReportContext, range: RangeInput): Promis
   return Math.max(0, txns.length - done);
 }
 
+/** Entries in a currency other than the business's own are not in any total below (TradePal never converts between currencies); say so. */
+async function otherCurrencyWarning(ctx: ReportContext, range: RangeInput): Promise<Warning | null> {
+  const n = await ctx.scoped.journalEntry.count({ where: { currencyCode: { not: ctx.currencyCode }, occurredAt: { gte: range.from, lt: range.to } } });
+  const t = await ctx.scoped.transaction.count({ where: { currencyCode: { not: ctx.currencyCode }, createdAt: { gte: range.from, lt: range.to } } });
+  const count = Math.max(n, t);
+  return count > 0 ? { code: "OTHER_CURRENCY", message: `${count} entr${count === 1 ? "y" : "ies"} in another currency ${count === 1 ? "is" : "are"} NOT included. TradePal does not convert between currencies; these totals are in ${ctx.currencyCode} only.` } : null;
+}
+
 // -------------------------------------------------------------------------------------------------- sales
 
 export interface SalesDay { day: string; saleCount: number; grossSalesMinor: string; returnsMinor: string; netSalesMinor: string }
@@ -77,6 +85,8 @@ export async function salesReport(ctx: ReportContext, range: RangeInput): Promis
     prov.set("MERCHANT_ENTERED", sumBig(txns.map((t) => t.amountMinor)));
   }
 
+  const oc = await otherCurrencyWarning(ctx, range);
+  if (oc) warnings.push(oc);
   const days = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]): SalesDay => ({ day: k, saleCount: v.n, grossSalesMinor: str(v.gross), returnsMinor: str(v.returns), netSalesMinor: str(v.gross - v.returns) }));
   const gross = sumBig([...byDay.values()].map((v) => v.gross));
   const returns = sumBig([...byDay.values()].map((v) => v.returns));
@@ -112,6 +122,8 @@ export async function cashFlowReport(ctx: ReportContext, range: RangeInput): Pro
   }
   const missing = await legacyNotJournaled(ctx, range);
   if (missing > 0) warnings.push({ code: "UNJOURNALED_ENTRIES", message: `${missing} chat entries in this period have no journal entry yet and are not included.` });
+  const oc = await otherCurrencyWarning(ctx, range);
+  if (oc) warnings.push(oc);
   warnings.push({ code: "NOT_A_BANK_STATEMENT", message: "These are balances in TradePal's books, not counts of cash or statements from your bank or mobile-money provider. Compare them with the real balances." });
   return {
     meta: meta(ctx, "cash-flow", "Cash flow", "Money in is the debits to the cash, mobile money, bank and unclassified accounts; money out is the credits. Opening is everything before the start date.", range, [{ name: "journal entries", rows: during.rows.length }], warnings),
@@ -261,6 +273,8 @@ export async function grossMarginReport(ctx: ReportContext, range: RangeInput): 
   if (incomplete > 0) warnings.push({ code: "COST_INCOMPLETE", message: `${incomplete} of ${fulfilments} stock movements for sales had no complete cost. Cost of goods sold is understated, so the margin is OVERSTATED.` });
   if (salesWithoutCost > 0) warnings.push({ code: "SALES_WITHOUT_COST", message: `${salesWithoutCost} of ${salesRows} sales have no cost of goods recorded (items not linked to stock, or no cost known). The margin is OVERSTATED by their cost.` });
   if (salesRows === 0) warnings.push({ code: "NO_SALES", message: "There are no sales in this period." });
+  const oc = await otherCurrencyWarning(ctx, range);
+  if (oc) warnings.push(oc);
   warnings.push({ code: "NOT_PROFIT", message: "Gross margin is sales less the recorded cost of the goods sold. It is NOT profit: operating expenses, fees, tax, owner withdrawals and unrecorded costs are not deducted." });
   const marginValue = margin;
   const ok = marginValue !== null && sales > 0n;

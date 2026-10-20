@@ -230,6 +230,22 @@ All provisional, all OFF by default. Per-business flags: `consumerMessaging`, `c
 
 Open: **OPEN-13** the real template wording, languages and Meta submission (owner action; nothing is submitted); **OPEN-14** whether and when to turn `conversationalConfirmations` on by default, which depends on P9 (confidence re-measured through DeepSeek, still not done); **OPEN-15** double opt-in for shopper messages (the checkout number is unverified, so a third party's number can be entered; recommended before `consumerMessaging` is turned on for anyone).
 
+## C9. Phase 8 decisions (reports, performance, security, migration rehearsal)
+
+| # | Decision | Rejected alternative | Why | Reversible by |
+|---|---|---|---|---|
+| K1 | Reports are behind per-business `reportsV2` (default OFF). Each states range, currency, timezone, sources and **every warning**, and its CSV carries the same header. A report that cannot be honest is refused (cash flow and margin need journals; valuation is "now" only) rather than estimated | best-effort numbers | master prompt: completeness warnings, provenance, no sales-minus-expenses-as-profit | flag |
+| K2 | Nothing is called profit. Gross margin is sales minus recorded cost, with the share of movements that had a cost, and "overstated" warnings; operating expenses are shown, never deducted. `/today`'s "Net" line becomes "Sales minus expenses (not profit)" when the flag is on; the weekly digest keeps "Net" because its wording sits in approved templates (OPEN-17) | rename everywhere now | profit labelling; templates | flag |
+| K3 | Cost-bearing and balance reports (margin, stock value, cash flow, payment reconciliation) need `finance:reconcile`; sales, money owed/owing and stock differences need `reports:view`; CSV needs `finance:export`. A sales clerk can read sales, not costs | everyone with `reports:view` sees everything | cost prices are the business's private data | permission matrix |
+| K4 | Totals are in the business's own currency only; other-currency entries are excluded and counted in a warning. No conversion, no FX | convert | master prompt: no silent FX | n/a |
+| K5 | Reports reach merchants on WhatsApp (`/report`) and on the phone page (`/m/`, same device session as drafts, own switch `REPORTS_WEB_ENABLED`). There is still no merchant web login | build merchant web auth now | scope; the phone session already exists | switch |
+| K6 | Performance: budgets are **byte ceilings enforced in CI**; no speed claim is made. A narrow gzip step covers only the secret-free catalogue pages and the phone assets; it is never applied to a page with an order link, pickup code or basket (BREACH) | compress everything | measured: 26 KB shop page took ~4 s on 2G uncompressed | `http/gzip.ts` |
+| K7 | Admin accounts are re-read on every request (role from the database) and can be disabled (`AdminUser.disabledAt`, `scripts/disableAdmin.ts`). Nothing is deleted | trust the 12-hour token | a removed or demoted admin kept their power | n/a |
+| K8 | A NUL character in a path, query or body is refused with 400 on every public and admin router (not on the legacy Meta/Flutterwave/pawaPay webhooks) | handle the database error | it caused 500s | `http/rejectNul.ts` |
+| K9 | The Phase 6 migration backfills `paidMinor = amountMinor` for invoices already PAID (found by the rehearsal) | leave at zero | a paid invoice must not read as receiving nothing | migration |
+
+Open: **OPEN-16** run `scripts/rehearseMigrations.sh` on a restored backup (or authorise a local Postgres) and measure pages on a real low-end phone and throttled link; **OPEN-17** whether the weekly digest template's "Net" wording should change.
+
 ## D. Change log
 - 2026-10-20 — register created in Phase 0; G1-G13 recorded; P1-P10 proposed; OPEN-1..11 listed.
 - 2026-10-20 — Phase 1 completed on branch `expansion/phase-1`; section C2 records the provisional application of P1-P4, P10 and new admin controls.
@@ -239,3 +255,4 @@ Open: **OPEN-13** the real template wording, languages and Meta submission (owne
 - 2026-10-20 — Phase 5 built on the same local branch; section C6 records the Phase 5 decisions; the provider matrix (sections 5) maps capabilities onto the adapter contract.
 - 2026-10-20 — Phase 6 built on the same local branch; section C7 records the Phase 6 decisions; `pawapay-audit.md` section 7 records the activation status.
 - 2026-10-20 — Phase 7 built on the same local branch; section C8 records the Phase 7 decisions; `message-template-register.md` records the outbound classes.
+- 2026-10-20 — Phase 8 built on the same local branch; section C9 records the Phase 8 decisions; `reports.md`, `performance-baseline.md`, `security-checks.md`, `migration-rehearsal.md` are new.

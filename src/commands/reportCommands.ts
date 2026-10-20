@@ -1,6 +1,6 @@
 import type { CommandContext } from "./commandRouter.js";
 import { isFeatureEnabled } from "../domain/featureFlags.js";
-import { FLAG_REPORTS, REPORT_NAMES, ReportError, canExportReports, canViewReports, isReportName, parseRange, reportText, runReport } from "../reports/index.js";
+import { FLAG_REPORTS, REPORT_NAMES, ReportError, canExportReports, canRunReport, canViewReports, isReportName, parseRange, reportText, runReport } from "../reports/index.js";
 import { CODE_MINUTES, FLAG_REPORTS_WEB, issueConnectCode, reportsWebSwitchOn } from "../offline/devices.js";
 
 /**
@@ -47,6 +47,7 @@ export async function handleReportCommand(ctx: CommandContext, command: string, 
 
   const name = ALIASES[word] ?? (isReportName(word) ? word : null);
   if (!name) return `I do not have a report called "${word}".\n${HELP}`;
+  if (!canRunReport(ctx.merchantRole, name)) return "That report shows costs and money balances. Ask the owner or a manager.";
   try {
     const range = parseRange(parts, ctx.timezone);
     const report = await runReport({ scoped: ctx.scopedPrisma, businessId: ctx.businessId, currencyCode: ctx.currencyCode, minorUnitExp: ctx.minorUnitExp, timezone: ctx.timezone }, name, range);

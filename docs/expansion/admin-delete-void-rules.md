@@ -63,3 +63,8 @@ An admin (owner) can also refund a payment pawaPay collected but that was never 
 | Stuck inbound message | replay once with a reason, if it is 5 minutes to 20 hours old and unprocessed | replay a processed or too-old message, edit it |
 | Alert channel | send a labelled test message and see the recorded outcome | read or change the email key |
 
+## Phase 8 records
+
+| Record | Admin can | Admin cannot |
+|---|---|---|
+| Admin account | be disabled (by the platform owner through `scripts/disableAdmin.ts`); a disabled account cannot log in and its tokens stop working on the next request | be deleted (audit rows point at it); there is no in-app screen for this yet |

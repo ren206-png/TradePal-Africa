@@ -8,9 +8,10 @@ Resume from this file across sessions. Update after every slice.
 - **Phase 4: approved.** (`APPROVED: PHASE 4` received.)
 - **Phase 5: approved.** (`APPROVED: PHASE 5` received.)
 - **Phase 6: approved.** (`APPROVED: PHASE 6` received.)
-- **Phase 7 (WhatsApp action flows, AI clarification, consent register, localization framework, offline drafts; admin messaging and consent panel): complete, awaiting approval; everything OFF by default.** Gate line: `AWAITING: APPROVED: PHASE 7`.
+- **Phase 7: approved.** (`APPROVED: PHASE 7` received.)
+- **Phase 8 (reports, performance baselines and budgets, security checks, migration rehearsal): complete, awaiting approval; reports OFF by default.** Gate line: `AWAITING: APPROVED: PHASE 8`.
 - Branch `expansion/phase-1` (local only: **not pushed, not merged, nothing deployed, no migration run against any real database**). A push to `main` would deploy production and run `prisma migrate deploy`.
-- Tests: backend 105 files / 1184 pass; admin-frontend 13 files / 57 pass + build OK. Self-check: `self-check-phase-7.md`. Demo (Phase 3): `npx tsx scripts/demoWholesale.ts`.
+- Tests: backend 111 files / 1248 pass; admin-frontend 13 files / 57 pass + build OK. Self-check: `self-check-phase-8.md`. Demo (Phase 3): `npx tsx scripts/demoWholesale.ts`.
 - Production at `86a072d`, untouched.
 
 ## Completed slices
@@ -65,6 +66,11 @@ Resume from this file across sessions. Update after every slice.
 | 2026-10-20 | 7f AI provider failure classification, verified alert delivery record, channel check | locally tested (scenario 26) |
 | 2026-10-20 | 7g admin messaging and consent panel, permissions | locally tested |
 
+| 2026-10-20 | 8a bookkeeping reports + `/report` + phone download + formula-safe CSV; `reportsV2` flag | locally tested; OFF |
+| 2026-10-20 | 8b performance: byte budgets, repeatable measurement, narrow gzip, offline page fixes found in a real browser | budgets enforced; NOT measured on low-end hardware or throttled networks |
+| 2026-10-20 | 8c security: admin-route and public-surface walks; admin account re-check and disable; NUL-byte guard | locally tested; 4 real defects fixed; no human pen test |
+| 2026-10-20 | 8d migration rehearsal over legacy data (scenario 22); paid-invoice backfill | locally tested on PGlite; NOT on a real server or backup |
+
 ## Commands run (reproducible)
 - `git log --oneline | head`, `git show --stat dfe8bb6`
 - `python3 -c "import json;…package.json…"`, `grep` over `prisma/schema.prisma`, `src/**`, `prisma/migrations/**`
@@ -78,6 +84,7 @@ Resume from this file across sessions. Update after every slice.
 3. Activation prerequisites to add to the checklist: `OUTBOX_SWEEP_ENABLED=true`, `OPERATIONS_SWEEP_ENABLED=true`, `HEARTBEAT_ENABLED` on both services.
 4. Owner actions: external heartbeat monitor; verified alert sender + second recipient; Railway CLI relink; pawaPay approval/token; mobile-money API approval.
 5. No merchant-sales payment provider established (simulator only).
+6b. Phase 8 known gaps: see `self-check-phase-8.md` (migrations rehearsed only on PGlite; speed never measured on low-end hardware or throttled links; reports depend on the journals and stock costs; no human pen test).
 6a. Phase 7 known gaps: see `self-check-phase-7.md` (no template approved or submitted; conversational confirmations are per-business and the legacy auto-log remains for everyone else; the offline page never ran on a real phone; alert delivery means accepted by the email service).
 6. Phase 6 known gaps: no pawaPay token or sandbox exists, so everything is proven only against an in-memory fake; callback signature verification never saw a real callback; OPEN-12 (plan features) undecided so entitlements must stay off; two subscription billing paths coexist (OPEN-2); real concurrency and a real Postgres unverified; sweeps must be on or callbacks and lost payments are never processed.
 7. Phase 5 known gaps: no real provider (the provider decision blocks the real adapter); everything provider-side was the simulator's behaviour; real concurrency, a real Postgres and a real callback format are unverified; refunds of B2B invoice payments are not supported through the provider; settlement is not netted against later refunds; no seller identity verification; marketplace search is capped at 300 candidates; callbacks and reconciliation need the sweeps on.
@@ -85,4 +92,4 @@ Resume from this file across sessions. Update after every slice.
 9. Known gaps: credit-limit check not atomic under concurrent acceptance; no duplicate-payment detection; no dead-letter replay button; quotes/partial receipts/credit notes lack merchant commands; no web surface; FOR UPDATE contention untested on a real server; forecast quality unknown on real data.
 
 ## Next concrete step
-On `APPROVED: PHASE 7`: start Phase 8 (per the master prompt). Before any deploy of Phase 1-7 work: rehearse the migrations on a restored production backup; add to the activation checklist `CONSUMER_MESSAGING_ENABLED`, `OFFLINE_DRAFTS_ENABLED`, `OFFLINE_PUBLIC_URL`, `MESSAGING_LOG_PEPPER`, `STOREFRONT_ENABLED`, `OPERATIONS_SWEEP_ENABLED`, `OUTBOX_SWEEP_ENABLED`, `TRUST_PROXY`, Redis rate limiting and `HEARTBEAT_ENABLED`. Keep `dailyClose` OFF.
+On `APPROVED: PHASE 8`: start Phase 9 (release package: runbooks, demo, handoff; classify every requirement per section 0.11). Before any deploy of Phase 1-8 work: rehearse the migrations on a restored production backup (`scripts/rehearseMigrations.sh`), then work through the activation checklists; keep `dailyClose` OFF.

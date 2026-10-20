@@ -17,6 +17,17 @@ export const isReportName = (s: string): s is ReportName => (REPORT_NAMES as rea
 export function canViewReports(merchantRole: "OWNER" | "STAFF"): boolean {
   return canMerchant(membershipRoleForLegacyMerchantRole(merchantRole), "reports:view" satisfies MerchantPermission);
 }
+/**
+ * Reports that show what goods COST, or where the money sits, are for the people who handle the books (owner, manager, finance operator):
+ * a sales clerk can read the sales, money-owed and stock-difference reports but not margin, stock value, cash flow or payment reconciliation.
+ */
+export const REPORT_PERMISSION: Record<ReportName, MerchantPermission> = {
+  "sales": "reports:view", "ar-aging": "reports:view", "ap-aging": "reports:view", "stock-discrepancies": "reports:view",
+  "gross-margin": "finance:reconcile", "inventory-valuation": "finance:reconcile", "cash-flow": "finance:reconcile", "payment-reconciliation": "finance:reconcile",
+};
+export function canRunReport(merchantRole: "OWNER" | "STAFF", name: ReportName): boolean {
+  return canMerchant(membershipRoleForLegacyMerchantRole(merchantRole), REPORT_PERMISSION[name]);
+}
 export function canExportReports(merchantRole: "OWNER" | "STAFF"): boolean {
   return canMerchant(membershipRoleForLegacyMerchantRole(merchantRole), "finance:export" satisfies MerchantPermission);
 }

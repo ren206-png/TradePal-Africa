@@ -92,6 +92,7 @@ describe("reports on a phone", () => {
     })();
     expect((await request(app).get("/m/api/reports/sales").set(auth(clerkToken))).status).toBe(200);
     expect((await request(app).get("/m/api/reports/sales.csv").set(auth(clerkToken))).status).toBe(403);
+    for (const r of ["gross-margin", "inventory-valuation", "cash-flow", "payment-reconciliation"]) expect((await request(app).get(`/m/api/reports/${r}`).set(auth(clerkToken))).status, r).toBe(403);
   });
 
   it("only ever shows the connected business's own numbers", async () => {

@@ -122,3 +122,6 @@ Migration `20261026000000_phase7_messaging_consent_drafts` (additive: 9 new tabl
 
 Verification: PGlite only. **Not verified on a real Postgres server.**
 
+## Phase 8 additions
+
+Migration `20261027000000_phase8_reports_flag`: `AdminUser.disabledAt` (nullable column, no default needed) and the flag `reportsV2` seeded OFF. The Phase 6 migration also gained a one-line backfill (`paidMinor = amountMinor` where `status = 'PAID'`), placed before the Invoice triggers. Rehearsed on legacy data in PGlite (`migration-rehearsal.md`); **not rehearsed on a real server**.

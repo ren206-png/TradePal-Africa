@@ -53,4 +53,11 @@ psql "$URL" -Atqc "select 'flags that are ON by default among the expansion flag
 ON="$(psql "$URL" -Atqc "select count(*) from \"FeatureFlag\" where key in ('adminStepUp','adminSupportAccessRequired','catalogV2','stockV2','accountingJournals','dailyClose') and \"enabledByDefault\"")"
 if [ "$ON" != "0" ]; then echo "  !! an expansion flag is ON by default" >&2; FAIL=1; fi
 
+# Phase 8: a legacy invoice that was PAID must read as paid in full after the Phase 6 migration (found by tests/migrationRehearsal.test.ts).
+UNPAID_PAID="$(psql "$URL" -Atqc "select count(*) from \"Invoice\" where status = 'PAID' and \"paidMinor\" = 0" 2>/dev/null || echo 0)"
+if [ "$UNPAID_PAID" != "0" ]; then echo "  !! $UNPAID_PAID PAID invoice(s) have paidMinor = 0" >&2; FAIL=1; fi
+# Phase 8: ownership. Every merchant must have a membership, every business a default shop.
+NO_MEMBER="$(psql "$URL" -Atqc "select count(*) from \"Merchant\" m where not exists (select 1 from \"Membership\" x where x.\"phoneNumber\" = m.\"phoneNumber\" and x.\"businessId\" = m.\"businessId\")" 2>/dev/null || echo 0)"
+if [ "$NO_MEMBER" != "0" ]; then echo "  !! $NO_MEMBER merchant(s) have no membership" >&2; FAIL=1; fi
+
 if [ "$FAIL" = "0" ]; then echo "REHEARSAL OK (counts unchanged, flags off). Now smoke-test onboarding, /today and /undo against this scratch copy."; else echo "REHEARSAL FAILED" >&2; exit 1; fi
