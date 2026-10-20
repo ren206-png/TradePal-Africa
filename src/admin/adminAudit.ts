@@ -34,6 +34,10 @@ const ENTITY_BY_SEGMENT: Record<string, string> = {
   "support-cases": "SupportCase",
   payments: "Payment",
   moderation: "Moderation",
+  subscriptions: "Subscription",
+  "plan-versions": "PlanVersion",
+  "billing-switches": "BillingSwitch",
+  invoices: "Invoice",
   "payment-connections": "ProviderConnection",
 };
 

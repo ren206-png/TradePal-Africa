@@ -9,15 +9,15 @@ import { BillingError } from "./common.js";
  */
 export interface PlanVersionInput {
   planCode: string;
-  features?: string[];
-  billingPeriodDays?: number;
-  graceDays?: number;
-  entryCapPerMonth?: number | null;
-  voiceEnabled?: boolean;
-  staffCapCount?: number | null;
-  aiDeepseekMonthlyBudgetMicroUsd?: bigint | null;
-  note?: string;
-  createdBy?: string;
+  features?: string[] | undefined;
+  billingPeriodDays?: number | undefined;
+  graceDays?: number | undefined;
+  entryCapPerMonth?: number | null | undefined;
+  voiceEnabled?: boolean | undefined;
+  staffCapCount?: number | null | undefined;
+  aiDeepseekMonthlyBudgetMicroUsd?: bigint | null | undefined;
+  note?: string | undefined;
+  createdBy?: string | undefined;
 }
 
 export const KNOWN_FEATURES = ["trade", "marketplace", "reorder", "storefront", "voice"] as const;

@@ -11,6 +11,7 @@ import { createAdminReorderRouter } from "./adminReorder.js";
 import { createAdminSupportRouter } from "./adminSupport.js";
 import { createAdminPaymentsRouter } from "./adminPayments.js";
 import { createAdminModerationRouter } from "./adminModeration.js";
+import { createAdminSubscriptionsRouter } from "./adminSubscriptions.js";
 import { correlationIdOf } from "./adminAudit.js";
 import { verifyAdminPassword } from "./auth.js";
 import type { AuthenticatedAdminRequest } from "./authMiddleware.js";
@@ -38,6 +39,8 @@ export interface PlatformAdminOptions {
   stepUpRateLimiter?: LoginRateLimiter;
   /** Test seam: the clock. */
   now?: () => Date;
+  /** Sends a WhatsApp reminder to a business owner about their own subscription; omitted when messaging is not configured. */
+  sendRenewalReminder?: (toPhoneNumber: string, body: string) => Promise<void>;
 }
 
 /**
@@ -54,6 +57,7 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
   router.use(createAdminSupportRouter(prisma, jwtSecret));
   router.use(createAdminPaymentsRouter(prisma, jwtSecret));
   router.use(createAdminModerationRouter(prisma, jwtSecret));
+  router.use(createAdminSubscriptionsRouter(prisma, jwtSecret, { ...(options.sendRenewalReminder ? { sendReminder: options.sendRenewalReminder } : {}), ...(options.now ? { now: options.now } : {}) }));
 
   router.get("/me/permissions", (req, res) => {
     const admin = (req as AuthenticatedAdminRequest).adminUser;

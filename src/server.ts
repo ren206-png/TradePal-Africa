@@ -4,6 +4,7 @@ import express from "express";
 import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
+import { sendWhatsAppTextMessage } from "./whatsapp/outboundGateway.js";
 import { createStorefrontRouter } from "./storefront/routes.js";
 import { getAdapterRegistry } from "./payments/registry.js";
 import { createMerchantPaymentWebhookRouter } from "./payments/webhookRoute.js";
@@ -221,6 +222,8 @@ app.use(
   }),
   createAdminRouter(prisma, adminJwtSecret, {
     ...(outboundGateway ? { outboundGateway } : {}),
+    // Phase 6: the admin "send reminder" action uses the same WhatsApp credentials as the other subscription notices, to the business's own owner.
+    ...(outboundGateway ? { platform: { sendRenewalReminder: (toPhoneNumber: string, body: string) => sendWhatsAppTextMessage({ prisma, ...outboundGateway }, { toPhoneNumber, body }) } } : {}),
     ...(deletionResolutionOutboundGateway ? { deletionResolutionOutboundGateway } : {}),
     ...(loginRateLimiter ? { loginRateLimiter } : {}),
   }),
