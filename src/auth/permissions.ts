@@ -91,6 +91,7 @@ export const PLATFORM_PERMISSIONS = [
   "admin:flip_forecast_gate", //         promote forecasting to live for one merchant (owner only)
   "admin:set_forecast_thresholds", //    the platform-wide promotion thresholds (owner only)
   "admin:view_reorder", //               reorder suggestions, forecasts and their scores
+  "admin:view_support_cases", //         consumer support cases, payment exceptions and refund-request counts (no merchant books)
   "admin:manage_admins", //              create/disable platform admins
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
@@ -100,11 +101,11 @@ const PLATFORM_MATRIX: Readonly<Record<AdminRole, ReadonlySet<PlatformPermission
   OPERATOR: new Set<PlatformPermission>([
     "admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log",
     "admin:view_merchant_financials", "admin:manage_flags", "admin:resolve_exception", "admin:replay_dead_letter",
-    "admin:pause_job_class", "admin:reverse_transaction", "admin:resolve_support_case", "admin:view_reorder",
+    "admin:pause_job_class", "admin:reverse_transaction", "admin:resolve_support_case", "admin:view_reorder", "admin:view_support_cases",
   ]),
   SUPPORT: new Set<PlatformPermission>([
     "admin:view_overview", "admin:view_orgs", "admin:view_audit_log", "admin:view_merchant_financials",
-    "admin:revoke_staff", "admin:resolve_support_case",
+    "admin:revoke_staff", "admin:resolve_support_case", "admin:view_support_cases",
   ]),
   // Read-only analyst (legacy role): metadata and audit only, never merchant financials.
   ANALYST: new Set<PlatformPermission>(["admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log"]),

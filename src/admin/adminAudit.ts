@@ -31,6 +31,7 @@ const ENTITY_BY_SEGMENT: Record<string, string> = {
   plans: "Plan",
   "feature-flags": "FeatureFlag",
   maintenance: "Maintenance",
+  "support-cases": "SupportCase",
 };
 
 // Routes with their own, richer audit trail or that are not data writes.

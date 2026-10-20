@@ -9,6 +9,9 @@ interface Overview {
   queues: {
     pendingDeletionRequests: number;
     unmatchedMobileMoneyAlerts: number;
+    openSupportCases?: number;
+    openPaymentExceptions?: number;
+    pendingRefundRequests?: number;
     outbox: { pending: number; dead: number; oldestPendingAgeSeconds: number | null };
     inbox: { received: number; dead: number; oldestReceivedAgeSeconds?: number | null };
   };
@@ -69,6 +72,9 @@ export function OverviewPage() {
       <div className="stat-grid">
         <Stat label="Deletion requests pending" value={q.pendingDeletionRequests} warn={q.pendingDeletionRequests > 0} />
         <Stat label="Unmatched mobile-money alerts" value={q.unmatchedMobileMoneyAlerts} warn={q.unmatchedMobileMoneyAlerts > 0} />
+        <Stat label="Open support cases" value={q.openSupportCases ?? 0} warn={(q.openSupportCases ?? 0) > 0} />
+        <Stat label="Payments needing a decision" value={q.openPaymentExceptions ?? 0} warn={(q.openPaymentExceptions ?? 0) > 0} />
+        <Stat label="Refund requests in progress" value={q.pendingRefundRequests ?? 0} />
         <Stat label="Outbox dead-lettered" value={q.outbox.dead} warn={q.outbox.dead > 0} />
         <Stat label="Callbacks dead-lettered" value={q.inbox.dead} warn={q.inbox.dead > 0} />
       </div>

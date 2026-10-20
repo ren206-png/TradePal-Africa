@@ -253,6 +253,37 @@ export function createAdminTransactionsRouter(prisma: PrismaClient, jwtSecret: s
     }),
   );
 
+  // Consumer store orders (Phase 4): status, money and stock holds per order. No buyer phone, no unit cost.
+  router.get(
+    "/businesses/:id/store-orders",
+    requirePlatformPermission("admin:view_merchant_financials"),
+    gate,
+    asyncHandler(async (req, res) => {
+      const businessId = req.params["id"] as string;
+      if (!(await businessOr404(businessId))) {
+        res.status(404).json({ error: "Business not found." });
+        return;
+      }
+      const pagination = parsePaginationParams(req.query as Record<string, unknown>);
+      const status = typeof req.query["status"] === "string" && ["PLACED", "CONFIRMED", "READY", "OUT_FOR_DELIVERY", "COMPLETED", "CANCELLED", "EXPIRED"].includes(req.query["status"]) ? (req.query["status"] as "PLACED") : undefined;
+      const rows = await prisma.storeOrder.findMany({
+        where: { businessId, ...(status ? { status } : {}) }, orderBy: { createdAt: "desc" }, take: pagination.take + 1, skip: pagination.skip,
+        include: { lines: { select: { description: true, unit: true, quantity: true, unitPriceMinor: true, lineTotalMinor: true } }, payments: { select: { id: true, state: true, method: true, provider: true, evidence: true, amountMinor: true, direction: true, createdAt: true } } },
+      });
+      const { items, pagination: meta } = paginate(rows, pagination);
+      res.json({
+        orders: items.map((o) => ({
+          id: o.id, reference: o.reference, status: o.status, fulfilment: o.fulfilment, paymentMethod: o.paymentMethod, currencyCode: o.currencyCode,
+          subtotalMinor: o.subtotalMinor.toString(), deliveryFeeMinor: o.deliveryFeeMinor.toString(), totalMinor: o.totalMinor.toString(), paidMinor: o.paidMinor.toString(), refundedMinor: o.refundedMinor.toString(),
+          createdAt: o.createdAt, reservedUntil: o.reservedUntil,
+          lines: o.lines.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity, unitPriceMinor: l.unitPriceMinor.toString(), lineTotalMinor: l.lineTotalMinor.toString() })),
+          payments: o.payments.map((p) => ({ id: p.id, state: p.state, method: p.method, provider: p.provider, evidence: p.evidence, direction: p.direction, amountMinor: p.amountMinor.toString(), createdAt: p.createdAt })),
+        })),
+        pagination: meta,
+      });
+    }),
+  );
+
   // Void = reverse. Creates a reversal transaction, reverses the stock it moved and (flag on) a balanced reversal journal.
   router.post(
     "/businesses/:id/transactions/:txnId/reverse",

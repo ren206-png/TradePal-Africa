@@ -9,6 +9,7 @@ import { DeletionRequestsPage } from "./pages/DeletionRequestsPage";
 import { FeatureFlagsPage } from "./pages/FeatureFlagsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ReorderPage } from "./pages/ReorderPage";
+import { SupportCasesPage } from "./pages/SupportCasesPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SystemHealthPage } from "./pages/SystemHealthPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
@@ -129,6 +130,16 @@ function App() {
               <ProtectedRoute>
                 <Layout>
                   <ReorderPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/support-cases"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <SupportCasesPage />
                 </Layout>
               </ProtectedRoute>
             }

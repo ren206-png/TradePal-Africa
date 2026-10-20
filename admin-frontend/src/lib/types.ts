@@ -303,3 +303,33 @@ export interface AdminTradeInvoice {
   overdue: boolean;
   payments: { id: string; direction: string; amountMinor: string; method: string; evidence: string; state: string; reason: string | null }[];
 }
+
+export type SupportParty = "SELLER" | "PLATFORM" | "PROVIDER";
+export type SupportCaseStatus = "OPEN" | "ASSIGNED" | "CLOSED";
+
+export interface SupportCaseRow {
+  id: string;
+  business: string;
+  orderReference: string | null;
+  type: string;
+  handledBy: SupportParty;
+  status: SupportCaseStatus;
+  openedBy: string;
+  summary: string;
+  contactPhone: string | null;
+  createdAt: string;
+}
+
+export interface SupportCaseList {
+  cases: SupportCaseRow[];
+  counts: { byStatus: Record<string, number>; openByParty: Record<string, number> };
+  pagination: PaginationMeta;
+}
+
+export interface SupportCaseDetail extends Omit<SupportCaseRow, "summary"> {
+  summary: string;
+  contactName: string | null;
+  resolution: string | null;
+  order: { reference: string; status: string; fulfilment: string; paymentMethod: string; totalMinor: string; paidMinor: string; refundedMinor: string; currencyCode: string } | null;
+  notes: { id: string; authorType: string; body: string; createdAt: string }[];
+}
