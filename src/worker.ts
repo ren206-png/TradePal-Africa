@@ -15,6 +15,8 @@ import { WhisperSttProvider } from "./stt/provider.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
 import { getInboundMessageQueue, INBOUND_MESSAGE_QUEUE_NAME } from "./queue/inboundMessageQueue.js";
 import { startWebhookRedriveSweep } from "./queue/webhookRedrive.js";
+import { outboxSweepEnabled, startOutboxSweep } from "./queue/outboxSweep.js";
+import { CALLBACK_HANDLERS, OUTBOX_HANDLERS } from "./domain/eventHandlers.js";
 import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
 
 const SERVICE_NAME = "worker";
@@ -241,6 +243,11 @@ console.log(`TradePal inbound-message worker listening on queue "${INBOUND_MESSA
 
 // Re-queues inbound messages that were stored but never processed (e.g. the enqueue failed while Redis
 // was briefly down) — see whatsapp/redrive.ts for why nothing else would ever pick them up.
+// Expansion Phase 1: reliable outbox/inbox delivery. OFF unless OUTBOX_SWEEP_ENABLED=true; no handlers are registered yet.
+const outboxSweep = outboxSweepEnabled()
+  ? startOutboxSweep({ prisma, outboxHandlers: OUTBOX_HANDLERS, callbackHandlers: CALLBACK_HANDLERS, alerts })
+  : undefined;
+
 const webhookRedrive = startWebhookRedriveSweep({
   prisma,
   queue: getInboundMessageQueue(),
@@ -254,6 +261,7 @@ const webhookRedrive = startWebhookRedriveSweep({
 // BullMQ's own Worker.close() finish the one currently active job first.
 installGracefulShutdown(SERVICE_NAME, [
   { name: "webhook-redrive", close: async () => webhookRedrive.stop() },
+  ...(outboxSweep ? [{ name: "outbox-sweep", close: async () => outboxSweep.stop() }] : []),
   { name: "bullmq-worker", close: () => worker.close() },
   { name: "prisma", close: () => prisma.$disconnect() },
 ]);

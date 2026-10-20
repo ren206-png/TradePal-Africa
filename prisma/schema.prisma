@@ -962,3 +962,70 @@ model DeletionRequest {
 
   @@index([businessId, status])
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 1: reliable event delivery (docs/expansion/decisions.md P6)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum OutboxStatus {
+  PENDING
+  /// Claimed by a worker; reclaimable after the visibility timeout if that worker died.
+  PROCESSING
+  PUBLISHED
+  /// Gave up after the retry budget; needs a human (dead-letter replay in the admin console).
+  DEAD
+}
+
+/// Transactional outbox: an event is inserted in the SAME database transaction as the business change that causes it,
+/// and published asynchronously, so a crash can neither lose the event nor publish one for a change that rolled back.
+/// `dedupeKey` makes enqueueing idempotent (the same business effect is never queued twice).
+model OutboxEvent {
+  id            String       @id @default(uuid())
+  /// Tenant-owned events carry their business; platform events leave it null.
+  businessId    String?
+  aggregateType String
+  aggregateId   String
+  eventType     String
+  payload       Json
+  dedupeKey     String       @unique
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  /// Earliest time the next attempt may run (exponential backoff).
+  availableAt   DateTime     @default(now()) @db.Timestamptz()
+  claimedAt     DateTime?    @db.Timestamptz()
+  lastError     String?
+  publishedAt   DateTime?    @db.Timestamptz()
+  createdAt     DateTime     @default(now()) @db.Timestamptz()
+
+  @@index([status, availableAt])
+  @@index([eventType, status])
+}
+
+enum InboxStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  DEAD
+}
+
+/// Durable inbox for provider callbacks (payments and others): persisted before the HTTP acknowledgement, deduplicated
+/// on (provider, externalId), processed asynchronously. The WhatsApp inbox stays WebhookEvent.
+model CallbackInbox {
+  id                String      @id @default(uuid())
+  provider          String
+  /// The provider's own event/transaction id: the same callback delivered twice has the same one.
+  externalId        String
+  payload           Json
+  /// True only when the provider's documented authentication was verified before the row was stored.
+  signatureVerified Boolean     @default(false)
+  status            InboxStatus @default(RECEIVED)
+  attempts          Int         @default(0)
+  availableAt       DateTime    @default(now()) @db.Timestamptz()
+  claimedAt         DateTime?   @db.Timestamptz()
+  lastError         String?
+  receivedAt        DateTime    @default(now()) @db.Timestamptz()
+  processedAt       DateTime?   @db.Timestamptz()
+
+  @@unique([provider, externalId])
+  @@index([status, availableAt])
+}
