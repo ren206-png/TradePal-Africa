@@ -1,0 +1,218 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { SITE, whatsappCtaHref } from "../lib/site";
+
+const lastUpdated = "October 20, 2026";
+
+const examples = [
+  { say: "sold 2 bags of rice for 12000", means: "Records a sale of 12,000 (2 bags of rice)." },
+  { say: "bought stock 45000", means: "Records money you spent." },
+  { say: "paid transport 1500", means: "Records an expense." },
+  { say: "sold 3 bread to Amina 1500 on credit", means: "Records a sale and notes that Amina owes you." },
+];
+
+const commands = [
+  { cmd: "/today", what: "Today's sales, expenses and payments in one message." },
+  { cmd: "/debts", what: "Everyone who owes you, biggest first." },
+  { cmd: "/customer Amina", what: "What one customer owes right now." },
+  { cmd: "/debt Amina 500 due 2026-11-30", what: "Write down that Amina owes you 500, with an optional due date." },
+  { cmd: "/paid Amina 300", what: "Record that Amina paid 300 towards what she owes." },
+  { cmd: "/undo", what: "Reverse the most recent entry if you made a mistake." },
+  { cmd: "/help", what: "See every command that is switched on for your account." },
+];
+
+const steps = [
+  {
+    title: "Say hello on WhatsApp",
+    body: `Tap the button below (or message the TradePal number) and say hi. TradePal asks a few short questions: your shop's name and where you are. It works out your country and currency for you. It is available in ${SITE.supportedCountries.join(", ")}.`,
+  },
+  {
+    title: "Write down what happens in your shop",
+    body: "Type it the way you would text a friend. There are no forms and no app to install.",
+  },
+  {
+    title: "Ask for your numbers",
+    body: "Send /today at the end of the day, or /debts when you want to see who still owes you.",
+  },
+  {
+    title: "Fix mistakes straight away",
+    body: "Typed the wrong amount? Send /undo and the last entry is reversed. Nothing is ever silently deleted: a correction is a new entry.",
+  },
+];
+
+const faqs = [
+  {
+    q: "Do I need to install anything?",
+    a: "No. TradePal works inside the WhatsApp you already have.",
+  },
+  {
+    q: "What if TradePal does not understand me?",
+    a: "It will tell you and show an example of what to write. You can always send /help.",
+  },
+  {
+    q: "Can my staff use it too?",
+    a: "On accounts where staff access is switched on, the owner can add another WhatsApp number with /addstaff and remove it again with /removestaff.",
+  },
+  {
+    q: "Is there a limit on the Free plan?",
+    a: "The Free plan includes up to 50 entries a month. /usage shows how many you have used. See the pricing section for the Starter plan.",
+  },
+  {
+    q: "Will TradePal ever message my customers?",
+    a: "TradePal replies to you, the shop owner. It does not message your customers for marketing. Where a shop's customers choose to receive updates about their own order, that is a separate, opt-in feature that you will be told about before it is switched on.",
+  },
+  {
+    q: "Where do I get help?",
+    a: "Message TradePal on WhatsApp and say what is wrong, or send /help for the list of commands.",
+  },
+];
+---
+
+<Layout
+  title={`How to use ${SITE.name}`}
+  description={`A short guide to running your shop's records on WhatsApp with ${SITE.name}: get started, log sales and expenses, check your numbers and fix mistakes.`}
+  path="/how-to-use"
+>
+  <Header />
+  <main class="mx-auto max-w-3xl px-6 py-16">
+    <p class="inline-flex items-center gap-3 text-[0.72rem] font-bold uppercase tracking-[0.22em] text-clay">
+      <span class="inline-block h-[2px] w-8 bg-clay"></span>
+      Guide
+    </p>
+    <h1 class="display mt-4 text-4xl font-semibold text-ink sm:text-5xl">How to use {SITE.name}</h1>
+    <p class="mt-3 text-lg text-ink/70">
+      Everything happens in one WhatsApp chat. This page shows the whole routine, from your first message to your end-of-day check.
+    </p>
+    <p class="mt-2 text-sm text-ink/60">Last updated: {lastUpdated}</p>
+
+    <div class="mt-8">
+      <a
+        href={whatsappCtaHref()}
+        class="inline-flex items-center gap-2 rounded-full bg-ink px-7 py-4 text-base font-bold text-paper shadow-[0_4px_0_0_#e9a21b] transition hover:-translate-y-0.5 hover:bg-ink-2 hover:shadow-[0_6px_0_0_#e9a21b]"
+      >
+        Start on WhatsApp
+      </a>
+    </div>
+
+    <nav aria-label="On this page" class="mt-12 rounded-xl border border-ink/10 bg-paper-2 p-5 text-sm">
+      <p class="font-bold text-ink">On this page</p>
+      <ul class="mt-2 grid gap-1 text-ink/75 sm:grid-cols-2">
+        <li><a class="underline decoration-clay/40 hover:text-ink" href="#get-started">Get started in four steps</a></li>
+        <li><a class="underline decoration-clay/40 hover:text-ink" href="#log">Log sales and expenses</a></li>
+        <li><a class="underline decoration-clay/40 hover:text-ink" href="#commands">Check your numbers (commands)</a></li>
+        <li><a class="underline decoration-clay/40 hover:text-ink" href="#debts">Keep track of who owes you</a></li>
+        <li><a class="underline decoration-clay/40 hover:text-ink" href="#tips">Tips for best results</a></li>
+        <li><a class="underline decoration-clay/40 hover:text-ink" href="#questions">Common questions</a></li>
+      </ul>
+    </nav>
+
+    <section id="get-started" class="mt-14">
+      <h2 class="display text-3xl font-semibold text-ink">Get started in four steps</h2>
+      <ol class="mt-6 space-y-6">
+        {
+          steps.map((s, i) => (
+            <li class="flex gap-4">
+              <span class="display flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-ink text-lg font-bold text-paper" aria-hidden="true">
+                {i + 1}
+              </span>
+              <div>
+                <h3 class="text-lg font-bold text-ink"><span class="sr-only">Step {i + 1}: </span>{s.title}</h3>
+                <p class="mt-1 leading-relaxed text-ink/75">{s.body}</p>
+              </div>
+            </li>
+          ))
+        }
+      </ol>
+    </section>
+
+    <section id="log" class="mt-14">
+      <h2 class="display text-3xl font-semibold text-ink">Log sales and expenses</h2>
+      <p class="mt-3 leading-relaxed text-ink/75">
+        Just write what happened. TradePal reads your message, works out the amount and what it was, and records it. Examples:
+      </p>
+      <div class="mt-5 space-y-3">
+        {
+          examples.map((e) => (
+            <div class="rounded-xl border border-ink/10 bg-paper-2 p-4">
+              <p class="font-mono text-[0.95rem] font-semibold text-ink">“{e.say}”</p>
+              <p class="mt-1 text-sm text-ink/70">{e.means}</p>
+            </div>
+          ))
+        }
+      </div>
+      <p class="mt-4 text-sm text-ink/65">
+        Amounts are in your shop's own currency. If something is unclear, such as a missing amount, TradePal asks you instead of guessing.
+      </p>
+    </section>
+
+    <section id="commands" class="mt-14">
+      <h2 class="display text-3xl font-semibold text-ink">Check your numbers with commands</h2>
+      <p class="mt-3 leading-relaxed text-ink/75">
+        Commands start with a slash. Type them exactly as shown, then replace the example name or amount with yours.
+      </p>
+      <dl class="mt-5 divide-y divide-ink/10 rounded-xl border border-ink/10 bg-paper-2">
+        {
+          commands.map((c) => (
+            <div class="grid gap-1 p-4 sm:grid-cols-[14rem_1fr] sm:gap-4">
+              <dt class="font-mono text-[0.9rem] font-semibold text-ink">{c.cmd}</dt>
+              <dd class="text-ink/75">{c.what}</dd>
+            </div>
+          ))
+        }
+      </dl>
+      <p class="mt-4 text-sm text-ink/65">
+        Some tools, such as stock tracking (<span class="font-mono">/stock</span>), low-stock alerts (<span class="font-mono">/lowstock</span>),
+        customer reminders (<span class="font-mono">/remind</span>) and staff access (<span class="font-mono">/addstaff</span>), are switched on per
+        account. Send <span class="font-mono">/help</span>: it lists exactly what is available for yours, and nothing that is not.
+      </p>
+    </section>
+
+    <section id="debts" class="mt-14">
+      <h2 class="display text-3xl font-semibold text-ink">Keep track of who owes you</h2>
+      <ol class="mt-4 list-decimal space-y-2 pl-5 leading-relaxed text-ink/75">
+        <li>When a customer takes goods on credit, tell TradePal: <span class="font-mono">/debt Amina 500</span>, or add a due date.</li>
+        <li>When they pay, send <span class="font-mono">/paid Amina 300</span>. TradePal reduces what she owes.</li>
+        <li>Any time, <span class="font-mono">/debts</span> shows everyone who still owes you, biggest first.</li>
+      </ol>
+    </section>
+
+    <section id="tips" class="mt-14">
+      <h2 class="display text-3xl font-semibold text-ink">Tips for best results</h2>
+      <ul class="mt-4 list-disc space-y-2 pl-5 leading-relaxed text-ink/75">
+        <li>Log as you go. A short message after each sale is quicker than remembering everything at night.</li>
+        <li>Put the amount in every message, and the item if you want stock tracked.</li>
+        <li>Use the same spelling for a customer's name each time, so their debts stay together.</li>
+        <li>Check <span class="font-mono">/today</span> before you close, and use <span class="font-mono">/undo</span> if anything looks wrong.</li>
+        <li>TradePal helps you keep records. It is not tax, accounting or legal advice.</li>
+      </ul>
+    </section>
+
+    <section id="questions" class="mt-14">
+      <h2 class="display text-3xl font-semibold text-ink">Common questions</h2>
+      <div class="mt-4 divide-y divide-ink/10 rounded-xl border border-ink/10">
+        {
+          faqs.map((f) => (
+            <details class="group p-4">
+              <summary class="cursor-pointer list-none font-bold text-ink">{f.q}</summary>
+              <p class="mt-2 leading-relaxed text-ink/75">{f.a}</p>
+            </details>
+          ))
+        }
+      </div>
+    </section>
+
+    <div class="mt-14 rounded-2xl bg-ink p-8 text-center text-paper">
+      <h2 class="display text-2xl font-semibold">Ready to try it?</h2>
+      <p class="mt-2 text-paper/75">Free to start. No app to install.</p>
+      <a
+        href={whatsappCtaHref()}
+        class="mt-5 inline-flex items-center gap-2 rounded-full bg-saffron px-7 py-3.5 text-base font-bold text-ink transition hover:-translate-y-0.5"
+      >
+        Start on WhatsApp
+      </a>
+    </div>
+  </main>
+  <Footer />
+</Layout>
