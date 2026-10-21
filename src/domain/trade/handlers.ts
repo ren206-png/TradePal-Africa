@@ -381,8 +381,11 @@ export async function deliverTradeEvents(prisma: PrismaClient, rounds = 8): Prom
   const outbox = buildTradeOutboxHandlers(prisma);
   const inbox = buildTradeCallbackHandlers(prisma);
   for (let i = 0; i < rounds; i++) {
-    const a = await processOutbox(prisma, outbox, { limit: 100 });
-    const b = await processInbox(prisma, inbox, { limit: 100 });
+    // +50 ms: a row's default "available at" comes from the database clock, rounded to the millisecond, and on a fast server it can sit a hair
+    // ahead of this process's clock; without the margin a callback written a moment ago would wait for the next call.
+    const soon = new Date(Date.now() + 50);
+    const a = await processOutbox(prisma, outbox, { limit: 100, now: soon });
+    const b = await processInbox(prisma, inbox, { limit: 100, now: soon });
     if (a.claimed + b.claimed === 0) return;
   }
 }
