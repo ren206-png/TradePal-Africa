@@ -38,6 +38,7 @@ function enumerate(stack: any[], prefix = ""): RouteDef[] {
 }
 const fill = (path: string, value = UUID) => path.replace(/:[A-Za-z]+/g, value);
 
+let server: import("node:http").Server;
 let routes: RouteDef[] = [];
 let tokens: Record<string, string> = {};
 
@@ -54,14 +55,18 @@ beforeAll(async () => {
   app.use(express.json());
   app.use("/admin", router);
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => { res.status(500).json({ error: "unhandled", detail: String(err).slice(0, 200) }); });
-  for (const e of ["super", "op", "support", "analyst", "gone"]) tokens[e] = (await request(app).post("/admin/login").send({ email: `${e}@t.test`, password: PW })).body.token;
+  // ONE listening server for the thousands of requests below: supertest otherwise opens and closes a server per request, which under a loaded machine ends in "socket hang up".
+  server = app.listen(0, "127.0.0.1");
+  server.keepAliveTimeout = 120_000; // Node reuses idle client sockets; a server that drops them first (5 s default) causes "socket hang up" under load
+  for (const e of ["super", "op", "support", "analyst", "gone"]) tokens[e] = (await request(server).post("/admin/login").send({ email: `${e}@t.test`, password: PW })).body.token;
 }, 90_000);
 afterAll(async () => {
+  await new Promise<void>((r) => server.close(() => r()));
   await testDb.teardown();
 });
 
 const send = (r: RouteDef, token?: string, path = fill(r.path)) => {
-  let req = (request(app) as any)[r.method](`/admin${path}`) as request.Test;
+  let req = (request(server) as any)[r.method](`/admin${path}`) as request.Test;
   if (token !== undefined) req = req.set("Authorization", `Bearer ${token}`);
   return r.method === "get" || r.method === "delete" ? req : req.send({});
 };
@@ -83,7 +88,7 @@ describe("every admin route rejects every way of not being a signed-in platform 
       { name: "garbage", req: (r) => send(r, "not-a-token") },
       { name: "wrong secret", req: (r) => send(r, wrong) },
       { name: "expired", req: (r) => send(r, expired) },
-      { name: "basic scheme", req: (r) => ((request(app) as any)[r.method](`/admin${fill(r.path)}`) as request.Test).set("Authorization", "Basic c3VwZXI6cHc=") },
+      { name: "basic scheme", req: (r) => ((request(server) as any)[r.method](`/admin${fill(r.path)}`) as request.Test).set("Authorization", "Basic c3VwZXI6cHc=") },
     ];
     const failures: string[] = [];
     for (const r of routes.filter((x) => !isLogin(x))) {
@@ -110,8 +115,8 @@ describe("every admin route rejects every way of not being a signed-in platform 
   });
 
   it("a logged-out token stops working on every route", async () => {
-    const t = (await request(app).post("/admin/login").send({ email: "op@t.test", password: PW })).body.token as string;
-    expect((await request(app).post("/admin/logout").set("Authorization", `Bearer ${t}`).send({})).status).toBeLessThan(300);
+    const t = (await request(server).post("/admin/login").send({ email: "op@t.test", password: PW })).body.token as string;
+    expect((await request(server).post("/admin/logout").set("Authorization", `Bearer ${t}`).send({})).status).toBeLessThan(300);
     const failures: string[] = [];
     for (const r of routes.filter((x) => !isLogin(x))) {
       const res = await send(r, t);
@@ -121,7 +126,7 @@ describe("every admin route rejects every way of not being a signed-in platform 
   });
 
   it("a DISABLED admin's still-unexpired token stops working at once, and they cannot log in again", async () => {
-    expect((await request(app).get("/admin/me/permissions").set("Authorization", `Bearer ${tokens["gone"]}`)).status).toBe(200);
+    expect((await request(server).get("/admin/me/permissions").set("Authorization", `Bearer ${tokens["gone"]}`)).status).toBe(200);
     const { disableAdminUser } = await import("../src/admin/adminUsers.js");
     expect(await disableAdminUser(prisma, "gone@t.test")).toBe(true);
     expect(await disableAdminUser(prisma, "gone@t.test")).toBe(false); // idempotent
@@ -131,20 +136,20 @@ describe("every admin route rejects every way of not being a signed-in platform 
       if (res.status !== 401) failures.push(`${r.method.toUpperCase()} ${r.path} -> ${res.status}`);
     }
     expect(failures).toEqual([]);
-    expect((await request(app).post("/admin/login").send({ email: "gone@t.test", password: PW })).status).toBe(401);
+    expect((await request(server).post("/admin/login").send({ email: "gone@t.test", password: PW })).status).toBe(401);
   });
 
   it("an admin whose account was removed, or whose role was lowered, loses that power on the very next request", async () => {
     await createAdminUser(prisma, { email: "demoted@t.test", name: "d", role: "SUPER_ADMIN", password: PW });
     await createAdminUser(prisma, { email: "removed@t.test", name: "r", role: "SUPER_ADMIN", password: PW });
-    const login = async (email: string) => (await request(app).post("/admin/login").send({ email, password: PW })).body.token as string;
+    const login = async (email: string) => (await request(server).post("/admin/login").send({ email, password: PW })).body.token as string;
     const demoted = await login("demoted@t.test");
     const removed = await login("removed@t.test");
-    expect((await request(app).get("/admin/admins").set("Authorization", `Bearer ${demoted}`)).status).toBe(200); // owner-only list
+    expect((await request(server).get("/admin/admins").set("Authorization", `Bearer ${demoted}`)).status).toBe(200); // owner-only list
     await prisma.adminUser.update({ where: { email: "demoted@t.test" }, data: { role: "ANALYST" } });
-    expect((await request(app).get("/admin/admins").set("Authorization", `Bearer ${demoted}`)).status).toBe(403);
+    expect((await request(server).get("/admin/admins").set("Authorization", `Bearer ${demoted}`)).status).toBe(403);
     await prisma.adminUser.delete({ where: { email: "removed@t.test" } });
-    expect((await request(app).get("/admin/me/permissions").set("Authorization", `Bearer ${removed}`)).status).toBe(401);
+    expect((await request(server).get("/admin/me/permissions").set("Authorization", `Bearer ${removed}`)).status).toBe(401);
   });
 });
 
@@ -189,7 +194,7 @@ describe("robustness and leakage", () => {
     const failures: string[] = [];
     for (const r of routes.filter((x) => x.method === "get" && !isLogin(x) && !x.path.includes(":"))) {
       for (const q of ["?take=-5&skip=abc", "?take=999999999999999999999", "?status[]=a&status[]=b", `?q=${encodeURIComponent("' OR 1=1 --")}&from=garbage&to=garbage`, "?take=1&skip=1e9"]) {
-        const res = await (request(app).get(`/admin${r.path}${q}`) as request.Test).set("Authorization", `Bearer ${tokens["super"]}`);
+        const res = await (request(server).get(`/admin${r.path}${q}`) as request.Test).set("Authorization", `Bearer ${tokens["super"]}`);
         if (res.status >= 500) failures.push(`GET ${r.path}${q} -> ${res.status}`);
       }
     }
@@ -204,13 +209,13 @@ describe("robustness and leakage", () => {
       if (forbidden.test(res.text ?? "")) leaks.push(`GET ${r.path}`);
     }
     expect(leaks).toEqual([]);
-    const admins = await request(app).get("/admin/admins").set("Authorization", `Bearer ${tokens["super"]}`);
+    const admins = await request(server).get("/admin/admins").set("Authorization", `Bearer ${tokens["super"]}`);
     expect(JSON.stringify(admins.body)).not.toMatch(/passwordHash|\$2[aby]\$/);
   });
 
   it("the login endpoint answers the same for an unknown address and a wrong password", async () => {
-    const a = await request(app).post("/admin/login").send({ email: "nobody@t.test", password: "whatever-whatever" });
-    const b = await request(app).post("/admin/login").send({ email: "super@t.test", password: "whatever-whatever" });
+    const a = await request(server).post("/admin/login").send({ email: "nobody@t.test", password: "whatever-whatever" });
+    const b = await request(server).post("/admin/login").send({ email: "super@t.test", password: "whatever-whatever" });
     expect(a.status).toBe(b.status);
     expect(a.body).toEqual(b.body);
   });
@@ -225,7 +230,7 @@ describe("a platform admin is not a merchant, and a merchant's session is not an
     for (const path of ["/m/api/drafts", "/m/api/reports/sales"]) expect((await request(phone).get(path).set("Authorization", `Bearer ${tokens["super"]}`)).status).toBe(401);
     expect((await request(phone).post("/m/api/drafts/sync").set("Authorization", `Bearer ${tokens["super"]}`).send({ drafts: [] })).status).toBe(401);
     const deviceish = "a".repeat(64);
-    expect((await request(app).get("/admin/me/permissions").set("Authorization", `Bearer ${deviceish}`)).status).toBe(401);
+    expect((await request(server).get("/admin/me/permissions").set("Authorization", `Bearer ${deviceish}`)).status).toBe(401);
     delete process.env["OFFLINE_DRAFTS_ENABLED"];
     delete process.env["REPORTS_WEB_ENABLED"];
   });
