@@ -51,11 +51,12 @@ export const CATALOG = define({
   "consent.updatesUnmatched": { en: "We could not match that code to this phone number. Open your order page and tap the link again, from the phone number you gave when you ordered." },
   "consent.updatesBlocked": { en: "You stopped messages from TradePal Africa earlier. Reply START first, then tap the link on your order page again." },
 
-  // ---- order updates to a shopper (each one is a registered template class)
-  "order.confirmed": { en: "{seller}: your order {reference} is confirmed. Reply STOP to stop order messages." },
-  "order.ready": { en: "{seller}: your order {reference} is ready for pickup. Reply STOP to stop order messages." },
-  "order.dispatched": { en: "{seller}: your order {reference} is on its way. Reply STOP to stop order messages." },
-  "order.cancelled": { en: "{seller}: your order {reference} was cancelled. Reply STOP to stop order messages." },
+  // ---- order updates to a shopper (each one is a registered template class). WhatsApp does not accept a template that STARTS or ENDS with a
+  // variable or has two variables side by side, so each begins and ends with fixed words.
+  "order.confirmed": { en: "Order update from {seller}: your order {reference} is confirmed. Reply STOP to stop order messages." },
+  "order.ready": { en: "Order update from {seller}: your order {reference} is ready for pickup. Reply STOP to stop order messages." },
+  "order.dispatched": { en: "Order update from {seller}: your order {reference} is on its way. Reply STOP to stop order messages." },
+  "order.cancelled": { en: "Order update from {seller}: your order {reference} was cancelled. Reply STOP to stop order messages." },
 
   // ---- phone connection
   "device.code": { en: "Your one-time code to connect this phone is {code}. It works once and expires in {minutes} minutes. Do not share it." },
