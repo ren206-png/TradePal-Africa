@@ -11,7 +11,7 @@
 export const OFFLINE_PAGE = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TradePal drafts</title>
-<style>body{font:16px system-ui,sans-serif;margin:0;padding:1rem;max-width:34rem}input,select,button{font:inherit;padding:.5rem;margin:.25rem 0;width:100%;box-sizing:border-box}
+<style>body{font:16px system-ui,sans-serif;margin:0;padding:1rem;max-width:34rem}label{display:block;margin:.25rem 0}label span{display:block;font-size:.85rem;color:#555}.changed{border-color:#8a4b00;background:#fff8ee}.thumb{display:inline-block;margin:.25rem;text-align:center}.thumb img{width:84px;height:84px;object-fit:cover;border:1px solid #bbb}.ok{color:#075}input[type=checkbox]{width:auto;margin:.25rem .5rem .25rem 0}label.chk{display:flex;align-items:center}input,select,button{font:inherit;padding:.5rem;margin:.25rem 0;width:100%;box-sizing:border-box}
 button{cursor:pointer}.card{border:1px solid #bbb;border-radius:.5rem;padding:.75rem;margin:.5rem 0}.muted{color:#555}.warn{color:#8a4b00}.err{color:#a00}.row{display:flex;gap:.5rem}.row>*{flex:1}</style>
 </head><body>
 <h1>Drafts</h1>
@@ -25,6 +25,17 @@ button{cursor:pointer}.card{border:1px solid #bbb;border-radius:.5rem;padding:.7
 <div class="row"><input id="rfrom" type="date" aria-label="From"><input id="rto" type="date" aria-label="To"></div>
 <div class="row"><button id="rview">View</button><button id="rcsv">Download CSV</button></div>
 <div id="rout"></div></div>
+<div id="catalogBox" hidden><h2>Products</h2>
+<p class="muted">Change prices, the shop listing and details for many products at once. Nothing is saved until you have reviewed it.</p>
+<div class="row"><button id="cload">Load my products</button><button id="ccsv">Download CSV</button></div>
+<p id="cmsg" class="muted" role="status"></p>
+<input id="csearch" placeholder="Search products" aria-label="Search products" hidden>
+<div id="clist"></div>
+<div class="row"><button id="creview" hidden>Review my changes</button></div>
+<details><summary>Or change many products with a CSV file</summary>
+<p class="muted">Download the CSV, change it in a spreadsheet, then choose it here. Leave a cell empty to keep it as it is; write CLEAR to remove a value.</p>
+<input id="cfile" type="file" accept=".csv,text/csv" aria-label="CSV file"><button id="cpreview">Review the CSV</button></details>
+<div id="cplan"></div></div>
 <div id="draftsBox" hidden>
 <p class="warn"><strong>A draft is not a recorded sale or expense.</strong> It only becomes one after you sync it and confirm it while online.</p>
 <div class="card"><select id="kind" aria-label="Type"><option value="SALE">Sale</option><option value="EXPENSE">Expense</option></select>
@@ -106,8 +117,8 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
     $("net").textContent = navigator.onLine ? "Online" : "Offline: drafts are kept on this phone until you reconnect.";
     getMeta("session").then(function (s) {
       meta = s || {}; $("login").hidden = !!meta.token; $("app").hidden = !meta.token;
-      var f = meta.features || { drafts: true, reports: false };
-      $("draftsBox").hidden = !meta.token || !f.drafts; $("reportsBox").hidden = !meta.token || !f.reports;
+      var f = meta.features || { drafts: true, reports: false, catalog: false };
+      $("draftsBox").hidden = !meta.token || !f.drafts; $("reportsBox").hidden = !meta.token || !f.reports; $("catalogBox").hidden = !meta.token || !f.catalog;
       if (meta.token && f.drafts) loadServer();
     });
   }
@@ -172,6 +183,143 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
       return r.blob().then(function (b) { var a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "tradepal-" + $("rname").value + ".csv"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000); });
     }).catch(function (e) { say(e.message, "err"); });
   };
+
+  // ---- products: bulk edit, CSV and photos (needs a connection; nothing is kept on the phone)
+  function csay(t, cls) { var m = $("cmsg"); m.textContent = t; m.className = cls || "muted"; }
+  var cat = { rows: [], edits: {}, batchId: null, csv: null, can: {}, cur: "" };
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+  function newId() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/[^A-Za-z0-9-]/g, ""); }
+  function editCount() { return Object.keys(cat.edits).length; }
+  function resetReview() { cat.batchId = null; cat.csv = null; $("cplan").textContent = ""; var n = editCount(); $("creview").hidden = !n; $("creview").textContent = "Review " + n + " change(s)"; }
+  function setEdit(row, field, value, original) {
+    var e = cat.edits[row.sku] || (cat.edits[row.sku] = {});
+    if (JSON.stringify(value) === JSON.stringify(original)) delete e[field]; else e[field] = value;
+    if (!Object.keys(e).length) delete cat.edits[row.sku];
+    resetReview();
+  }
+  function lab(text, ctrl) { var l = el("label"); l.appendChild(el("span", "", text)); l.appendChild(ctrl); return l; }
+  function textInput(value, onChange, mode) { var i = el("input"); i.value = value; if (mode) i.inputMode = mode; i.oninput = function () { onChange(i.value, i); }; return i; }
+  function renderCatalog() {
+    var box = $("clist"), q = $("csearch").value.trim().toLowerCase(); box.textContent = "";
+    var shown = cat.rows.filter(function (r) { return !q || (r.sku + " " + r.productName + " " + r.variantName).toLowerCase().indexOf(q) !== -1; });
+    shown.slice(0, 100).forEach(function (r) {
+      var c = el("div", "card" + (cat.edits[r.sku] ? " changed" : ""));
+      c.appendChild(el("strong", "", r.productName + (r.variantName && r.variantName !== r.productName ? " - " + r.variantName : "")));
+      c.appendChild(el("div", "muted", r.sku + " - sold by the " + r.baseUnit));
+      var mark = function () { c.className = "card" + (cat.edits[r.sku] ? " changed" : ""); };
+      var price = textInput(r.retailPrice || "", function (v) { setEdit(r, "retailPrice", v.trim() === "" ? null : v.trim(), r.retailPrice); mark(); }, "decimal"); price.disabled = !cat.can.edit;
+      c.appendChild(lab("Price (" + cat.cur + ")", price));
+      var listed = el("input"); listed.type = "checkbox"; listed.checked = r.listed; listed.disabled = !cat.can.list;
+      listed.onchange = function () { setEdit(r, "listed", listed.checked, r.listed); mark(); };
+      var ll = el("label", "chk"); ll.appendChild(listed); ll.appendChild(document.createTextNode(" On the shop")); c.appendChild(ll);
+      var low = textInput(r.lowStockThreshold === null ? "" : String(r.lowStockThreshold), function (v) { var t = v.trim(); setEdit(r, "lowStockThreshold", t === "" ? null : /^\d{1,7}$/.test(t) ? Number(t) : t, r.lowStockThreshold); mark(); }, "numeric"); low.disabled = !cat.can.edit;
+      c.appendChild(lab("Warn me when stock is at or below", low));
+      var st = el("select"); ["DRAFT", "PUBLISHED", "ARCHIVED"].forEach(function (s) { var o = el("option", "", s); o.value = s; if (s === r.status) o.selected = true; st.appendChild(o); });
+      st.disabled = !cat.can.edit; st.onchange = function () { setEdit(r, "status", st.value, r.status); mark(); }; c.appendChild(lab("Status", st));
+      var nm = textInput(r.productName, function (v) { setEdit(r, "productName", v.trim(), r.productName); mark(); }); nm.disabled = !cat.can.edit; c.appendChild(lab("Product name", nm));
+      var pb = el("button", "", "Photos (" + r.photos + ")"); var panel = el("div"); pb.onclick = function () { if (panel.firstChild) { panel.textContent = ""; return; } photoPanel(r, panel, pb); }; c.appendChild(pb); c.appendChild(panel);
+      box.appendChild(c);
+    });
+    if (shown.length > 100) line(box, "Showing 100 of " + shown.length + ". Search to narrow it down.", "muted");
+    if (!shown.length) line(box, cat.rows.length ? "No product matches." : "No products yet.", "muted");
+  }
+  function loadCatalog(keep) {
+    return api("/catalog").then(function (x) {
+      if (!x.ok) { csay(x.body.error || "Could not load your products.", "err"); return; }
+      cat.rows = x.body.rows; cat.cur = x.body.currencyCode; cat.can = x.body.can || {}; cat.edits = {}; resetReview(); $("csearch").hidden = false; renderCatalog();
+      if (x.body.truncated) csay("Showing the first " + x.body.rows.length + " of " + x.body.total + " products. Use the CSV for the rest.", "muted"); else if (!keep) csay("");
+    }).catch(function (e) { csay(e.message, "err"); });
+  }
+  function showPlan(plan, apply) {
+    var box = $("cplan"); box.textContent = ""; var shown = 0;
+    plan.rows.forEach(function (r) {
+      if (r.action === "NOOP") return; shown++;
+      var c = el("div", "card"); line(c, r.sku + (r.action === "ERROR" ? ": PROBLEM, not saved" : r.action === "CREATE" ? ": NEW product" : ": change"), r.action === "ERROR" ? "err" : "");
+      r.changes.forEach(function (t) { line(c, t, "muted"); }); r.errors.forEach(function (t) { line(c, t, "err"); }); r.warnings.forEach(function (t) { line(c, t, "warn"); }); box.appendChild(c);
+    });
+    var k = plan.counts; line(box, k.create + " new, " + k.update + " changed, " + k.noop + " unchanged, " + k.error + " with a problem.", k.error ? "err" : "muted");
+    if (!shown) line(box, "Nothing would change.", "muted");
+    if (plan.canApply) { var b = el("button", "", "Save " + (k.create + k.update) + " change(s) now"); b.onclick = apply; box.appendChild(b); }
+    else if (k.error) line(box, "Fix the problems and review again. Nothing is saved while any row has a problem.", "warn");
+  }
+  function review(body, applyBody) {
+    if (!navigator.onLine) { csay("You need a connection to save product changes.", "err"); return; }
+    api("/catalog/preview", body).then(function (x) {
+      if (!x.ok && !(x.body && x.body.plan)) { csay(x.body.error || "Could not review the changes.", "err"); return; }
+      cat.batchId = cat.batchId || newId(); csay("");
+      showPlan(x.body.plan || { rows: [], counts: { create: 0, update: 0, noop: 0, error: 1 }, canApply: false }, function () {
+        api("/catalog/apply", Object.assign({ batchId: cat.batchId }, applyBody)).then(function (y) {
+          if (!y.ok) { if (y.body.plan) showPlan(y.body.plan, function () {}); csay(y.body.error || "Could not save.", "err"); return; }
+          csay((y.body.replayed ? "Already saved. " : "Saved. ") + y.body.created + " new, " + y.body.updated + " changed.", "ok"); cat.edits = {}; return loadCatalog(true).then(function () { $("cplan").textContent = ""; });
+        }).catch(function (e) { csay(e.message === "Failed to fetch" ? "Could not reach TradePal. Press Save again: it will not be saved twice." : e.message, "err"); });
+      });
+    }).catch(function (e) { csay(e.message, "err"); });
+  }
+  function rowsFromEdits() { return Object.keys(cat.edits).map(function (sku) { var r = cat.rows.filter(function (x) { return x.sku === sku; })[0]; return Object.assign({ sku: sku, rev: r.rev }, cat.edits[sku]); }); }
+  $("cload").onclick = loadCatalog; $("csearch").oninput = renderCatalog;
+  $("creview").onclick = function () {
+    var rows = rowsFromEdits(), bad = rows.filter(function (r) { return typeof r.lowStockThreshold === "string"; })[0];
+    if (bad) { csay(bad.sku + ": the warning level must be a whole number, like 5.", "err"); return; }
+    review({ rows: rows }, { rows: rows });
+  };
+  $("cpreview").onclick = function () {
+    var f = $("cfile").files[0]; if (!f) { csay("Choose a CSV file first.", "err"); return; }
+    if (f.size > 250000) { csay("That file is too big. Use at most 200 products at a time.", "err"); return; }
+    var rd = new FileReader(); rd.onload = function () { cat.csv = String(rd.result); cat.batchId = null; review({ csv: cat.csv }, { csv: cat.csv }); }; rd.onerror = function () { csay("Could not read that file.", "err"); }; rd.readAsText(f);
+  };
+  $("ccsv").onclick = function () {
+    if (!navigator.onLine) { csay("You need a connection to download.", "err"); return; }
+    fetch("/m/api/catalog.csv", { headers: { Authorization: "Bearer " + meta.token }, cache: "no-store" }).then(function (r) {
+      if (r.status === 401) return wipe().then(function () { throw new Error("Please connect this phone again."); });
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || "Could not download."); });
+      return r.blob().then(function (b) { var a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "tradepal-products.csv"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000); });
+    }).catch(function (e) { csay(e.message, "err"); });
+  };
+  // photos: shrink on the phone first (about 1000 px, JPEG), so an upload is small even on a slow connection
+  function shrink(file) {
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(file), im = new Image();
+      im.onload = function () {
+        var k = Math.min(1, 1000 / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement("canvas");
+        cv.width = Math.max(50, Math.round(im.naturalWidth * k)); cv.height = Math.max(50, Math.round(im.naturalHeight * k));
+        cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+        var q = 0.8; (function next() { cv.toBlob(function (b) { if (!b) rej(new Error("Could not prepare the photo.")); else if (b.size > 380 * 1024 && q > 0.4) { q -= 0.15; next(); } else res(b); }, "image/jpeg", q); })();
+      };
+      im.onerror = function () { URL.revokeObjectURL(url); rej(new Error("This phone cannot read that file as a photo.")); }; im.src = url;
+    });
+  }
+  function photoPanel(r, panel, btn) {
+    panel.textContent = "";
+    var grid = el("div"); panel.appendChild(grid);
+    var add = el("input"); add.type = "file"; add.accept = "image/*"; add.setAttribute("aria-label", "Add a photo of " + r.productName);
+    var note = el("div", "muted"); panel.appendChild(lab("Add a photo", add)); panel.appendChild(note);
+    function reload() {
+      grid.textContent = "";
+      return api("/catalog/photos/" + r.productId).then(function (x) {
+        if (!x.ok) { note.textContent = x.body.error || "Could not load photos."; return; }
+        btn.textContent = "Photos (" + x.body.photos.length + ")";
+        x.body.photos.forEach(function (p, i) {
+          var t = el("div", "thumb"), im = el("img"); im.alt = r.productName + " photo " + (i + 1); t.appendChild(im);
+          fetch("/m/api/catalog/photo/" + p.id, { headers: { Authorization: "Bearer " + meta.token } }).then(function (rr) { return rr.blob(); }).then(function (b) { im.src = URL.createObjectURL(b); }).catch(function () {});
+          if (i === 0) t.appendChild(el("div", "muted", "Main photo"));
+          else { var m = el("button", "", "Make main"); m.onclick = function () { api("/catalog/photo/" + p.id + "/main", {}).then(reload); }; t.appendChild(m); }
+          var d = el("button", "", "Remove"); d.onclick = function () { if (window.confirm("Remove this photo?")) api("/catalog/photo/" + p.id, undefined, "DELETE").then(reload); }; t.appendChild(d);
+          grid.appendChild(t);
+        });
+        if (!x.body.photos.length) note.textContent = "No photos yet. Shoppers see the first photo next to the product.";
+      });
+    }
+    add.onchange = function () {
+      var f = add.files[0]; if (!f) return; if (!navigator.onLine) { note.textContent = "You need a connection to add a photo."; return; }
+      note.textContent = "Preparing the photo...";
+      shrink(f).then(function (blob) {
+        note.textContent = "Sending...";
+        return fetch("/m/api/catalog/photos/" + r.productId, { method: "POST", headers: { Authorization: "Bearer " + meta.token, "Content-Type": "image/jpeg" }, body: blob, cache: "no-store" });
+      }).then(function (resp) { return resp.json().catch(function () { return {}; }).then(function (j) { if (resp.status === 401) return wipe(); note.textContent = resp.ok ? (resp.status === 200 ? "That photo was already there." : "Photo added.") : (j.error || "Could not add the photo."); add.value = ""; return reload(); }); })
+        .catch(function (e) { note.textContent = e.message; });
+    };
+    reload();
+  }
   window.addEventListener("online", show); window.addEventListener("offline", show);
   open().then(show);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/m/sw.js", { scope: "/m/" }).catch(function () {});

@@ -18,7 +18,10 @@ export const offlineSwitchOn = (): boolean => process.env["OFFLINE_DRAFTS_ENABLE
 /** Phase 8: the same phone session can also download bookkeeping reports, behind its own platform switch and the per-business `reportsV2` flag. */
 export const FLAG_REPORTS_WEB = "reportsV2";
 export const reportsWebSwitchOn = (): boolean => process.env["REPORTS_WEB_ENABLED"] === "true";
-export const webRouterEnabled = (): boolean => offlineSwitchOn() || reportsWebSwitchOn();
+/** The same phone session can also edit the product catalog in bulk and manage product photos: its own platform switch and the per-business `catalogV2` flag. */
+export const FLAG_CATALOG_WEB = "catalogV2";
+export const catalogWebSwitchOn = (): boolean => process.env["CATALOG_WEB_ENABLED"] === "true";
+export const webRouterEnabled = (): boolean => offlineSwitchOn() || reportsWebSwitchOn() || catalogWebSwitchOn();
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
 const codeKey = (code: string): string => sha(`connect-code:${code}`);
 const tokenKey = (token: string): string => sha(`device-token:${token}`);

@@ -124,6 +124,9 @@ model Business {
   forecastScores          ForecastScore[]
   forecastGateEvents      ForecastGateEvent[]
   products                Product[]
+  productImages           ProductImage[]
+  deliveryShipments       DeliveryShipment[]
+  deliveryShipmentEvents  DeliveryShipmentEvent[]
   productVariants         ProductVariant[]
   variantAliases          VariantAlias[]
   packConversions         PackConversion[]
@@ -1195,8 +1198,33 @@ model Product {
 
   business Business         @relation(fields: [businessId], references: [id])
   variants ProductVariant[]
+  images   ProductImage[]
 
   @@index([businessId, status])
+}
+
+/// A product photo, stored in the database and served from our own address (never from a seller-supplied link, which would hand every
+/// shopper's address to a third party and is blocked by the security headers anyway). Removing a photo keeps the row and empties the bytes.
+model ProductImage {
+  id          String    @id @default(uuid())
+  businessId  String
+  productId   String
+  position    Int       @default(0)
+  contentType String
+  bytes       Int
+  width       Int
+  height      Int
+  sha256      String
+  data        Bytes
+  createdBy   String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz()
+  removedAt   DateTime? @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@index([productId, removedAt])
+  @@index([businessId])
 }
 
 model ProductVariant {
@@ -2340,6 +2368,7 @@ model StoreOrder {
   refunds       StoreRefundRequest[]
   exceptions    PaymentException[]
   cases         SupportCase[]
+  shipments     DeliveryShipment[]
 
   @@unique([businessId, reference])
   @@unique([basketId, businessId])
@@ -3485,4 +3514,67 @@ model JobControl {
   reason    String?
   changedBy String?
   changedAt DateTime @default(now()) @db.Timestamptz()
+}
+
+// ------------------------------------------------------------------------------------ couriers
+
+enum CourierJobStatus {
+  BOOKED //      the courier (or the seller's own rider) has the job
+  PICKED_UP //   the parcel left the seller
+  IN_TRANSIT //  on its way to the shopper
+  DELIVERED //   the courier says it arrived (the order itself completes only with the shopper's hand-over code)
+  FAILED //      the courier could not deliver
+  CANCELLED //   called off before pick-up
+  RETURNED //    came back to the seller
+}
+
+/// One delivery job for a store order. "manual" is the seller's own rider or any outside courier the seller tracks by hand; any other
+/// courier id is an adapter registered in src/couriers. The courier's fee is the SELLER's cost: it is never added to the shopper's total.
+model DeliveryShipment {
+  id             String         @id @default(uuid())
+  businessId     String
+  orderId        String
+  courier        String
+  externalId     String?
+  trackingRef    String?
+  trackingUrl    String?
+  riderName      String?
+  riderPhone     String?
+  status         CourierJobStatus @default(BOOKED)
+  feeMinor       BigInt?
+  currencyCode   String?
+  failureReason  String?
+  idempotencyKey String
+  lastEventAt    DateTime?      @db.Timestamptz()
+  createdBy      String?
+  createdAt      DateTime       @default(now()) @db.Timestamptz()
+  updatedAt      DateTime       @updatedAt @db.Timestamptz()
+
+  business Business                @relation(fields: [businessId], references: [id])
+  order    StoreOrder              @relation(fields: [orderId], references: [id])
+  events   DeliveryShipmentEvent[]
+
+  @@unique([businessId, idempotencyKey])
+  @@unique([courier, externalId])
+  @@index([orderId, status])
+  @@index([businessId, status])
+}
+
+/// Append-only history of a shipment: who said what, when. A courier's own event id makes a repeated callback a no-op.
+model DeliveryShipmentEvent {
+  id              String         @id @default(uuid())
+  businessId      String
+  shipmentId      String
+  status          CourierJobStatus
+  source          String // SELLER | COURIER | SYSTEM
+  externalEventId String?
+  detail          String?
+  occurredAt      DateTime       @db.Timestamptz()
+  createdAt       DateTime       @default(now()) @db.Timestamptz()
+
+  business Business         @relation(fields: [businessId], references: [id])
+  shipment DeliveryShipment @relation(fields: [shipmentId], references: [id])
+
+  @@unique([shipmentId, externalEventId])
+  @@index([shipmentId, occurredAt])
 }

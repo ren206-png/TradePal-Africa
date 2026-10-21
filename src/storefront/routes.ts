@@ -13,6 +13,7 @@ import {
 } from "../domain/store/orders.js";
 import { requestRefund } from "../domain/store/refunds.js";
 import { publicCatalog } from "../domain/store/storefront.js";
+import { loadPublicImage } from "../domain/productImages.js";
 import { getTenantScopedClient } from "../db/tenantScope.js";
 import { isFeatureEnabled } from "../domain/featureFlags.js";
 import { ORDER_UPDATES_NOTICE, deriveUpdatesCode, updatesLink } from "../messaging/consent.js";
@@ -184,6 +185,17 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
       }
     }
     res.redirect(303, "/basket");
+  }));
+
+  // A product photo, only while its product is on sale in an open shop (anything else is the same 404). The id is random; the picture is
+  // checked again on every request, so unlisting or suspending takes it down at once (browsers may keep a copy for an hour).
+  router.get("/shop-image/:id", limit(read, "read"), asyncHandler(async (req, res) => {
+    const img = await loadPublicImage(prisma, String(req.params["id"]));
+    if (!img) { res.status(404).type("text/plain").send("Not found"); return; }
+    const etag = `"${img.sha256.slice(0, 32)}"`;
+    res.set({ "Content-Type": img.contentType, "X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=3600", ETag: etag, "Content-Security-Policy": "default-src 'none'", "Cross-Origin-Resource-Policy": "same-origin" });
+    if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
+    res.send(img.data);
   }));
 
   router.get("/basket", limit(read, "read"), asyncHandler(async (req, res) => {

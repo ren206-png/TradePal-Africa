@@ -107,7 +107,11 @@ export async function setZoneActive(prisma: PrismaClient, businessId: string, na
 
 /** Shows a variant on the storefront. It must have a retail price a shopper can actually pay. */
 export async function listVariant(prisma: PrismaClient, businessId: string, variantId: string): Promise<void> {
-  const scoped = getTenantScopedClient(prisma, businessId);
+  await listVariantScoped(getTenantScopedClient(prisma, businessId), businessId, variantId);
+}
+
+/** The same, on a scoped client, so a bigger operation (a bulk edit) can do it inside its own transaction. */
+export async function listVariantScoped(scoped: TenantScopedClient, businessId: string, variantId: string): Promise<void> {
   const variant = await scoped.productVariant.findUnique({ where: { id: variantId } });
   if (!variant || variant.status === "ARCHIVED") throw new StoreError("NOT_FOUND", "Product not found.");
   const list = await retailListOf(scoped);
@@ -122,7 +126,10 @@ export async function listVariant(prisma: PrismaClient, businessId: string, vari
 }
 
 export async function unlistVariant(prisma: PrismaClient, businessId: string, variantId: string): Promise<void> {
-  const scoped = getTenantScopedClient(prisma, businessId);
+  await unlistVariantScoped(getTenantScopedClient(prisma, businessId), variantId);
+}
+
+export async function unlistVariantScoped(scoped: TenantScopedClient, variantId: string): Promise<void> {
   const r = await scoped.listing.updateMany({ where: { variantId, channel: "STOREFRONT" }, data: { status: "PAUSED" } });
   if (r.count !== 1) throw new StoreError("NOT_FOUND", "That product is not listed.");
 }
@@ -181,7 +188,12 @@ export interface PublicCatalog {
 }
 
 
-type VariantForItem = { id: string; name: string | null; baseUnit: string; trackStock: boolean; lowStockThreshold: number | null; product: { name: string; imageUrls: string[] }; packs: { normalizedName: string }[] };
+type VariantForItem = { id: string; productId: string; name: string | null; baseUnit: string; trackStock: boolean; lowStockThreshold: number | null; product: { name: string; imageUrls: string[] }; packs: { normalizedName: string }[] };
+
+async function mainImageUrl(scoped: TenantScopedClient, productId: string): Promise<string | null> {
+  const img = await scoped.productImage.findFirst({ where: { productId, removedAt: null }, orderBy: [{ position: "asc" }, { createdAt: "asc" }], select: { id: true } });
+  return img ? `/shop-image/${img.id}` : null;
+}
 
 /** One variant as a shopper sees it: name, availability label, and every unit it can be bought in with its price. Null if it cannot be priced. */
 export async function buildPublicItem(scoped: TenantScopedClient, businessId: string, v: VariantForItem, priceListId: string, at: Date): Promise<PublicItem | null> {
@@ -196,7 +208,8 @@ export async function buildPublicItem(scoped: TenantScopedClient, businessId: st
   if (options.length === 0) return null;
   return {
     variantId: v.id, name: v.product.name, variantName: v.name && v.name !== v.product.name ? v.name : null, baseUnit: v.baseUnit,
-    imageUrl: v.product.imageUrls[0] && /^https:\/\//.test(v.product.imageUrls[0]) ? v.product.imageUrls[0] : null, availability: av.label, options,
+    // Only photos we hold ourselves are shown. A link a seller typed in is never loaded: it would tell a third party who is shopping.
+    imageUrl: await mainImageUrl(scoped, v.productId), availability: av.label, options,
   };
 }
 
