@@ -36,7 +36,7 @@ export const deliverCallback = (prisma: PrismaClient, registry: AdapterRegistry,
 export async function drainInbox(prisma: PrismaClient, rounds = 4): Promise<void> {
   const handlers = buildTradeCallbackHandlers(prisma);
   for (let i = 0; i < rounds; i++) {
-    const r = await processInbox(prisma, handlers, { limit: 100 });
+    const r = await processInbox(prisma, handlers, { limit: 100, now: new Date(Date.now() + 50) }); // +50 ms: a real Postgres is fast enough that its default timestamps (rounded to the ms) can sit a hair ahead of the JS clock
     if (r.claimed === 0) return;
   }
 }

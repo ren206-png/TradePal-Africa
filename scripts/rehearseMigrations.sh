@@ -31,7 +31,7 @@ count() { psql "$URL" -Atqc "select count(*) from \"$1\"" 2>/dev/null || echo "m
 
 echo "== row counts before"
 declare -a BEFORE
-for t in "${TABLES[@]}"; do BEFORE+=("$(count "$t")"); printf '  %-18s %s\n' "$t" "${BEFORE[-1]}"; done
+for t in "${TABLES[@]}"; do c="$(count "$t")"; BEFORE+=("$c"); printf '  %-18s %s\n' "$t" "$c"; done
 
 echo "== prisma migrate deploy (scratch)"
 DATABASE_URL="$URL" npx prisma migrate deploy

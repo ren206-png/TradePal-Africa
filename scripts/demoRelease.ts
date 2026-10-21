@@ -190,7 +190,7 @@ export async function runReleaseDemo(log: (line: string) => void = () => undefin
     hook.use(createPawaPayBillingWebhookRouter(prisma));
     const signed = fake.signedCallback({ depositId: started.depositId, status: "COMPLETED" }, { authority: AUTHORITY, path: BILLING_CALLBACK_PATH });
     const cbRes = await request(hook).post(BILLING_CALLBACK_PATH).set("content-type", "application/json").set(signed.headers).send(signed.body.toString());
-    await processInbox(prisma, { "pawapay-billing": billingCallbackHandler(prisma) }, { limit: 50 });
+    await processInbox(prisma, { "pawapay-billing": billingCallbackHandler(prisma) }, { limit: 50, now: new Date(Date.now() + 50) });
     const ent = await getEntitlement(sl.scoped, sl.businessId);
     const sub = await sl.scoped.subscription.findFirstOrThrow({ where: {} });
     const inv = await prisma.invoice.findFirstOrThrow({ where: { subscriptionId: sub.id } });
@@ -201,7 +201,7 @@ export async function runReleaseDemo(log: (line: string) => void = () => undefin
     fake.complete(short.depositId, { amount: "1.00" });
     const sig2 = fake.signedCallback({ depositId: short.depositId, status: "COMPLETED" }, { authority: AUTHORITY, path: BILLING_CALLBACK_PATH });
     await request(hook).post(BILLING_CALLBACK_PATH).set("content-type", "application/json").set(sig2.headers).send(sig2.body.toString());
-    await processInbox(prisma, { "pawapay-billing": billingCallbackHandler(prisma) }, { limit: 50 });
+    await processInbox(prisma, { "pawapay-billing": billingCallbackHandler(prisma) }, { limit: 50, now: new Date(Date.now() + 50) });
     const billingExceptions = await prisma.billingException.count();
     log(`  A payment of the wrong amount from another business grants nothing and becomes a billing exception (${billingExceptions}).`);
     setBillingConfig(null);

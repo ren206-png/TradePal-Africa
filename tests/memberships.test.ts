@@ -112,12 +112,14 @@ describe("backfill of existing data (migration 20261020000200)", () => {
     await db.exec(backfillSql());
     await db.exec(backfillSql()); // second run changes nothing
 
-    const memberships = await prisma.membership.findMany({ where: { businessId: b.id }, orderBy: { createdAt: "asc" } });
-    expect(memberships.map((m) => [m.phoneNumber, m.role, m.status])).toEqual([
-      [owner.phoneNumber, "OWNER", "ACTIVE"],
-      [staff.phoneNumber, "SALES_CLERK", "ACTIVE"],
-      [gone.phoneNumber, "SALES_CLERK", "REVOKED"],
-    ]);
+    const memberships = await prisma.membership.findMany({ where: { businessId: b.id }, orderBy: { phoneNumber: "asc" } }); // the backfill inserts all rows in one statement (one timestamp), so order by phone
+    expect(memberships.map((m) => [m.phoneNumber, m.role, m.status])).toEqual(
+      ([
+        [owner.phoneNumber, "OWNER", "ACTIVE"],
+        [staff.phoneNumber, "SALES_CLERK", "ACTIVE"],
+        [gone.phoneNumber, "SALES_CLERK", "REVOKED"],
+      ] as string[][]).sort((x, y) => x[0]!.localeCompare(y[0]!)),
+    );
     expect(await prisma.shop.count({ where: { businessId: b.id } })).toBe(1);
     const after = await findMembershipDrift(prisma);
     expect(after.merchantsWithoutMembership).toEqual([]);

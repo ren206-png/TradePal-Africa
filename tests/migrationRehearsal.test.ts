@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
+import pg from "pg";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { handleCommand, type CommandContext } from "../src/commands/commandRouter.js";
@@ -28,6 +29,31 @@ const EXPANSION = ALL.filter((n) => n >= FIRST_EXPANSION);
 const sql = (n: string) => fs.readFileSync(path.join(DIR, n, "migration.sql"), "utf8");
 
 let db: PGlite;
+// With TEST_PG_ADMIN_URL set, the same rehearsal runs on a REAL local Postgres (as a plain non-superuser owner), see tests/helpers/db.ts.
+const REAL_URL = process.env["TEST_PG_ADMIN_URL"];
+let realUrl = "";
+let realClient: pg.Client | null = null;
+let realName = "";
+async function makeRealDb(admin: string): Promise<PGlite> {
+  realName = `rehearse_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
+  const a = new pg.Client({ connectionString: admin });
+  await a.connect();
+  await a.query(`DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'rehearsal_owner') THEN CREATE ROLE rehearsal_owner LOGIN PASSWORD 'x'; END IF; END $$`);
+  await a.query(`CREATE DATABASE "${realName}" OWNER rehearsal_owner`);
+  await a.end();
+  const u = new URL(admin);
+  u.username = "rehearsal_owner";
+  u.password = "x";
+  u.pathname = `/${realName}`;
+  realUrl = u.toString();
+  realClient = new pg.Client({ connectionString: realUrl, types: { getTypeParser: (oid: number, f?: string) => (oid === 20 ? (v: string) => Number(v) : pg.types.getTypeParser(oid, f as "text")) } as never });
+  await realClient.connect();
+  return {
+    exec: async (t: string) => { await realClient!.query(t); },
+    query: async (t: string, p?: unknown[]) => ({ rows: (await realClient!.query(t, p as never[])).rows }),
+    close: async () => { await realClient!.end(); const b = new pg.Client({ connectionString: admin }); await b.connect(); await b.query(`DROP DATABASE IF EXISTS "${realName}" WITH (FORCE)`); await b.end(); },
+  } as unknown as PGlite;
+}
 const legacyColumns = new Map<string, string[]>();
 type Snapshot = { rowHashes: Record<string, string>; counts: Record<string, number>; meaning: Record<string, unknown> };
 let before: Snapshot;
@@ -124,7 +150,7 @@ async function snapshot(): Promise<Snapshot> {
 }
 
 beforeAll(async () => {
-  db = new PGlite();
+  db = REAL_URL ? await makeRealDb(REAL_URL) : new PGlite();
   for (const n of LEGACY) await db.exec(sql(n));
   for (const t of TABLES) {
     const r = await db.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position`, [t]);
@@ -218,10 +244,10 @@ describe("after every expansion migration (scenario 22)", () => {
 describe("the application runs against the migrated legacy data", () => {
   it("answers /today, /debt and /undo for a legacy merchant, and keeps every expansion command off", async () => {
     // a Prisma client over the same in-process database (the schema engine cannot talk to PGlite, the query engine can)
-    const server = new PGLiteSocketServer({ db, port: 0, host: "127.0.0.1", maxConnections: 10 });
-    await server.start();
-    const port = server.getServerConn().split(":").pop();
-    const prisma = new PrismaClient({ datasourceUrl: `postgresql://postgres:postgres@127.0.0.1:${port}/postgres` });
+    const server = REAL_URL ? null : new PGLiteSocketServer({ db, port: 0, host: "127.0.0.1", maxConnections: 10 });
+    if (server) await server.start();
+    const port = server ? server.getServerConn().split(":").pop() : "";
+    const prisma = new PrismaClient({ datasourceUrl: REAL_URL ? realUrl : `postgresql://postgres:postgres@127.0.0.1:${port}/postgres` });
     try {
       const scoped = getTenantScopedClient(prisma, ids.bizNG);
       const ctx: CommandContext = { prisma, scopedPrisma: scoped, businessId: ids.bizNG, currencyCode: "NGN", minorUnitExp: 2, timezone: "Africa/Lagos", languageCode: "en", merchantId: "m1", merchantRole: "OWNER" };
@@ -238,7 +264,7 @@ describe("the application runs against the migrated legacy data", () => {
       expect(e.state).toBeDefined();
     } finally {
       await prisma.$disconnect();
-      await server.stop();
+      if (server) await server.stop();
     }
   });
 });

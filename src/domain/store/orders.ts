@@ -159,6 +159,9 @@ async function placeForSeller(
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const placed = await withScopedTransaction(scoped, async (tx) => {
+        // One placement at a time per seller for the length of this transaction: the next order number is read from the existing orders, so two
+        // simultaneous placements used to pick the same number and all but one had to retry (6 of 10 asked to "try again" on a real Postgres).
+        await (tx as unknown as { $executeRaw: (q: TemplateStringsArray, ...v: unknown[]) => Promise<number> }).$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"store-order-ref:" + businessId}))`;
         const reference = await nextStoreReference(tx);
         const order = await tx.storeOrder.create({
           data: {

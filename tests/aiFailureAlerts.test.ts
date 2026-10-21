@@ -34,6 +34,8 @@ const ok = (id = "email-1") => new Response(JSON.stringify({ id }), { status: 20
 const deps = (fetchImpl: typeof fetch): AlertEmailDeps => ({ apiKey: "k", from: "alerts@tradepal.africa", to: ["ren@example.com"], fetchImpl });
 let base = 0;
 /** Rows written by the current test only (the table is append-only, so earlier tests' rows stay). */
+// A real Postgres can stamp two quick inserts with the same millisecond; tests that read rows back in order pause between them.
+const tick = () => new Promise((r) => setTimeout(r, 3));
 const rows = async () => (await prisma.alertDelivery.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] })).slice(base);
 
 describe("classifying an AI provider failure (scenario 26)", () => {
@@ -75,6 +77,7 @@ describe("alerts that are verified to deliver", () => {
     const f = vi.fn().mockResolvedValueOnce(new Response("invalid api key", { status: 403 })).mockResolvedValueOnce(ok("msg-2"));
     const incident = { service: "worker", title: "AI provider authentication failure (DeepSeek)", detail: "d" };
     await reportIncident(deps(f), incident);
+    await tick();
     await reportIncident(deps(f), incident);
     await reportIncident(deps(f), incident); // delivered already: this one is deduped
     expect(f).toHaveBeenCalledTimes(2);
@@ -85,6 +88,7 @@ describe("alerts that are verified to deliver", () => {
 
   it("records a network failure, and says so when no alert channel is configured at all", async () => {
     await reportIncident(deps(vi.fn().mockRejectedValue(new TypeError("fetch failed"))), { service: "worker", title: "T1", detail: "d" });
+    await tick();
     await reportIncident(undefined, { service: "worker", title: "T2", detail: "d" });
     await reportIncident(undefined, { service: "worker", title: "T2", detail: "again" }); // once per window
     const r = await rows();
@@ -96,8 +100,10 @@ describe("alerts that are verified to deliver", () => {
   it("a channel check proves the channel now and is recorded as a check", async () => {
     const good = await verifyAlertChannel(deps(vi.fn().mockResolvedValue(ok("chk-1"))));
     expect(good).toMatchObject({ delivered: true, providerMessageId: "chk-1" });
+    await tick();
     const bad = await verifyAlertChannel(deps(vi.fn().mockResolvedValue(new Response("nope", { status: 401 }))));
     expect(bad.delivered).toBe(false);
+    await tick();
     const none = await verifyAlertChannel(undefined);
     expect(none.delivered).toBe(false);
     expect((await rows()).map((x) => [x.kind, x.status])).toEqual([["CHANNEL_CHECK", "DELIVERED"], ["CHANNEL_CHECK", "FAILED"], ["CHANNEL_CHECK", "FAILED"]]);
