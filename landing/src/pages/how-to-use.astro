@@ -96,6 +96,24 @@ const faqs = [
       </a>
     </div>
 
+    <section aria-labelledby="video-title" class="mt-12">
+      <h2 id="video-title" class="display text-2xl font-semibold text-ink">Watch it in one minute</h2>
+      <video
+        class="mt-4 w-full rounded-xl border border-ink/10 bg-ink"
+        controls
+        playsinline
+        preload="none"
+        poster="/videos/how-to-use-poster.jpg"
+        width="1280"
+        height="720"
+      >
+        <source src="/videos/how-to-use.mp4" type="video/mp4" />
+        <track kind="captions" src="/videos/how-to-use.en.vtt" srclang="en" label="English" default />
+        Your browser cannot play this video. The steps are written out below.
+      </video>
+      <p class="mt-2 text-sm text-ink/60">With a voice-over and English captions. The names and amounts in the video are made up.</p>
+    </section>
+
     <nav aria-label="On this page" class="mt-12 rounded-xl border border-ink/10 bg-paper-2 p-5 text-sm">
       <p class="font-bold text-ink">On this page</p>
       <ul class="mt-2 grid gap-1 text-ink/75 sm:grid-cols-2">
