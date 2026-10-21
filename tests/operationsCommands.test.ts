@@ -47,7 +47,7 @@ describe("all new flags OFF: existing behaviour is identical (scenario 25)", () 
         "/undo - reverse the most recent transaction",
         "/help - show this message",
         "",
-        'You can also just tell me about a sale, expense or debt in plain language, e.g. "sold 2 bread for 500".',
+        'You can also just tell me about a sale, expense or debt in plain language, e.g. "sold 2 bread for 500". The slash is optional: "today", "debts" and "paid Amina 300" work too.',
       ].join("\n"),
     );
   });

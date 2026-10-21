@@ -78,6 +78,83 @@ function sameLetters(a: string, b: string): boolean {
   return [...a].sort().join("") === [...b].sort().join("");
 }
 
+// ---------------------------------------------------------------------------------------------------- commands with a name or an amount
+
+/**
+ * Commands that carry a name or an amount, typed without the slash: "paid Amina 300", "customer Amina", "add staff 0803...". The words must
+ * be EXACT (no typo tolerance: these change records), the shape must match exactly, and a few are only read as a command when the data
+ * agrees:
+ *  - "paid <name> <amount>" is a debt payment ONLY when <name> is an existing customer who owes money; otherwise it is left to the normal
+ *    reader ("paid transport 1500" is an expense, as before);
+ *  - "customer <name>" only for an existing customer (looking someone up must not create them);
+ *  - "debt <name> <amount>" is refused when the name contains words that make it a sentence ("debt collected from Amina 500").
+ * A message that does not fit is NOT a command and goes to the normal reader. Voice notes are never read this way (a mis-heard word must not
+ * change a record). The reply says how the message was read, so a wrong guess is visible at once.
+ */
+export interface BareArgsLookups {
+  customerExists(name: string): Promise<boolean>;
+  customerHasOpenDebt(name: string): Promise<boolean>;
+}
+
+export interface BareArgsMatch {
+  /** The slash command to run. */
+  command: string;
+  /** Added under the reply so the person sees how the message was understood. */
+  hint: string;
+}
+
+const AMOUNT = String.raw`\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?`;
+const PHONE = String.raw`\+?\d[\d ()-]{6,18}\d`;
+const SENTENCE_WORDS = /\b(from|collected|received|repaid|owes|owed|paid|bought|sold|for|at|to)\b/i;
+const amountOf = (a: string): string => a.replace(/,/g, "");
+const tidy = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+export async function matchBareCommandWithArgs(text: string, lookups: BareArgsLookups): Promise<BareArgsMatch | null> {
+  const t = tidy(text).replace(/[.!?]+$/, "");
+  if (!t || t.startsWith("/") || t.length > 160) return null;
+  let m: RegExpExecArray | null;
+  const out = (command: string, check?: string): BareArgsMatch => ({ command, hint: `(I read that as: ${command}.${check ? ` Not what you meant? Check with ${check}.` : ""})` });
+
+  // read-only lookups
+  if ((m = /^customer\s+(.+)$/i.exec(t))) {
+    const name = m[1]!;
+    if (new RegExp(`^(?:${AMOUNT})$`).test(name.split(" ").pop()!)) return null; // "customer paid 500" is a sentence
+    return (await lookups.customerExists(name)) ? out(`/customer ${name}`) : null;
+  }
+  // debts
+  if ((m = new RegExp(`^debt\\s+(.+?)\\s+(${AMOUNT})(\\s+due\\s+\\d{4}-\\d{2}-\\d{2})?$`, "i").exec(t))) {
+    const name = m[1]!;
+    if (SENTENCE_WORDS.test(name) || name.split(" ").length > 5) return null;
+    return out(`/debt ${name} ${amountOf(m[2]!)}${m[3] ?? ""}`, `/customer ${name}`);
+  }
+  if ((m = new RegExp(`^paid\\s+(.+?)\\s+(${AMOUNT})$`, "i").exec(t))) {
+    const name = m[1]!;
+    return (await lookups.customerHasOpenDebt(name)) ? out(`/paid ${name} ${amountOf(m[2]!)}`, `/customer ${name}`) : null;
+  }
+  // staff (the command itself still checks that the sender is the owner)
+  if ((m = new RegExp(`^add\\s*staff\\s+(${PHONE})$`, "i").exec(t))) return out(`/addstaff ${m[1]}`);
+  if ((m = new RegExp(`^remove\\s*staff\\s+(${PHONE})$`, "i").exec(t))) return out(`/removestaff ${m[1]}`);
+  // stock alert and prices
+  if ((m = /^low\s*stock\s+(.+?)\s+(\d+|off)$/i.exec(t))) return out(`/lowstock ${m[1]} ${m[2]!.toLowerCase()}`);
+  if ((m = new RegExp(`^set\\s*price\\s+(.+?)\\s+(${AMOUNT})$`, "i").exec(t))) return out(`/setprice ${m[1]} ${amountOf(m[2]!)}`);
+  // payment links and requests
+  if ((m = new RegExp(`^pay\\s*link\\s+(.+?)\\s+(${AMOUNT})$`, "i").exec(t))) return out(`/paylink ${m[1]} ${amountOf(m[2]!)}`);
+  if ((m = new RegExp(`^collect\\s+(.+?)\\s+(${AMOUNT})\\s+(${PHONE})$`, "i").exec(t))) return out(`/collect ${m[1]} ${amountOf(m[2]!)} ${m[3]}`);
+  // mobile-money matches, plans, deletion request, closing the day
+  if ((m = /^(confirm|reject)\s*momo\s+(\S+)$/i.exec(t))) return out(`/${m[1]!.toLowerCase()}momo ${m[2]}`);
+  if ((m = /^upgrade\s+([A-Za-z0-9_-]{2,30})$/i.exec(t))) return out(`/upgrade ${m[1]}`);
+  if ((m = /^forget\s*customer\s+(.+)$/i.exec(t))) return out(`/forgetcustomer ${m[1]}`);
+  if ((m = new RegExp(`^close\\s+(${AMOUNT})(\\s+.+)?$`, "i").exec(t))) return out(`/close ${amountOf(m[1]!)}${m[2] ?? ""}`);
+  return null;
+}
+
+/** Words that stand alone for a command that takes nothing more. */
+const PLAIN_WORDS: ReadonlyArray<readonly [string, string]> = [["usage", "/usage"], ["catalog", "/catalog"], ["products", "/products"]];
+export function matchPlainWord(text: string): string | null {
+  const w = text.trim().toLowerCase().replace(/[?!.]+$/, "").trim();
+  return PLAIN_WORDS.find(([word]) => word === w)?.[1] ?? null;
+}
+
 /**
  * True for a single word one slipped letter away from "undo" ("udno", "undoo", "unto") but not "undo"
  * itself. These never run the undo, which reverses an entry and can't itself be reversed; the dispatcher

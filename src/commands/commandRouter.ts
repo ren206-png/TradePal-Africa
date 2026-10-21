@@ -153,7 +153,7 @@ const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
   { line: "/help - show this message" },
 ];
 
-const HELP_PLAIN_LANGUAGE_TIP = 'You can also just tell me about a sale, expense or debt in plain language, e.g. "sold 2 bread for 500".';
+const HELP_PLAIN_LANGUAGE_TIP = 'You can also just tell me about a sale, expense or debt in plain language, e.g. "sold 2 bread for 500". The slash is optional: "today", "debts" and "paid Amina 300" work too.';
 
 async function buildHelpText(ctx: CommandContext): Promise<string> {
   const flags = new Set(HELP_ENTRIES.flatMap((entry) => (entry.flag ? [entry.flag] : [])));

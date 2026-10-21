@@ -4,10 +4,10 @@ import { applyLoggableIntent, type LoggableParsedIntent } from "./ai/applyParsed
 import { assertWithinQuotaIfEnabled, getEffectivePlan, QuotaExceededError } from "./domain/billing.js";
 import { evaluateAiBudget } from "./domain/aiBudget.js";
 import { isFeatureEnabled } from "./domain/featureFlags.js";
-import { DebtOverpaymentError } from "./domain/debtBook.js";
+import { DebtOverpaymentError, findCustomerByName, listOpenDebtsForCustomer } from "./domain/debtBook.js";
 import { formatMoney } from "./domain/money.js";
 import { parseListMessage, type ListSection, type ParsedList } from "./ai/listEntry.js";
-import { isUndoTypo, matchBareCommand, UNDO_CONFIRM_REPLY } from "./commands/bareCommands.js";
+import { isUndoTypo, matchBareCommand, matchBareCommandWithArgs, matchPlainWord, UNDO_CONFIRM_REPLY } from "./commands/bareCommands.js";
 import { recordAiParseLog } from "./ai/logParse.js";
 import { buildAiParseResult, parseTransactionText, type AiParseResult } from "./ai/parse.js";
 import { classifyAiProviderFailure } from "./ai/failureClass.js";
@@ -736,11 +736,34 @@ async function dispatchCommandOrParse(
   // "remnd Amina"): a few unambiguous read-only commands work without the slash and with one wrong letter.
   // See commands/bareCommands.ts for exactly what is (and deliberately isn't) matched.
   const bare = matchBareCommand(text);
+  // A command typed WITHOUT its slash but WITH a name or amount ("paid Amina 300", "customer Amina", "add staff 0803..."): see
+  // commands/bareCommands.ts. If the command turns out not to be available to this business, the message is read the normal way instead.
+  let viaBare: { original: string; hint: string } | null = null;
   if (bare) text = bare;
   else if (isUndoTypo(text)) {
     // A near-miss of "undo" is never acted on (an undo can't itself be undone); ask for the exact word.
     await reply(deps, merchant.phoneNumber, UNDO_CONFIRM_REPLY);
     return;
+  } else if (source !== "VOICE" && !text.trim().startsWith("/")) {
+    // (A voice note is never read this way: a mis-heard word must not change a record.)
+    const plain = matchPlainWord(text);
+    if (plain) {
+      viaBare = { original: text, hint: "" };
+      text = plain;
+    }
+    else {
+      const match = await matchBareCommandWithArgs(text, {
+        customerExists: async (name) => (await findCustomerByName(scopedPrisma, name)) !== null,
+        customerHasOpenDebt: async (name) => {
+          const c = await findCustomerByName(scopedPrisma, name);
+          return c !== null && (await listOpenDebtsForCustomer(scopedPrisma, c.id)).length > 0;
+        },
+      });
+      if (match) {
+        viaBare = { original: text, hint: match.hint };
+        text = match.command;
+      }
+    }
   }
 
   if (text.trim().startsWith("/")) {
@@ -772,8 +795,13 @@ async function dispatchCommandOrParse(
         await redactPayerNumberInStoredMessage(deps.prisma, whatsappMessageId);
       }
     }
-    await reply(deps, merchant.phoneNumber, replyText);
-    return;
+    if (viaBare && /^Unrecognized command/.test(replyText)) {
+      // Not a command this business has switched on: it was ordinary writing after all. Read it the normal way.
+      text = viaBare.original;
+    } else {
+      await reply(deps, merchant.phoneNumber, viaBare?.hint ? `${replyText}\n\n${viaBare.hint}` : replyText);
+      return;
+    }
   }
 
   // A whole day written as a list (heading + one entry per line) is read with plain rules, not the AI.
