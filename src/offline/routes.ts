@@ -5,7 +5,7 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { asyncHandler } from "../admin/asyncHandler.js";
 import { InMemoryLoginRateLimiter, type LoginRateLimiter } from "../admin/rateLimiter.js";
-import { OFFLINE_PAGE, OFFLINE_SCRIPT, OFFLINE_SERVICE_WORKER } from "./clientAssets.js";
+import { CATALOG_SCRIPT, OFFLINE_PAGE, OFFLINE_SCRIPT, OFFLINE_SERVICE_WORKER } from "./clientAssets.js";
 import { FLAG_CATALOG_WEB, FLAG_OFFLINE_DRAFTS, FLAG_REPORTS_WEB, authenticateDevice, catalogWebSwitchOn, exchangeConnectCode, offlineSwitchOn, reportsWebSwitchOn, revokeSession, type AuthedDevice } from "./devices.js";
 import { canMerchant, membershipRoleForLegacyMerchantRole } from "../auth/permissions.js";
 import { BulkError, MAX_BULK_ROWS, applyBulkChanges, catalogToCsv, exportCatalog, previewBulkChanges, rowsFromCsv, type BulkContext, type BulkRow } from "../domain/bulkCatalog.js";
@@ -29,7 +29,7 @@ const CSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; c
 export function createOfflineRouter(prisma: PrismaClient, opts: OfflineRouterOptions = {}): Router {
   const router = Router();
   router.use(rejectNulBytes);
-  router.use(gzipSelected((req) => req.method === "GET" && ["/m/", "/m/app.js", "/m/sw.js"].includes(req.path)));
+  router.use(gzipSelected((req) => req.method === "GET" && ["/m/", "/m/app.js", "/m/products.js", "/m/sw.js"].includes(req.path)));
   const clock = opts.now ?? (() => new Date());
   const exchangeLimiter = opts.limiters?.exchange ?? new InMemoryLoginRateLimiter(10, 15 * 60_000);
   const apiLimiter = opts.limiters?.api ?? new InMemoryLoginRateLimiter(300, 60_000);
@@ -41,6 +41,9 @@ export function createOfflineRouter(prisma: PrismaClient, opts: OfflineRouterOpt
   });
   router.get("/m/app.js", (_req, res) => {
     res.set({ "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" }).type("application/javascript").send(OFFLINE_SCRIPT);
+  });
+  router.get("/m/products.js", (_req, res) => {
+    res.set({ "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" }).type("application/javascript").send(CATALOG_SCRIPT);
   });
   router.get("/m/sw.js", (_req, res) => {
     res.set({ "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff", "Service-Worker-Allowed": "/m/" }).type("application/javascript").send(OFFLINE_SERVICE_WORKER);

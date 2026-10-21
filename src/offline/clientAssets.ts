@@ -120,6 +120,7 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
       var f = meta.features || { drafts: true, reports: false, catalog: false };
       $("draftsBox").hidden = !meta.token || !f.drafts; $("reportsBox").hidden = !meta.token || !f.reports; $("catalogBox").hidden = !meta.token || !f.catalog;
       if (meta.token && f.drafts) loadServer();
+      if (meta.token && f.catalog && !window.tpCatalogLoaded) { window.tpCatalogLoaded = true; var sc = document.createElement("script"); sc.src = "/m/products.js"; document.body.appendChild(sc); }
     });
   }
   $("go").onclick = function () {
@@ -184,6 +185,17 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
     }).catch(function (e) { say(e.message, "err"); });
   };
 
+  // The Products screen is a second script, loaded only for a phone whose business has it (see show()), so a drafts-only phone downloads nothing extra.
+  window.TP = { $: $, api: api, line: line, wipe: wipe, token: function () { return meta.token; } };
+  window.addEventListener("online", show); window.addEventListener("offline", show);
+  open().then(show);
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/m/sw.js", { scope: "/m/" }).catch(function () {});
+})();
+`;
+
+export const CATALOG_SCRIPT = String.raw`(function () {
+  "use strict";
+  var TP = window.TP, $ = TP.$, api = TP.api, line = TP.line, wipe = TP.wipe;
   // ---- products: bulk edit, CSV and photos (needs a connection; nothing is kept on the phone)
   function csay(t, cls) { var m = $("cmsg"); m.textContent = t; m.className = cls || "muted"; }
   var cat = { rows: [], edits: {}, batchId: null, csv: null, can: {}, cur: "" };
@@ -269,7 +281,7 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
   };
   $("ccsv").onclick = function () {
     if (!navigator.onLine) { csay("You need a connection to download.", "err"); return; }
-    fetch("/m/api/catalog.csv", { headers: { Authorization: "Bearer " + meta.token }, cache: "no-store" }).then(function (r) {
+    fetch("/m/api/catalog.csv", { headers: { Authorization: "Bearer " + TP.token() }, cache: "no-store" }).then(function (r) {
       if (r.status === 401) return wipe().then(function () { throw new Error("Please connect this phone again."); });
       if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || "Could not download."); });
       return r.blob().then(function (b) { var a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "tradepal-products.csv"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000); });
@@ -300,7 +312,7 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
         btn.textContent = "Photos (" + x.body.photos.length + ")";
         x.body.photos.forEach(function (p, i) {
           var t = el("div", "thumb"), im = el("img"); im.alt = r.productName + " photo " + (i + 1); t.appendChild(im);
-          fetch("/m/api/catalog/photo/" + p.id, { headers: { Authorization: "Bearer " + meta.token } }).then(function (rr) { return rr.blob(); }).then(function (b) { im.src = URL.createObjectURL(b); }).catch(function () {});
+          fetch("/m/api/catalog/photo/" + p.id, { headers: { Authorization: "Bearer " + TP.token() } }).then(function (rr) { return rr.blob(); }).then(function (b) { im.src = URL.createObjectURL(b); }).catch(function () {});
           if (i === 0) t.appendChild(el("div", "muted", "Main photo"));
           else { var m = el("button", "", "Make main"); m.onclick = function () { api("/catalog/photo/" + p.id + "/main", {}).then(reload); }; t.appendChild(m); }
           var d = el("button", "", "Remove"); d.onclick = function () { if (window.confirm("Remove this photo?")) api("/catalog/photo/" + p.id, undefined, "DELETE").then(reload); }; t.appendChild(d);
@@ -314,15 +326,12 @@ export const OFFLINE_SCRIPT = String.raw`(function () {
       note.textContent = "Preparing the photo...";
       shrink(f).then(function (blob) {
         note.textContent = "Sending...";
-        return fetch("/m/api/catalog/photos/" + r.productId, { method: "POST", headers: { Authorization: "Bearer " + meta.token, "Content-Type": "image/jpeg" }, body: blob, cache: "no-store" });
+        return fetch("/m/api/catalog/photos/" + r.productId, { method: "POST", headers: { Authorization: "Bearer " + TP.token(), "Content-Type": "image/jpeg" }, body: blob, cache: "no-store" });
       }).then(function (resp) { return resp.json().catch(function () { return {}; }).then(function (j) { if (resp.status === 401) return wipe(); note.textContent = resp.ok ? (resp.status === 200 ? "That photo was already there." : "Photo added.") : (j.error || "Could not add the photo."); add.value = ""; return reload(); }); })
         .catch(function (e) { note.textContent = e.message; });
     };
     reload();
   }
-  window.addEventListener("online", show); window.addEventListener("offline", show);
-  open().then(show);
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/m/sw.js", { scope: "/m/" }).catch(function () {});
 })();
 `;
 

@@ -9,7 +9,7 @@ import { fakeJpeg } from "./helpers/images.js";
 import { handleCommand, type CommandContext } from "../src/commands/commandRouter.js";
 import { createOfflineRouter } from "../src/offline/routes.js";
 import { InMemoryLoginRateLimiter } from "../src/admin/rateLimiter.js";
-import { OFFLINE_PAGE, OFFLINE_SCRIPT } from "../src/offline/clientAssets.js";
+import { CATALOG_SCRIPT, OFFLINE_PAGE, OFFLINE_SCRIPT } from "../src/offline/clientAssets.js";
 
 vi.setConfig({ testTimeout: 60_000 });
 let testDb: TestDb;
@@ -62,8 +62,10 @@ describe("the catalog screen is off unless the switch and the business flag are 
 
   it("serves the Products section on the phone page without ever using innerHTML", () => {
     expect(OFFLINE_PAGE).toContain('id="catalogBox"');
-    expect(OFFLINE_SCRIPT).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/);
-    expect(OFFLINE_SCRIPT).toContain("/catalog/preview");
+    for (const code of [OFFLINE_SCRIPT, CATALOG_SCRIPT]) expect(code).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/);
+    expect(CATALOG_SCRIPT).toContain("/catalog/preview");
+    expect(OFFLINE_SCRIPT).not.toContain("/catalog/preview"); // a drafts-only phone never downloads the products screen
+    expect(OFFLINE_SCRIPT).toContain("/m/products.js");
   });
 });
 

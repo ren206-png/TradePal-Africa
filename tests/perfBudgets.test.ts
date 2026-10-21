@@ -78,6 +78,7 @@ describe("transfer budgets", () => {
     expect((await plainBytes(`/order/${orderToken}`)).len).toBeLessThan(20 * KB);
     expect((await plainBytes("/m/")).len).toBeLessThan(6 * KB);
     expect((await plainBytes("/m/app.js")).len).toBeLessThan(20 * KB);
+    expect((await plainBytes("/m/products.js")).len).toBeLessThan(16 * KB); // the products screen is a separate download, only for a business that has it
     expect((await plainBytes("/m/sw.js")).len).toBeLessThan(2 * KB);
   });
 
@@ -117,6 +118,7 @@ describe("compression is limited to pages that hold nothing secret", () => {
     expect(notAsked.headers["content-encoding"]).toBeUndefined();
     expect(String(notAsked.headers["vary"])).toMatch(/Accept-Encoding/i);
     expect((await get("/m/app.js")).headers["content-encoding"]).toBe("gzip");
+    expect((await get("/m/products.js")).headers["content-encoding"]).toBe("gzip");
   });
 
   it("NEVER compresses a page that carries an order link, a pickup code or the basket", async () => {
