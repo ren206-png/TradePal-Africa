@@ -10,7 +10,7 @@ Node 20+, pnpm or npm, Docker (optional: for Postgres and Redis), `psql` (only f
 npm install                          # also: (cd admin-frontend && npm install)
 npx prisma generate
 npx tsc --noEmit -p .                # must be clean
-npx vitest run                       # backend: expect all files to pass (111 files / 1248+ tests at Phase 8)
+npx vitest run                       # backend: expect all files to pass (124 files; 1333 tests + 7 that run only on a real Postgres)
 (cd admin-frontend && npx vitest run && npm run build)
 ```
 The suite is deterministic CI. It never contacts a provider. (Known: it must run from a path without surprises; a path with spaces works since the Phase 1 fix.)
@@ -21,6 +21,9 @@ npx tsx scripts/demoRelease.ts               # prints every step and a panel-by-
 npx tsx scripts/demoRelease.ts --serve 4180  # keeps the synthetic world alive; point the admin console at it:
 (cd admin-frontend && VITE_API_BASE_URL=http://127.0.0.1:4180 npx vite --port 5199)   # login owner@demo.test / correct-horse (demo only)
 ```
+
+## 3b. The same suite on a real Postgres (optional, recommended before a deploy)
+See `real-postgres-local.md`: `TEST_PG_ADMIN_URL=postgresql://postgres@127.0.0.1:54329/postgres npx vitest run --no-file-parallelism`.
 
 ## 4. A real local database (optional)
 Copy `.env.example` to `.env`; set `DATABASE_URL`, `REDIS_URL`, `ADMIN_JWT_SECRET` (`openssl rand -base64 48`). `docker compose up postgres redis`, then `npx prisma migrate deploy` (applies every migration, including the expansion's) and `npm run seed`. Create an admin: `npx tsx scripts/createAdminUser.ts`. Start `npm run dev:server` and `npm run dev:worker`.

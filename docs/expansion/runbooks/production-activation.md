@@ -4,7 +4,7 @@
 
 ## Gate 0: before ANY expansion code reaches production
 1. Review the branch (`expansion/phase-1`, local only). Decide how it is merged: a push to `main` deploys production AND runs `prisma migrate deploy` (see `PHASE_0_FINDINGS.md`).
-2. **Rehearse the migrations** on a restored copy of the production backup: `REHEARSAL_DATABASE_URL=<scratch> ./scripts/rehearseMigrations.sh`. It has never been run. Needs a scratch Postgres (restore a backup into it) and `psql`. Record the timing and any lock waits.
+2. **Rehearse the migrations** on a restored copy of the production backup: `REHEARSAL_DATABASE_URL=<scratch> ./scripts/rehearseMigrations.sh`. It has been run on a real local Postgres 18 (empty database, and the legacy-data rehearsal as a non-superuser owner: see `real-postgres-local.md`), but **not yet on a restored copy of the real production backup**. Needs a scratch Postgres (restore a backup into it) and `psql`. Record the timing and any lock waits.
 3. Take a fresh production backup and note the restore command.
 4. Confirm production alerts work: send a synthetic incident and a channel check from System health; confirm they arrive. Set up the external heartbeat monitor on `/heartbeat` with a second alert channel (owner action, open since Phase 0).
 5. Set `OPERATIONS_SWEEP_ENABLED`, `OUTBOX_SWEEP_ENABLED`, `HEARTBEAT_ENABLED`, `TRUST_PROXY` on server and worker.
@@ -21,6 +21,9 @@
 | Subscription entitlements | OPEN-12 decided | otherwise every business without a paid plan loses premium operations |
 | Conversational confirmations | decision on OPEN-14 | per business; the legacy auto-log stays for everyone else |
 | Offline drafts | the page tested on a real low-end phone | `OFFLINE_PUBLIC_URL` |
+| Product screen (bulk edit, CSV, photos) | the page tested on a real phone over a slow link; decide when photos should move to object storage | `CATALOG_WEB_ENABLED=true` + flag `catalogV2`; per business |
+| Couriers | a courier chosen and its adapter built and proven (`courier-integration.md`), or use the manual courier only | `COURIERS_ENABLED=true` + flag `storeCourier`; never `COURIER_SIMULATOR_ENABLED` in production |
+| Daily close | the business has `accountingJournals` on and logs a payment method; the owner knows the first close is a starting count | per business flag `dailyClose` |
 | **Messages to shoppers** | **all of:** templates created and APPROVED by Meta and recorded in the admin template register; landing FAQ and privacy page deployed (they are edited in the repo only); OPEN-15 (double opt-in) decided; `MESSAGING_LOG_PEPPER` set; a test to your own number | **last**; the most policy-sensitive step |
 
 ## Gate 2: after each activation

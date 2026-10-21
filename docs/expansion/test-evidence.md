@@ -211,9 +211,35 @@ PART 6. Every admin panel of section 18, read through the real admin API
 Admin panels populated: 18 of 18
 ```
 
+## Second pass (2026-10-20): the decisions, the owner's builds, and a real Postgres
+```
+$ npx tsc --noEmit -p .
+exit 0
+$ npx vitest run                                  # in-process database (PGlite)
+ Test Files  123 passed | 1 skipped (124)
+      Tests  1333 passed | 7 skipped (1340)        # the 7 run only against a real server
+$ TEST_PG_ADMIN_URL=postgresql://postgres@127.0.0.1:54329/postgres npx vitest run --no-file-parallelism
+ Test Files  124 passed (124)
+      Tests  1340 passed (1340)                    # PostgreSQL 18.4, TimeZone UTC, serial
+$ (cd admin-frontend && npx vitest run)
+ Test Files  14 passed (14)
+      Tests  59 passed (59)
+```
+Migrations on the real server: `scripts/rehearseMigrations.sh` as a non-superuser owner: every migration applies ("All migrations have been successfully applied", 94 tables with row-level security, 25 append-only triggers, no expansion flag ON by default). The legacy-data rehearsal (`tests/migrationRehearsal.test.ts`) also passes on the real server.
+
+**What the real server found.**
+| Finding | Cause | Fix |
+|---|---|---|
+| Two COMMIT rows for one AI-usage request in about 3 of 8 runs | the "is it already finished?" check ran before the advisory lock, not after | re-check under the lock for commit and release (`aiUsageLedger.ts`); 10/10 clean afterwards |
+| 6 of 10 simultaneous orders for one seller were told "try again" | the next order number is read from existing orders; simultaneous placements picked the same one | placements are serialised per seller (advisory lock); 10 of 10 succeed |
+| 4 tests failed on equal timestamps / sub-millisecond clock | a real Postgres is fast enough that two rows share a millisecond and a default timestamp can sit a hair ahead of the JS clock | tests updated (ordering by a stable key, `+50 ms` in the inbox drain, `tick()` pauses); production is unaffected (the next sweep picks a callback up) |
+| a "socket hang up" in the admin route walk about 1 run in 4 (also on PGlite) | thousands of one-shot servers plus Node's keep-alive reuse of a recycled port | one listening server with a long keep-alive; 4 of 4 clean afterwards |
+
+**Races closed by reasoning, then proved on the real server** (each test fails when its lock is removed: checked): more than 6 photos or a duplicate photo from simultaneous uploads; the same bulk-edit batch applied twice; two courier bookings for one order. Earlier concurrency tests that already used parallel requests (refund bounds, oversell, credit limit, inbox claim) now run for real and pass.
+
 ## External limitations (why green here is not "done")
-- **Test database:** the suite runs on PGlite, an in-process Postgres with one connection and a superuser. It cannot show lock contention, real concurrent interleaving, role privileges, migration time, or behaviour of row-level security under the application's role. Concurrency tests are sequential for this reason.
+- **Test database:** the default suite runs on PGlite (one connection, superuser). It has now ALSO been run in full on a real local PostgreSQL 18 (see above), which is a scratch server with no production data and `fsync=off`. Still unshown: migration time and lock waits on production-sized data, behaviour under the real Railway role, row-level security under the application's non-owner role (the app still connects as the owner, so the policies are inert), and load.
 - **No provider is real:** the payment "provider" is TradePal's own simulator; pawaPay is an in-memory fake written from its documentation; WhatsApp sends go to a recording transport or a stubbed HTTP client; the AI provider is a stub. None of this proves compatibility with Meta, pawaPay, DeepSeek or Anthropic.
 - **No real network or device:** page weights are measured, speed on a low-end phone or throttled link is not; the phone page was exercised by hand in Chrome and in the built-in browser, not on a phone.
-- **Not run:** `scripts/rehearseMigrations.sh` (needs a restored backup and Postgres); the sandbox verification runbook; any load, soak or abuse test; a human penetration test; a dependency audit.
-- **Determinism:** the suite uses fixed clocks where time matters, but several tests use real time (rate-limit windows, expiry minutes); they have passed repeatedly, and none is known to be flaky.
+- **Not run:** `scripts/rehearseMigrations.sh` against a restored copy of the REAL production backup (it was run on empty and synthetic-legacy data); the sandbox verification runbook; any load, soak or abuse test; a human penetration test; a dependency audit.
+- **Determinism:** the suite uses fixed clocks where time matters, but several tests use real time (rate-limit windows, expiry minutes); they have passed repeatedly. Two flaky tests were found and fixed in the second pass (see above); none is known to be flaky now.

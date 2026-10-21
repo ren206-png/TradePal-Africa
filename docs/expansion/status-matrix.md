@@ -2,7 +2,7 @@
 
 Levels, in increasing strength, **not interchangeable**: `implemented` (code exists) -> `locally tested` (automated tests pass in this repository against the in-process test database and our own simulator/fakes) -> `sandbox verified` (run against the provider's real sandbox) -> `partner approved` (the provider/Meta/regulator has approved it) -> `production configured` (set up in production) -> `production activated` (live for real users). `not built` means it does not exist.
 
-**Nothing in the expansion is above `locally tested`.** No sandbox exists for any provider; no template, provider or partner approval has been obtained; nothing is configured or activated in production. The only items at `production activated` are the pre-expansion WhatsApp features that were already live, which the expansion leaves unchanged behind OFF flags (scenario 25). Evidence column names the tests; limits are in the self-check of the phase that built it.
+**Nothing in the expansion is above `locally tested`** (since 2026-10-20 "locally tested" includes a full run on a real local PostgreSQL 18, serially; see `test-evidence.md`). No sandbox exists for any provider; no template, provider or partner approval has been obtained; nothing is configured or activated in production. The only items at `production activated` are the pre-expansion WhatsApp features that were already live, which the expansion leaves unchanged behind OFF flags (scenario 25). Evidence column names the tests; limits are in the self-check of the phase that built it.
 
 ## A. Foundations
 
@@ -26,7 +26,7 @@ Levels, in increasing strength, **not interchangeable**: `implemented` (code exi
 | Price lists, quantity breaks, validity, deterministic resolution | locally tested | `catalogPricing` |
 | One stock system: movements, buckets, reservations with expiry, counts, transfers, costing | locally tested | `stockV2`; real lock interleaving unverified |
 | Balanced journals, posting rules, reversals | locally tested | `accounting` |
-| Daily close | locally tested | **do not enable for real merchants** (legacy entries carry no payment method) |
+| Daily close | locally tested | OFF by default; **may be enabled per business** (the first close is a starting count, not a comparison); see `decisions-final.md` section 9 |
 | Admin transactions panel: view, void/reverse, export | locally tested | `adminTransactions` |
 | Bookkeeping reports (sales, cash flow, valuation, AR/AP aging, gross margin, payment reconciliation, stock discrepancies) | locally tested | `reports`, `reportsWeb`; not checked by an accountant; depends on journals/stock costs |
 | Formula-safe CSV exports | locally tested | `reports`, `adminTransactions` |
@@ -97,4 +97,4 @@ Levels, in increasing strength, **not interchangeable**: `implemented` (code exi
 
 ## Z. Decisions pass additions (2026-10-20) — all `locally tested`
 
-Verified (double opt-in) shopper consent; escalation of unanswered shopper requests; scheduled data-integrity checks and admin view; "re-run reconciliation" admin control (removed from "not built"); shopper-data retention (24 months); duplicate trade-payment detection; atomic credit decision; support-access gating; FREE plan includes the storefront; forecast thresholds seeded. Evidence: `escalation`, `integrity`, `retention`, `messaging`, `adminOps`, `tradeFlow`, `billingEntitlements` tests. See `decisions-final.md` and `self-check-addendum-decisions.md`.
+Bulk product editing and CSV import on the phone page (`CATALOG_WEB_ENABLED` + `catalogV2`); product photos stored and served from our own address; courier tracking for delivery orders (manual courier, adapter contract, simulator, signed callbacks, polling, stuck-delivery escalation; `COURIERS_ENABLED` + `storeCourier`): **implemented and locally tested; no real courier exists**; the first daily close as a starting point (daily close can be enabled per business); Meta-compliant order-update wording. Evidence: `bulkCatalog`, `productImages`, `catalogWeb`, `courierContract`, `storeShipments`, `storeCourierCommands`, `realPostgresConcurrency`, `dailyClose`. Also: Verified (double opt-in) shopper consent; escalation of unanswered shopper requests; scheduled data-integrity checks and admin view; "re-run reconciliation" admin control (removed from "not built"); shopper-data retention (24 months); duplicate trade-payment detection; atomic credit decision; support-access gating; FREE plan includes the storefront; forecast thresholds seeded. Evidence: `escalation`, `integrity`, `retention`, `messaging`, `adminOps`, `tradeFlow`, `billingEntitlements` tests. See `decisions-final.md` and `self-check-addendum-decisions.md`.

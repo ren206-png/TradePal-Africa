@@ -100,5 +100,8 @@ Resume from this file across sessions. Update after every slice.
 ## Decisions pass (2026-10-20)
 All OPEN-1..17 and the gaps in the self-checks were decided in `decisions-final.md`. Built: verified (double opt-in) shopper consent, escalation of unanswered requests, scheduled integrity checks, re-run reconciliation button, honest digest label, audit-failure alert, FREE plan storefront, forecast thresholds, support-access gating, duplicate payment detection, credit lock, shopper-data retention. Credit-limit atomicity and duplicate-payment detection from "Known gaps" item 9 are now closed.
 
+## Second pass (2026-10-20, after the owner's answers)
+Flutterwave left alone; English only; daily close explained and made safe per business; bulk product editing + CSV, product photos and courier tracking built; seller terms and WhatsApp templates drafted for review; a real local PostgreSQL 18 ran the whole suite and the migrations (found two real problems, closed three more races, all tested). 124 backend files / 1,340 tests (7 real-server only). Still local only: nothing pushed, merged, deployed or migrated for real.
+
 ## Next concrete step
 The plan is complete (`APPROVED: PHASE 9` received; there is no Phase 10). The next work is the owner's list in `handoff.md` section 4 (first: restore a backup and run `scripts/rehearseMigrations.sh`; choose a merchant-sales provider; get a pawaPay sandbox token). Do not push, merge or deploy this branch without the owner.

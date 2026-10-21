@@ -36,3 +36,8 @@ Every public or in-product statement was compared with what the system does toda
 
 ## Claims we must not make (until evidence exists)
 That TradePal is "approved" by Meta, pawaPay or any regulator; that reports are accepted by lenders or tax authorities; that payments are processed for merchants (no merchant provider is connected); that Krio or any local language is supported; that the system has been tested on real phones or networks; that forecasts are accurate.
+
+## Second pass additions (2026-10-20), not yet deployed
+- Privacy page (`landing/src/pages/privacy.astro`): the one-message WhatsApp confirmation for shopper updates; removal of shopper personal details 24 months after an order; a new "Deliveries and photos" section (what a courier is given; photos are stored by us and no outside pictures load).
+- Seller terms and WhatsApp templates are drafts in `docs/expansion/drafts-for-review/`.
+- Deploy these with the shop and messaging activation, not before.

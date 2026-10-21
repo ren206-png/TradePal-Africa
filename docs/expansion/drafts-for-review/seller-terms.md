@@ -36,6 +36,7 @@ How this draft matches what the software does today is listed at the end ("What 
 5.3 **The hand-over code.** The shopper has a 6-digit code on their order page. An order is completed only when you enter that code (or, in the rare case there is no code, you record a written reason). Do not ask for or accept the code before the goods are in the shopper's hands.
 5.4 If a delivery fails, tell us in the app (/store failed ...): the goods go back into your stock and the order is cancelled.
 5.5 TradePal Africa may show a shopper the courier's name, the delivery status, a tracking link and the rider's name and phone number that you give us. Only give details of people who agree to be shown.
+5.6 If you book a courier through TradePal Africa, the shopper's name, phone number and delivery address are passed to that courier **only** so it can deliver, together with a list of the items (never prices). You must have the courier's own terms in place and you are responsible for how the courier treats that data.
 
 ### 6. Cancellations, refunds and returns
 6.1 You follow the cancellation and refund rules shown on your shop and order pages. They are the same rules the app applies.
