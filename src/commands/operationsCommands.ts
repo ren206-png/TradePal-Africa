@@ -77,8 +77,9 @@ export async function handleOperationsCommand(ctx: CommandContext, command: stri
 function describePreview(ctx: CommandContext, s: DailyCloseSummary): string {
   const lines = [
     `Day ${s.businessDate}`,
-    `Cash expected in the drawer: ${money(ctx, s.expectedCashMinor)}`,
-    `  (started with ${money(ctx, s.openingCashMinor)})`,
+    ...(s.isFirstClose
+      ? ["This is your FIRST close. TradePal cannot know how much cash was already in your drawer, so this count becomes your starting point (nothing is compared yet)."]
+      : [`Cash expected in the drawer: ${money(ctx, s.expectedCashMinor)}`, `  (started with ${money(ctx, s.openingCashMinor)})`]),
     "",
     `Cash sales: ${money(ctx, s.salesCashMinor)}`,
     `Mobile money sales: ${money(ctx, s.salesMobileMoneyMinor)}`,
@@ -132,6 +133,7 @@ async function handleClose(ctx: CommandContext, args: string): Promise<string> {
       now,
     );
     const d = result.differenceMinor;
+    if (result.summary.isFirstClose) return [`Day ${businessDate} closed.`, `Your starting cash is ${money(ctx, counted)}. From the next close, TradePal will compare your count with its records.`].join("\n");
     const verdict = d === 0n ? "The count matches your records." : d < 0n ? `You are SHORT by ${money(ctx, -d)}.` : `You have ${money(ctx, d)} MORE than your records.`;
     return [`Day ${businessDate} closed.`, `Expected ${money(ctx, result.summary.expectedCashMinor)}, counted ${money(ctx, counted)}.`, verdict, ...(d !== 0n ? ["The difference was recorded with your reason."] : [])].join("\n");
   } catch (error) {

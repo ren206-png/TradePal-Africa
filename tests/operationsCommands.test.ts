@@ -181,8 +181,25 @@ describe("/close", () => {
     expect(await handleCommand(ctxFor(env, "STAFF"), "/close")).toBe("Only the owner or a manager can do that.");
   });
 
+  /** The first close is only a starting point, so tests of a real comparison close an old day first. */
+  async function notFirst(env: Env) {
+    expect(await handleCommand(ctxFor(env), "/close 2020-01-05 0")).toContain("closed.");
+  }
+
+  it("the first close explains it is a starting point, needs no reason, and the next one compares", async () => {
+    const env = await fullEnv();
+    await postSale(env.scoped, { businessId: env.businessId, currencyCode: "NGN", idempotencyKey: "first-1", occurredAt: new Date(), totalMinor: 20_000n, receipts: [{ method: "CASH", amountMinor: 20_000n }] });
+    const preview = await handleCommand(ctxFor(env), "/close");
+    expect(preview).toContain("FIRST close");
+    expect(preview).not.toContain("Cash expected in the drawer");
+    const done = await handleCommand(ctxFor(env), "/close 5000");
+    expect(done).toContain("Your starting cash is 5000.00 NGN");
+    expect(await handleCommand(ctxFor(env), "/close 2020-01-06")).toContain("Cash expected in the drawer");
+  });
+
   it("previews the day, closes it when the count matches, and refuses a second close", async () => {
     const env = await fullEnv();
+    await notFirst(env);
     const c = { businessId: env.businessId, currencyCode: "NGN" };
     await postSale(env.scoped, { ...c, idempotencyKey: "close-1", occurredAt: new Date(), totalMinor: 20_000n, receipts: [{ method: "CASH", amountMinor: 20_000n }] });
     await postSale(env.scoped, { ...c, idempotencyKey: "close-2", occurredAt: new Date(), totalMinor: 5_000n, receipts: [{ method: "MOBILE_MONEY", amountMinor: 5_000n }] });
@@ -203,6 +220,7 @@ describe("/close", () => {
 
   it("a shortfall asks for a reason, then records it", async () => {
     const env = await fullEnv();
+    await notFirst(env);
     await postSale(env.scoped, { businessId: env.businessId, currencyCode: "NGN", idempotencyKey: "short-1", occurredAt: new Date(), totalMinor: 20_000n, receipts: [{ method: "CASH", amountMinor: 20_000n }] });
     const asks = await handleCommand(ctxFor(env), "/close 190");
     expect(asks).toContain("Say why");
@@ -214,6 +232,7 @@ describe("/close", () => {
 
   it("warns that receipts with no recorded method are not counted as cash", async () => {
     const env = await fullEnv();
+    await notFirst(env);
     await postSale(env.scoped, { businessId: env.businessId, currencyCode: "NGN", idempotencyKey: "unspec-1", occurredAt: new Date(), totalMinor: 8_000n, receipts: [{ method: "UNSPECIFIED", amountMinor: 8_000n }] });
     const preview = await handleCommand(ctxFor(env), "/close");
     expect(preview).toContain("did not say how they were paid: 80.00 NGN");

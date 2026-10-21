@@ -48,6 +48,11 @@ async function seedDay() {
   return { env, input: { businessId: env.businessId, businessDate: DAY, currencyCode: "NGN", timeZone: TZ } };
 }
 
+/** The first close of a business is its starting point (no comparison); tests that exercise a comparison close an earlier day first. */
+async function alreadyHasAClose(env: Awaited<ReturnType<typeof seedDay>>["env"], input: { businessId: string; businessDate: string; currencyCode: string; timeZone: string }) {
+  await closeDay(env.scoped, { ...input, businessDate: "2026-10-18", countedCashMinor: 0n }, NOW);
+}
+
 describe("business-day boundaries", () => {
   it("are midnight-to-midnight in the business timezone", () => {
     const { start, end } = dayBoundsForDate(DAY, TZ);
@@ -125,10 +130,11 @@ describe("closing the day", () => {
 
   it("a shortfall needs a reason, is explained by a cash-adjustment entry, and leaves the books equal to the count", async () => {
     const { env, input } = await seedDay();
+    await alreadyHasAClose(env, input);
     const expected = (await previewDailyClose(env.scoped, input, NOW)).expectedCashMinor;
     const counted = expected - 1_500n;
     await expect(closeDay(env.scoped, { ...input, countedCashMinor: counted }, NOW)).rejects.toMatchObject({ code: "REASON_REQUIRED" });
-    expect(await env.scoped.dailyClose.count({ where: {} })).toBe(0); // nothing half-written
+    expect(await env.scoped.dailyClose.count({ where: {} })).toBe(1); // only the earlier close: nothing half-written
 
     const r = await closeDay(env.scoped, { ...input, countedCashMinor: counted, differenceReason: "change given wrongly, 1,500 short", closedBy: "mgr-1" }, NOW);
     expect(r.differenceMinor).toBe(-1_500n);
@@ -143,8 +149,23 @@ describe("closing the day", () => {
     expect(tb.totalDebitMinor).toBe(tb.totalCreditMinor);
   });
 
+  it("the FIRST close is the starting point: any count is accepted without a reason and is posted as the opening cash; the next close compares", async () => {
+    const { env, input } = await seedDay();
+    const first = await previewDailyClose(env.scoped, input, NOW);
+    expect(first.isFirstClose).toBe(true);
+    const r = await closeDay(env.scoped, { ...input, countedCashMinor: first.expectedCashMinor + 777_000n }, NOW); // no reason given
+    expect(r.differenceMinor).toBe(777_000n);
+    const adj = await env.scoped.journalEntry.findUniqueOrThrow({ where: { id: r.adjustmentEntryId! } });
+    expect(adj.memo).toContain("Opening cash count");
+    const next = await previewDailyClose(env.scoped, { ...input, businessDate: "2026-10-21" }, NOW);
+    expect(next.isFirstClose).toBe(false);
+    expect(next.openingCashMinor).toBe(first.expectedCashMinor + 777_000n);
+    await expect(closeDay(env.scoped, { ...input, businessDate: "2026-10-21", countedCashMinor: next.expectedCashMinor - 5n }, NOW)).rejects.toMatchObject({ code: "REASON_REQUIRED" });
+  });
+
   it("an overage is recorded as cash over", async () => {
     const { env, input } = await seedDay();
+    await alreadyHasAClose(env, input);
     const expected = (await previewDailyClose(env.scoped, input, NOW)).expectedCashMinor;
     const r = await closeDay(env.scoped, { ...input, countedCashMinor: expected + 300n, differenceReason: "found an old note" }, NOW);
     expect(r.differenceMinor).toBe(300n);
@@ -153,6 +174,7 @@ describe("closing the day", () => {
 
   it("the next day's opening cash is what was counted", async () => {
     const { env, input } = await seedDay();
+    await alreadyHasAClose(env, input);
     const expected = (await previewDailyClose(env.scoped, input, NOW)).expectedCashMinor;
     await closeDay(env.scoped, { ...input, countedCashMinor: expected - 100n, differenceReason: "short" }, NOW);
     const next = await previewDailyClose(env.scoped, { ...input, businessDate: "2026-10-21" }, NOW);

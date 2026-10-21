@@ -13,7 +13,12 @@ import { getDayBoundsInTimezone } from "./dailySummary.js";
  * (everything logged through the earlier WhatsApp flow) are reported separately as `unspecifiedReceiptsMinor`: they are
  * NOT guessed to be cash. A non-zero difference needs a written reason and is explained by a CASH_ADJUSTMENT journal
  * entry (so the books then equal the count); the DailyClose row itself is never edited.
+ *
+ * The FIRST close of a business is its starting point, not a comparison: the books cannot know how much cash was already in the drawer
+ * (everything logged before payment methods were recorded is unclassified), so comparing would always show a false shortage. The first
+ * count is posted as the opening cash balance with the reason "Opening cash count" and needs no reason from the owner.
  */
+export const OPENING_REASON = "Opening cash count (first close)";
 export class DailyCloseError extends Error {
   readonly code: "ALREADY_CLOSED" | "INVALID_DATE" | "FUTURE_DATE" | "INVALID_AMOUNT" | "REASON_REQUIRED";
   constructor(code: DailyCloseError["code"], message: string) {
@@ -48,6 +53,8 @@ export interface DailyCloseSummary {
     unmatched: { count: number; amountMinor: bigint };
   };
   existingClose: DailyClose | null;
+  /** True when this business has never closed a day in this currency: the count becomes the opening cash balance. */
+  isFirstClose: boolean;
 }
 
 function validDate(date: string): { y: number; m: number; d: number } {
@@ -106,7 +113,10 @@ export async function previewDailyClose(scoped: TenantScopedClient, input: Close
 
   const existingClose = await scoped.dailyClose.findFirst({ where: { businessDate: new Date(`${input.businessDate}T00:00:00.000Z`), currencyCode: input.currencyCode } });
 
+  const earlierClose = await scoped.dailyClose.findFirst({ where: { currencyCode: input.currencyCode } });
+
   return {
+    isFirstClose: earlierClose === null,
     businessDate: input.businessDate,
     currencyCode: input.currencyCode,
     openingCashMinor,
@@ -166,7 +176,8 @@ export async function closeDay(
   if (summary.existingClose) throw new DailyCloseError("ALREADY_CLOSED", `${input.businessDate} is already closed.`);
 
   const differenceMinor = input.countedCashMinor - summary.expectedCashMinor;
-  if (differenceMinor !== 0n && !input.differenceReason?.trim()) {
+  const differenceReason = summary.isFirstClose ? OPENING_REASON : input.differenceReason;
+  if (differenceMinor !== 0n && !differenceReason?.trim()) {
     throw new DailyCloseError("REASON_REQUIRED", "The count differs from the books. Say why, so the difference is explained.");
   }
   const { start, end } = dayBoundsForDate(input.businessDate, input.timeZone);
@@ -182,7 +193,7 @@ export async function closeDay(
           idempotencyKey: `close:${input.businessDate}:${input.currencyCode}`,
           occurredAt,
           differenceMinor,
-          memo: `Daily close ${input.businessDate}: ${input.differenceReason!.trim()}`.slice(0, 300),
+          memo: `Daily close ${input.businessDate}: ${differenceReason!.trim()}`.slice(0, 300),
           provenance: "MERCHANT_ENTERED",
           source: { type: "DAILY_CLOSE", id: `${input.businessDate}:${input.currencyCode}` },
           actor: { type: "MERCHANT", ...(input.closedBy ? { id: input.closedBy } : {}) },
