@@ -432,13 +432,21 @@ export async function applyBulkChanges(prisma: PrismaClient, ctx: BulkContext, i
   if (!Array.isArray(input.rows) || input.rows.length === 0) throw new BulkError("INVALID", "There is nothing to change.");
   if (input.rows.length > MAX_BULK_ROWS) throw new BulkError("TOO_MANY", `At most ${MAX_BULK_ROWS} rows at a time.`);
   const scoped = getTenantScopedClient(prisma, ctx.businessId);
-  const previous = await scoped.auditLog.findFirst({ where: { action: "catalog.bulk_edit", metadata: { path: ["batchId"], equals: input.batchId } } });
-  if (previous) {
+  const replay = async (client: TenantScopedClient): Promise<BulkResult | null> => {
+    const previous = await client.auditLog.findFirst({ where: { action: "catalog.bulk_edit", metadata: { path: ["batchId"], equals: input.batchId } } });
+    if (!previous) return null;
     const m = previous.metadata as { created?: number; updated?: number; unchanged?: number };
     return { replayed: true, created: m.created ?? 0, updated: m.updated ?? 0, unchanged: m.unchanged ?? 0, plan: { rows: [], counts: { create: m.created ?? 0, update: m.updated ?? 0, noop: m.unchanged ?? 0, error: 0 }, canApply: false } };
-  }
+  };
+  const quick = await replay(scoped);
+  if (quick) return quick;
 
   return withScopedTransaction(scoped, async (tx) => {
+    // One bulk edit at a time per business, and the replay check is repeated under the lock: two phones sending the same batch at once
+    // (a double tap, a retry that crossed the first) cannot both apply it.
+    await (tx as unknown as { $executeRaw: (q: TemplateStringsArray, ...v: unknown[]) => Promise<number> }).$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"bulk-edit:" + ctx.businessId}))`;
+    const again = await replay(tx);
+    if (again) return again;
     const { plan, ops } = await planRows(tx, ctx, input.rows);
     if (plan.counts.error > 0) throw new BulkError("INVALID", `${plan.counts.error} row(s) have a problem. Nothing was changed.`, plan);
     if (ops.length === 0) return { replayed: false, created: 0, updated: 0, unchanged: plan.counts.noop, plan };

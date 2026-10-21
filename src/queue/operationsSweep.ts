@@ -9,7 +9,9 @@ import { expireTradeOrders } from "../domain/trade/orders.js";
 import { expireStoreOrders } from "../domain/store/orders.js";
 import { runIntegrityChecks, type IntegrityReport } from "../ops/integrity.js";
 import { anonymizeOldShopperData } from "../domain/store/retention.js";
-import { escalateUnansweredRequests } from "../domain/store/escalation.js";
+import { escalateStuckDeliveries, escalateUnansweredRequests } from "../domain/store/escalation.js";
+import { pollQuietShipments } from "../domain/store/shipments.js";
+import { couriersEnabled, getCourierRegistry } from "../couriers/registry.js";
 import { reconcilePayments } from "../domain/merchantPayments/outcomes.js";
 import { getAdapterRegistry } from "../payments/registry.js";
 import { reconcileBilling } from "../domain/subscriptions/collection.js";
@@ -41,6 +43,8 @@ export interface OperationsSweepResult {
   paymentsPolled: number;
   paymentsApplied: number;
   requestsEscalated: number;
+  deliveriesEscalated: number;
+  couriersPolled: number;
   shopperDataAnonymized: number;
   suggestionsCreated: number;
   forecastsWritten: number;
@@ -51,7 +55,7 @@ export interface OperationsSweepResult {
 }
 
 export async function runOperationsSweep(prisma: PrismaClient, now: Date = new Date(), opts: { integrity?: boolean; retention?: boolean } = {}): Promise<OperationsSweepResult> {
-  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, storeOrdersExpired: 0, basketsExpired: 0, requestsEscalated: 0, shopperDataAnonymized: 0, billingPolled: 0, paymentsPolled: 0, paymentsApplied: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
+  const out: OperationsSweepResult = { reservationsExpired: 0, tradeOrdersExpired: 0, storeOrdersExpired: 0, basketsExpired: 0, requestsEscalated: 0, deliveriesEscalated: 0, couriersPolled: 0, shopperDataAnonymized: 0, billingPolled: 0, paymentsPolled: 0, paymentsApplied: 0, suggestionsCreated: 0, forecastsWritten: 0, forecastsScored: 0, failures: [] };
   const step = async (name: string, fn: () => Promise<void>) => {
     try {
       await fn();
@@ -76,6 +80,14 @@ export async function runOperationsSweep(prisma: PrismaClient, now: Date = new D
   await step("unanswered shopper requests", async () => {
     out.requestsEscalated = (await escalateUnansweredRequests(prisma, now)).escalated;
   });
+  await step("stuck deliveries", async () => {
+    out.deliveriesEscalated = (await escalateStuckDeliveries(prisma, now)).escalated;
+  });
+  if (couriersEnabled()) {
+    await step("couriers", async () => {
+      out.couriersPolled = (await pollQuietShipments(prisma, getCourierRegistry(), now)).polled;
+    });
+  }
   await step("payments", async () => {
     const r = await reconcilePayments(prisma, getAdapterRegistry(prisma), now);
     out.paymentsPolled = r.polled;

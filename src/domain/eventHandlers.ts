@@ -3,6 +3,8 @@ import type { CallbackHandler } from "./callbackInbox.js";
 import type { OutboxHandler } from "./outbox.js";
 import { BILLING_INBOX_PROVIDER, billingCallbackHandler } from "./subscriptions/collection.js";
 import { buildTradeCallbackHandlers, buildTradeOutboxHandlers } from "./trade/handlers.js";
+import { buildCourierCallbackHandlers } from "./store/shipments.js";
+import { getCourierRegistry } from "../couriers/registry.js";
 
 /**
  * Registries of outbox event handlers (keyed by eventType) and provider-callback handlers (keyed by provider).
@@ -14,5 +16,5 @@ export function buildOutboxHandlers(prisma: PrismaClient): Readonly<Record<strin
 }
 
 export function buildCallbackHandlers(prisma: PrismaClient): Readonly<Record<string, CallbackHandler>> {
-  return { ...buildTradeCallbackHandlers(prisma), [BILLING_INBOX_PROVIDER]: billingCallbackHandler(prisma) };
+  return { ...buildTradeCallbackHandlers(prisma), [BILLING_INBOX_PROVIDER]: billingCallbackHandler(prisma), ...buildCourierCallbackHandlers(prisma, getCourierRegistry()) };
 }

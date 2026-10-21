@@ -9,6 +9,13 @@ import { acceptSalesOrder, createPurchaseOrder, submitPurchaseOrder } from "../s
 import { setPartnerTerms } from "../src/domain/trade/partners.js";
 import { deliverTradeEvents } from "../src/domain/trade/handlers.js";
 import { recordCallback, processInbox } from "../src/domain/callbackInbox.js";
+import { fakeJpeg } from "./helpers/images.js";
+import { MAX_IMAGES_PER_PRODUCT, addProductImage } from "../src/domain/productImages.js";
+import { applyBulkChanges } from "../src/domain/bulkCatalog.js";
+import { enableFlag } from "./helpers/phase2.js";
+import { confirmStoreOrder } from "../src/domain/store/orders.js";
+import { createShipment } from "../src/domain/store/shipments.js";
+import { CourierRegistry } from "../src/couriers/adapter.js";
 
 /**
  * These races only mean something on a REAL Postgres (several genuine connections, real row locks). They run when TEST_PG_ADMIN_URL
@@ -76,5 +83,43 @@ describe.skipIf(!REAL)("real concurrency (genuine parallel connections)", () => 
     const handlers = { "race-test": async () => { handled++; await new Promise((r) => setTimeout(r, 30)); } };
     await Promise.all(Array.from({ length: 4 }, () => processInbox(prisma, handlers, { now: new Date(Date.now() + 1000) })));
     expect(handled).toBe(1);
+  });
+
+  it("many phones uploading photos for one product at once never exceed the limit and never store the same picture twice", async () => {
+    const s = await makeSeller(prisma, "Photo Race Shop", { stock: 5 });
+    const base = { businessId: s.businessId, productId: s.product.id };
+    const pics = Array.from({ length: 14 }, (_, i) => fakeJpeg(900, 900, i % 10)); // 10 different pictures, 4 repeats
+    const results = await Promise.allSettled(pics.map((data) => addProductImage(s.scoped, { ...base, data })));
+    const live = await s.scoped.productImage.findMany({ where: { productId: s.product.id, removedAt: null } });
+    expect(live.length).toBeLessThanOrEqual(MAX_IMAGES_PER_PRODUCT);
+    expect(live.length).toBe(MAX_IMAGES_PER_PRODUCT);
+    expect(new Set(live.map((x) => x.sha256)).size).toBe(live.length);
+    expect(new Set(live.map((x) => x.position)).size).toBe(live.length);
+    expect(results.filter((r) => r.status === "rejected").length).toBeGreaterThan(0);
+  });
+
+  it("the same bulk-edit batch sent several times at once is applied exactly once", async () => {
+    const s = await makeSeller(prisma, "Bulk Race Shop", { stock: 5 });
+    const ctx = { businessId: s.businessId, currencyCode: "NGN", minorUnitExp: 2, role: "OWNER" as const, actorId: "m-1" };
+    const rows = [{ sku: "COLA", retailPrice: "175" }];
+    const results = await Promise.all(Array.from({ length: 6 }, () => applyBulkChanges(prisma, ctx, { batchId: "race-batch-0001", rows })));
+    expect(results.filter((r) => !r.replayed)).toHaveLength(1);
+    expect(await s.scoped.auditLog.count({ where: { action: "catalog.bulk_edit" } })).toBe(1);
+    expect(await s.scoped.priceRule.count({ where: { variantId: s.variant.id, status: "ACTIVE", packConversionId: null, minQuantity: 1 } })).toBe(1);
+  });
+
+  it("two courier bookings for one order at once create one live job and dispatch the order once", async () => {
+    process.env["COURIERS_ENABLED"] = "true";
+    const s = await makeSeller(prisma, "Courier Race Shop", { stock: 20 });
+    await enableFlag(prisma, s.businessId, "storeCourier");
+    const { order } = await placeStoreOrder(prisma, s, { qty: 2, fulfilment: "DELIVERY" });
+    await confirmStoreOrder(prisma, { businessId: s.businessId, orderId: order.id });
+    const results = await Promise.allSettled([1, 2, 3].map(() => createShipment(prisma, new CourierRegistry(), { businessId: s.businessId, orderId: order.id, courier: "manual" })));
+    delete process.env["COURIERS_ENABLED"];
+    expect(results.filter((r) => r.status === "fulfilled").length).toBeGreaterThanOrEqual(1);
+    expect(await s.scoped.deliveryShipment.count({ where: { orderId: order.id, status: { in: ["BOOKED", "PICKED_UP", "IN_TRANSIT"] } } })).toBe(1);
+    expect((await s.scoped.storeOrder.findUniqueOrThrow({ where: { id: order.id } })).status).toBe("OUT_FOR_DELIVERY");
+    const level = await getStockLevel(s.scoped, s.shopId, s.variant.id);
+    expect(level.onHand).toBe(18); // 20 - 2: the goods left once
   });
 });

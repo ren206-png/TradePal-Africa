@@ -13,6 +13,8 @@ import { createStorefrontRouter } from "./storefront/routes.js";
 import { getAdapterRegistry } from "./payments/registry.js";
 import { createMerchantPaymentWebhookRouter } from "./payments/webhookRoute.js";
 import { createPawaPayBillingWebhookRouter } from "./pawapay/billingWebhook.js";
+import { createCourierWebhookRouter } from "./couriers/webhook.js";
+import { couriersEnabled, getCourierRegistry } from "./couriers/registry.js";
 import { RedisLoginRateLimiter } from "./admin/rateLimiter.js";
 import {
   buildDeletionResolutionOutboundGatewayFromEnv,
@@ -246,6 +248,10 @@ app.use(createMerchantPaymentWebhookRouter(prisma, () => getAdapterRegistry(pris
 // pawaPay callbacks about TradePal SUBSCRIPTION billing (expansion Phase 6): signed (RFC 9421) and processed asynchronously. Mounted
 // regardless of the billing flags, because finishing a charge that already exists must never depend on new charges being allowed.
 app.use(createPawaPayBillingWebhookRouter(prisma));
+
+// Courier status callbacks (delivery tracking). Off unless COURIERS_ENABLED=true; even then only couriers in the registry answer, and in
+// production the registry is empty until a real adapter is added by a reviewed change, so every path is a 404.
+if (couriersEnabled()) app.use(createCourierWebhookRouter(prisma, () => getCourierRegistry()));
 
 // Public storefront (expansion Phase 4): server-rendered pages for shoppers. Off unless STOREFRONT_ENABLED=true; even then a shop
 // only appears once its owner switches the per-business `storefront` flag on and opens the shop. Behind a proxy set TRUST_PROXY so

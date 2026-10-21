@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
-import type { TenantScopedClient } from "../db/tenantScope.js";
+import { withScopedTransaction, type TenantScopedClient } from "../db/tenantScope.js";
 import { isBusinessSuspended } from "./businessModeration.js";
 
 /**
@@ -90,14 +90,18 @@ export async function addProductImage(scoped: TenantScopedClient, input: { busin
   const product = await scoped.product.findUnique({ where: { id: input.productId } });
   if (!product) throw new ImageError("NOT_FOUND", "Product not found.");
   const sha256 = createHash("sha256").update(input.data).digest("hex");
-  const existing = await scoped.productImage.findFirst({ where: { productId: input.productId, sha256, removedAt: null } });
-  if (existing) return { id: existing.id, position: existing.position, contentType: existing.contentType, bytes: existing.bytes, width: existing.width, height: existing.height, url: imageUrlOf(existing.id), duplicate: true };
-  const live = await scoped.productImage.count({ where: { productId: input.productId, removedAt: null } });
-  if (live >= MAX_IMAGES_PER_PRODUCT) throw new ImageError("TOO_MANY", `A product can have ${MAX_IMAGES_PER_PRODUCT} photos. Remove one first.`);
-  const created = await scoped.productImage.create({
-    data: { businessId: input.businessId, productId: input.productId, position: live, contentType: info.contentType, bytes: input.data.length, width: info.width, height: info.height, sha256, data: new Uint8Array(input.data), createdBy: input.createdBy ?? null },
+  return withScopedTransaction(scoped, async (tx) => {
+    // One upload at a time per product, so "at most 6 photos" and "the same picture once" hold even when two phones upload together.
+    await (tx as unknown as { $executeRaw: (q: TemplateStringsArray, ...v: unknown[]) => Promise<number> }).$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"product-image:" + input.productId}))`;
+    const existing = await tx.productImage.findFirst({ where: { productId: input.productId, sha256, removedAt: null } });
+    if (existing) return { id: existing.id, position: existing.position, contentType: existing.contentType, bytes: existing.bytes, width: existing.width, height: existing.height, url: imageUrlOf(existing.id), duplicate: true };
+    const live = await tx.productImage.count({ where: { productId: input.productId, removedAt: null } });
+    if (live >= MAX_IMAGES_PER_PRODUCT) throw new ImageError("TOO_MANY", `A product can have ${MAX_IMAGES_PER_PRODUCT} photos. Remove one first.`);
+    const created = await tx.productImage.create({
+      data: { businessId: input.businessId, productId: input.productId, position: live, contentType: info.contentType, bytes: input.data.length, width: info.width, height: info.height, sha256, data: new Uint8Array(input.data), createdBy: input.createdBy ?? null },
+    });
+    return { id: created.id, position: created.position, contentType: created.contentType, bytes: created.bytes, width: created.width, height: created.height, url: imageUrlOf(created.id), duplicate: false };
   });
-  return { id: created.id, position: created.position, contentType: created.contentType, bytes: created.bytes, width: created.width, height: created.height, url: imageUrlOf(created.id), duplicate: false };
 }
 
 /** Removes a photo: the row stays, the bytes go. The remaining photos close up so the first one is always the main picture. */

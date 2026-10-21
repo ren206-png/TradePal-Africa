@@ -3534,7 +3534,8 @@ model DeliveryShipment {
   id             String         @id @default(uuid())
   businessId     String
   orderId        String
-  courier        String
+  courier        String // adapter id, or "manual"
+  courierName    String // what the seller and the shopper see, e.g. "Own rider" or the courier's name
   externalId     String?
   trackingRef    String?
   trackingUrl    String?

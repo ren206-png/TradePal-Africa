@@ -13,6 +13,7 @@ import { loadBasket } from "./basket.js";
 import {
   FLAG_ONLINE_PAYMENT, StoreError, isUniqueViolation, loadPublicStorefrontById, newPickupCode, newToken, nextStoreReference, sha256, simulatedPaymentsAllowed, toE164,
 } from "./common.js";
+import { JOB_STATUS_LABEL } from "../../couriers/adapter.js";
 import { closeIntentsForSubject } from "../merchantPayments/close.js";
 import { journalStoreHandover, journalStorePaymentIn } from "./journal.js";
 import { retailListOf } from "./storefront.js";
@@ -35,6 +36,14 @@ const ACCESS_DAYS = 90;
 const AFTER_COMPLETION_ACCESS_DAYS = 30;
 
 export type StoreOrderFull = StoreOrder & { lines: StoreOrderLine[] };
+
+/** What a shopper may see of the courier job: who, how it is going, a tracking link and the rider's name and number. Never the courier's fee or its own ids. */
+export interface PublicShipmentView { courierName: string; status: string; statusLabel: string; trackingUrl: string | null; riderName: string | null; riderPhone: string | null }
+async function publicShipmentOf(scoped: TenantScopedClient, orderId: string): Promise<PublicShipmentView | null> {
+  const s = await scoped.deliveryShipment.findFirst({ where: { orderId }, orderBy: { createdAt: "desc" } });
+  if (!s || s.status === "CANCELLED") return null;
+  return { courierName: s.courierName, status: s.status, statusLabel: JOB_STATUS_LABEL[s.status], trackingUrl: s.trackingUrl, riderName: s.riderName, riderPhone: s.riderPhone };
+}
 
 export async function loadStoreOrder(scoped: TenantScopedClient, orderId: string): Promise<StoreOrderFull> {
   const order = await scoped.storeOrder.findUnique({ where: { id: orderId }, include: { lines: { orderBy: { lineNo: "asc" } } } });
@@ -509,7 +518,7 @@ export interface PublicOrderView {
   refundedMinor: bigint;
   seller: { name: string; supportPhone: string | null };
   collection: { location: string | null; instructions: string | null } | null;
-  delivery: { zone: string | null; landmark: string | null; address: string | null; reference: string | null; carrier: string | null } | null;
+  delivery: { zone: string | null; landmark: string | null; address: string | null; reference: string | null; carrier: string | null; shipment: PublicShipmentView | null } | null;
   pickupCode: string;
   timeline: { label: string; at: Date }[];
   actions: { cancel: CancellationMode; cancelMessage: string; refund: { allowed: boolean; message: string }; pay: boolean; reportProblem: boolean };
@@ -528,6 +537,7 @@ export async function publicOrderView(prisma: PrismaClient, businessId: string, 
   const cancels = await scoped.storeCancellationRequest.findMany({ where: { orderId }, orderBy: { createdAt: "asc" } });
   const refunds = await scoped.storeRefundRequest.findMany({ where: { orderId }, orderBy: { createdAt: "asc" } });
   const held = await scoped.paymentException.count({ where: { orderId, status: "OPEN" } });
+  const shipment = order.fulfilment === "DELIVERY" ? await publicShipmentOf(scoped, orderId) : null;
   const cp = cancellationPolicy(order);
   const rp = refundPolicy(order, terms.returnWindowDays, now);
   const timeline = (
@@ -539,7 +549,7 @@ export async function publicOrderView(prisma: PrismaClient, businessId: string, 
     subtotalMinor: order.subtotalMinor, deliveryFeeMinor: order.deliveryFeeMinor, totalMinor: order.totalMinor, paidMinor: order.paidMinor, refundedMinor: order.refundedMinor,
     seller: { name: terms.seller.name, supportPhone: terms.seller.supportPhone },
     collection: order.fulfilment === "PICKUP" ? { location: terms.pickup?.location ?? null, instructions: terms.pickup?.instructions ?? null } : null,
-    delivery: order.fulfilment === "DELIVERY" ? { zone: order.deliveryZoneName, landmark: order.landmark, address: order.addressLine, reference: order.deliveryRef, carrier: order.carrier } : null,
+    delivery: order.fulfilment === "DELIVERY" ? { zone: order.deliveryZoneName, landmark: order.landmark, address: order.addressLine, reference: order.deliveryRef, carrier: order.carrier, shipment } : null,
     pickupCode: order.pickupCode, timeline,
     actions: {
       cancel: cp.mode, cancelMessage: cp.message, refund: { allowed: rp.allowed, message: rp.message },

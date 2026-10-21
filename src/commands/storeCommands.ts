@@ -17,6 +17,9 @@ import { fileAppeal, moderationStatusFor } from "../domain/moderation.js";
 import { PaymentsError } from "../domain/merchantPayments/common.js";
 import { payOutStoreRefund, refundHeldPayment } from "../domain/merchantPayments/storeRefunds.js";
 import { CapabilityError } from "../payments/adapter.js";
+import { MANUAL_COURIER_ID, MANUAL_COURIER_NAME } from "../couriers/adapter.js";
+import { getCourierRegistry } from "../couriers/registry.js";
+import { applyShipmentUpdate, cancelShipment, courierEnabledFor, createShipment, shipmentForOrder } from "../domain/store/shipments.js";
 import { getAdapterRegistry } from "../payments/registry.js";
 
 /**
@@ -46,6 +49,43 @@ const USAGE = [
   "/store payment <id> refund|reserve|apply | payments | cases | case <id> note <text>",
   "Marketplace: /store marketplace on|off|status | publish <sku> <category> | unpublish <sku> | categories | moderation | appeal <what happened>",
 ].join("\n");
+
+const COURIER_USAGE = [
+  "Couriers (delivery orders):",
+  "/store couriers | track <number>",
+  "/store dispatch <number> via <courier> [name <shown name>] [ref <tracking ref>] [url <https link>] [rider <name> <phone>]",
+  "/store courier <number> picked | transit | delivered | returned | failed <reason> | cancel <reason>",
+].join("\n");
+
+/** Reads `via manual name Gokada ref AB12 url https://... rider Tunde 0803...` into its parts. Returns null when the text has no keyword at all (a plain delivery reference). */
+export function parseDispatchWords(words: string[]): { via?: string; name?: string; ref?: string; url?: string; riderName?: string; riderPhone?: string } | null {
+  const KEYS = new Set(["via", "name", "ref", "url", "rider"]);
+  if (!words.some((w, i) => i === 0 && KEYS.has(w.toLowerCase()))) return null;
+  const out: Record<string, string> = {};
+  let key: string | null = null;
+  for (const w of words) {
+    if (KEYS.has(w.toLowerCase())) { key = w.toLowerCase(); out[key] = ""; continue; }
+    if (key) out[key] = (out[key] ? out[key] + " " : "") + w;
+  }
+  const result: { via?: string; name?: string; ref?: string; url?: string; riderName?: string; riderPhone?: string } = {};
+  if (out["via"]) result.via = out["via"].split(/\s+/)[0]!;
+  if (out["name"]) result.name = out["name"];
+  if (out["ref"]) result.ref = out["ref"];
+  if (out["url"]) result.url = out["url"].split(/\s+/)[0]!;
+  if (out["rider"]) {
+    // the phone number is the trailing run of number-like words ("0803 111 2222"); everything before it is the rider's name
+    const parts = out["rider"].split(/\s+/);
+    let i = parts.length;
+    while (i > 0 && /^\+?[0-9-]+$/.test(parts[i - 1]!)) i--;
+    const digits = parts.slice(i).join("").replace(/\D/g, "");
+    if (i < parts.length && digits.length >= 8 && digits.length <= 15) {
+      result.riderPhone = parts.slice(i).join(" ");
+      const name = parts.slice(0, i).join(" ");
+      if (name) result.riderName = name;
+    } else result.riderName = out["rider"];
+  }
+  return result;
+}
 
 function methodOf(word: string | undefined): TradePaymentMethod {
   const w = (word ?? "").toLowerCase();
@@ -79,7 +119,11 @@ async function dispatch(ctx: CommandContext, args: string): Promise<string> {
   const tail = rest.join(" ");
   switch (sub.toLowerCase()) {
     case "": return status(ctx);
-    case "help": return USAGE;
+    case "help": return (await courierEnabledFor(ctx.scopedPrisma, ctx.businessId)) ? `${USAGE}\n${COURIER_USAGE}` : USAGE;
+    case "couriers": case "track": case "courier":
+      if (!(await courierEnabledFor(ctx.scopedPrisma, ctx.businessId))) return `I don't know "/store ${sub}".\n\n${USAGE}`;
+      if (!can(ctx, "store:fulfil")) return NOT_ALLOWED;
+      return courierCommand(ctx, sub.toLowerCase(), rest);
     case "orders": return listOrders(ctx);
     case "order": return showOrder(ctx, rest[0]);
     case "requests": return listRequests(ctx);
@@ -219,7 +263,12 @@ async function listOrders(ctx: CommandContext): Promise<string> {
   const orders = await ctx.scopedPrisma.storeOrder.findMany({ where: { status: { in: [...ACTIVE] } }, orderBy: { createdAt: "asc" }, take: 15 });
   if (orders.length === 0) return "No active shop orders.";
   const next = (o: { status: string; fulfilment: string }) => (o.status === "PLACED" ? "confirm it" : o.status === "CONFIRMED" ? "get it ready" : o.status === "READY" ? (o.fulfilment === "PICKUP" ? "hand over with the code" : "dispatch it") : "hand over with the code");
-  return ["Shop orders:", ...orders.map((o) => `${o.reference} ${o.buyerName}: ${money(ctx, o.totalMinor)}, ${label(o.fulfilment)}, ${label(o.status)}${o.paidMinor >= o.totalMinor ? ", paid" : o.paymentMethod === "ONLINE_SIMULATED" ? ", UNPAID online" : ", pay on handover"} <- ${next(o)}`)].join("\n");
+  const jobs = new Map<string, { status: string; courierName: string }>();
+  if (await courierEnabledFor(ctx.scopedPrisma, ctx.businessId)) {
+    for (const j of await ctx.scopedPrisma.deliveryShipment.findMany({ where: { orderId: { in: orders.map((o) => o.id) } }, orderBy: { createdAt: "asc" } })) jobs.set(j.orderId, j);
+  }
+  const courierNote = (o: { id: string }) => { const j = jobs.get(o.id); return j ? `, courier ${j.courierName}: ${j.status.toLowerCase().replace(/_/g, " ")}${j.status === "FAILED" ? " (act: /store failed or rebook)" : ""}` : ""; };
+  return ["Shop orders:", ...orders.map((o) => `${o.reference} ${o.buyerName}: ${money(ctx, o.totalMinor)}, ${label(o.fulfilment)}, ${label(o.status)}${o.paidMinor >= o.totalMinor ? ", paid" : o.paymentMethod === "ONLINE_SIMULATED" ? ", UNPAID online" : ", pay on handover"}${courierNote(o)} <- ${next(o)}`)].join("\n");
 }
 
 async function showOrder(ctx: CommandContext, ref: string | undefined): Promise<string> {
@@ -249,9 +298,27 @@ async function fulfil(ctx: CommandContext, sub: string, rest: string[]): Promise
     case "ready":
       await markStoreOrderReady(ctx.prisma, common);
       return o.fulfilment === "PICKUP" ? `${o.reference} is ready for collection. When the buyer comes: /store done ${o.reference} <their 6-digit code>.` : `${o.reference} is ready. When it leaves: /store dispatch ${o.reference} [delivery ref].`;
-    case "dispatch":
+    case "dispatch": {
+      const words = rest.slice(1);
+      const parsed = parseDispatchWords(words);
+      if (parsed || /^via\b/i.test(text)) {
+        if (!(await courierEnabledFor(ctx.scopedPrisma, ctx.businessId))) return "Courier tracking is not switched on for your shop. Dispatch it with just a delivery reference: /store dispatch " + o.reference + " <delivery ref>.";
+        if (!parsed?.via) return `Say which courier: /store dispatch ${o.reference} via manual ... (see /store couriers).`;
+        const r = await createShipment(ctx.prisma, getCourierRegistry(), {
+          businessId: ctx.businessId, orderId: o.id, courier: parsed.via, actor: idem(ctx),
+          ...(parsed.name ? { courierName: parsed.name } : {}), ...(parsed.ref ? { trackingRef: parsed.ref } : {}), ...(parsed.url ? { trackingUrl: parsed.url } : {}),
+          ...(parsed.riderName ? { riderName: parsed.riderName } : {}), ...(parsed.riderPhone ? { riderPhone: parsed.riderPhone } : {}),
+        });
+        const s = r.shipment;
+        return [
+          r.dispatched ? `${o.reference} is out for delivery with ${s.courierName}; the stock has left your shelves.` : `${s.courierName} is now tracking ${o.reference}.`,
+          ...(s.trackingRef ? [`Tracking: ${s.trackingRef}`] : []), ...(s.riderName ? [`Rider: ${s.riderName}${s.riderPhone ? ` ${s.riderPhone}` : ""}`] : []),
+          `The buyer sees the courier and its status on their order page. A courier saying "delivered" does not finish the order: on hand-over, /store done ${o.reference} <their code>.`,
+        ].join("\n");
+      }
       await dispatchStoreOrder(ctx.prisma, { ...common, ...(text ? { deliveryRef: text.slice(0, 60) } : {}) });
       return `${o.reference} is out for delivery; the stock has left your shelves. On hand-over: /store done ${o.reference} <their code>.`;
+    }
     case "done": {
       const second = rest[1];
       const noCode = second?.toLowerCase() === "nocode";
@@ -283,6 +350,52 @@ async function fulfil(ctx: CommandContext, sub: string, rest: string[]): Promise
     }
     default: return USAGE;
   }
+}
+
+// ---------------------------------------------------------------------------------------- couriers
+
+const STATUS_WORDS: Record<string, "PICKED_UP" | "IN_TRANSIT" | "DELIVERED" | "RETURNED" | "FAILED" | "CANCELLED"> = {
+  picked: "PICKED_UP", pickedup: "PICKED_UP", transit: "IN_TRANSIT", onway: "IN_TRANSIT", delivered: "DELIVERED", returned: "RETURNED", failed: "FAILED", cancel: "CANCELLED",
+};
+
+async function courierCommand(ctx: CommandContext, sub: string, rest: string[]): Promise<string> {
+  const registry = getCourierRegistry();
+  if (sub === "couriers") {
+    return [
+      "Couriers you can use:",
+      `manual - ${MANUAL_COURIER_NAME}: you record who is delivering and update its status with /store courier. Use "name <text>" to show a name like Gokada.`,
+      ...registry.list().map((a) => `${a.id} - ${a.displayName}${a.capabilities.callbacks ? " (reports its own status)" : ""}`),
+    ].join("\n");
+  }
+  const ref = rest[0];
+  const o = await findOrder(ctx, ref);
+  if (!o) return `I can't find shop order "${ref ?? ""}". Send /store orders.`;
+  const view = await shipmentForOrder(ctx.scopedPrisma, o.id);
+  if (sub === "track") {
+    if (!view) return `${o.reference} has no courier recorded. Use /store dispatch ${o.reference} via manual ...`;
+    return [
+      `${o.reference}: ${view.courierName}, ${view.statusLabel}.`,
+      ...(view.trackingRef ? [`Tracking: ${view.trackingRef}`] : []), ...(view.trackingUrl ? [`Link: ${view.trackingUrl}`] : []), ...(view.riderName ? [`Rider: ${view.riderName}${view.riderPhone ? ` ${view.riderPhone}` : ""}`] : []),
+      ...(view.failureReason ? [`Problem: ${view.failureReason}`] : []),
+      "History:", ...view.history.slice(-6).map((h) => `- ${h.at.toISOString().slice(0, 16).replace("T", " ")} ${h.label}${h.detail ? ` (${h.detail})` : ""} [${h.source.toLowerCase()}]`),
+    ].join("\n");
+  }
+  // /store courier <number> <word> [reason]
+  const word = (rest[1] ?? "").toLowerCase();
+  const status = STATUS_WORDS[word];
+  if (!status) return `Say what happened: /store courier ${o.reference} picked | transit | delivered | returned | failed <reason> | cancel <reason>`;
+  const reason = rest.slice(2).join(" ").trim();
+  if (!view) return `${o.reference} has no courier recorded. Use /store dispatch ${o.reference} via manual ...`;
+  if (status === "CANCELLED") {
+    if (reason.length < 3) return `Say why: /store courier ${o.reference} cancel <reason>`;
+    await cancelShipment(ctx.prisma, registry, { businessId: ctx.businessId, orderId: o.id, reason, actor: idem(ctx) });
+    return `The courier job for ${o.reference} is cancelled. The order is still out for delivery: book another courier with /store dispatch ${o.reference} via ..., or /store failed ${o.reference} <reason>.`;
+  }
+  const r = await applyShipmentUpdate(ctx.prisma, { businessId: ctx.businessId, shipmentId: view.id, status, source: "SELLER", ...(reason ? { reason } : {}) });
+  if (!r.applied) return `Nothing changed: the job is already "${r.shipment.status.toLowerCase().replace(/_/g, " ")}".`;
+  if (status === "DELIVERED") return `Noted: ${view.courierName} says ${o.reference} was delivered. To finish the order, take the buyer's 6-digit code: /store done ${o.reference} <code>.`;
+  if (status === "FAILED") return `Noted: delivery of ${o.reference} failed (${reason}). If it will not be tried again: /store failed ${o.reference} <reason> puts the goods back in stock and cancels the order.`;
+  return `Noted: ${o.reference} is now "${status.toLowerCase().replace(/_/g, " ")}". The buyer sees it on their order page.`;
 }
 
 // ---------------------------------------------------------------------------------------- requests

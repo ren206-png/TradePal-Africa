@@ -34,3 +34,29 @@ export async function escalateUnansweredRequests(prisma: PrismaClient, now: Date
   }
   return { escalated };
 }
+
+/**
+ * A delivery that has been "out for delivery" for `afterDays` days (default 7) with no hand-over, failure or cancellation is escalated ONCE to a
+ * support case that TradePal follows up, so a parcel cannot be lost between a seller and a courier without anyone looking. The order stays the
+ * seller's to complete or fail: nothing is changed on their behalf. Idempotent: each order is escalated at most once.
+ */
+export const STUCK_DELIVERY_DAYS = 7;
+
+export async function escalateStuckDeliveries(prisma: PrismaClient, now: Date = new Date(), afterDays: number = STUCK_DELIVERY_DAYS): Promise<{ escalated: number }> {
+  const cutoff = new Date(now.getTime() - afterDays * 86_400_000);
+  const stuck = await prisma.storeOrder.findMany({ where: { status: "OUT_FOR_DELIVERY", dispatchedAt: { lte: cutoff } }, select: { id: true, reference: true, buyerName: true, buyerPhone: true, businessId: true }, take: 200 });
+  let escalated = 0;
+  for (const o of stuck) {
+    const marker = `[delivery ${o.id}]`;
+    if (await prisma.supportCase.findFirst({ where: { orderId: o.id, summary: { contains: marker } }, select: { id: true } })) continue;
+    await openSupportCase(prisma, {
+      businessId: o.businessId, orderId: o.id, type: "DELIVERY", openedBy: "ADMIN", handledBy: "PLATFORM",
+      summary: `${marker} Order ${o.reference} has been out for delivery for ${afterDays} days with no hand-over. TradePal support is checking with the seller.`,
+      contactName: o.buyerName, contactPhone: o.buyerPhone,
+    }).catch((error: unknown) => {
+      if (!(error instanceof Error) || !/several open reports/.test(error.message)) throw error;
+    });
+    escalated++;
+  }
+  return { escalated };
+}

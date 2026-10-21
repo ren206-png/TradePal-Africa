@@ -73,6 +73,12 @@ function privateHeaders(res: Response): void {
 const text = (max: number) => z.string().trim().max(max);
 const checkoutSchema = z.object({ buyerName: text(80), buyerPhone: text(30), buyerNote: text(500).optional(), consent: z.string().optional(), updates: z.string().optional() });
 
+/** The courier job as the shopper sees it. The tracking link is https only (checked when it was recorded) and opens without sending a referrer. */
+function shipmentBlock(sh: PublicOrderView["delivery"] extends infer D ? (D extends { shipment: infer S } ? S : never) : never): string {
+  if (!sh) return "";
+  return `<p><strong>Courier:</strong> ${esc(sh.courierName)}: ${esc(sh.statusLabel)}${sh.status === "DELIVERED" ? "<br>The courier says it was delivered. The seller will ask for your 6-digit code to finish the order." : ""}${sh.status === "FAILED" ? "<br>The courier could not deliver. The seller will contact you." : ""}${sh.trackingUrl ? `<br><a href="${esc(sh.trackingUrl)}" rel="noopener noreferrer nofollow" target="_blank">Track this delivery</a>` : ""}${sh.riderName ? `<br>Rider: ${esc(sh.riderName)}${sh.riderPhone ? ` (${esc(sh.riderPhone)})` : ""}` : ""}</p>`;
+}
+
 export function createStorefrontRouter(prisma: PrismaClient, options: StorefrontOptions = {}): Router {
   const router = Router();
   const read = options.limiters?.read ?? new InMemoryLoginRateLimiter(300, 60_000);
@@ -324,7 +330,7 @@ export function createStorefrontRouter(prisma: PrismaClient, options: Storefront
       ${updatesCard}
       <h2>What happens next</h2><ul>${steps}</ul>
       ${v.collection ? `<p><strong>Collect at:</strong> ${esc(v.collection.location ?? "")}${v.collection.instructions ? `<br>${esc(v.collection.instructions)}` : ""}</p>` : ""}
-      ${v.delivery ? `<p><strong>Delivery to:</strong> ${esc(v.delivery.landmark ?? v.delivery.address ?? "")} (${esc(v.delivery.zone ?? "")})${v.delivery.reference ? `<br>Delivery reference: ${esc(v.delivery.reference)}` : ""}</p>` : ""}
+      ${v.delivery ? `<p><strong>Delivery to:</strong> ${esc(v.delivery.landmark ?? v.delivery.address ?? "")} (${esc(v.delivery.zone ?? "")})${v.delivery.reference ? `<br>Delivery reference: ${esc(v.delivery.reference)}` : ""}</p>${shipmentBlock(v.delivery.shipment)}` : ""}
       ${["CONFIRMED", "READY", "OUT_FOR_DELIVERY"].includes(v.status) ? `<div class="card"><strong>Your handover code: ${esc(v.pickupCode)}</strong><br><span class="muted">Give it to the seller when you ${v.fulfilment === "PICKUP" ? "collect" : "receive"} your order. Do not share it any other way.</span></div>` : ""}
       <h2>Items</h2><table><tbody>${items}<tr><td>Items total</td><td class="n">${m(v.subtotalMinor)}</td></tr>${v.deliveryFeeMinor > 0n ? `<tr><td>Delivery fee</td><td class="n">${m(v.deliveryFeeMinor)}</td></tr>` : ""}<tr><th>Total</th><th class="n">${m(v.totalMinor)}</th></tr></tbody></table>
       <p>${esc(payNote)}${v.refundedMinor > 0n ? ` Refunded so far: ${m(v.refundedMinor)}.` : ""}</p>

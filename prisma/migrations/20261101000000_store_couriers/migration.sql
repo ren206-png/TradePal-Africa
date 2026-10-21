@@ -7,6 +7,7 @@ CREATE TABLE "DeliveryShipment" (
     "businessId" TEXT NOT NULL,
     "orderId" TEXT NOT NULL,
     "courier" TEXT NOT NULL,
+    "courierName" TEXT NOT NULL,
     "externalId" TEXT,
     "trackingRef" TEXT,
     "trackingUrl" TEXT,
@@ -76,6 +77,7 @@ ALTER TABLE "DeliveryShipmentEvent" ADD CONSTRAINT "DeliveryShipmentEvent_shipme
 -- ============================================================================================
 ALTER TABLE "DeliveryShipment" ADD CONSTRAINT "DeliveryShipment_values_check" CHECK (
   "courier" ~ '^[a-z0-9][a-z0-9_-]{0,39}$'
+  AND length("courierName") BETWEEN 1 AND 100
   AND ("feeMinor" IS NULL OR "feeMinor" >= 0)
   AND ("trackingUrl" IS NULL OR "trackingUrl" ~ '^https://')
   AND ("riderPhone" IS NULL OR "riderPhone" ~ '^[0-9]{8,15}$')
@@ -93,7 +95,8 @@ BEGIN
     RAISE EXCEPTION 'A delivery job cannot be moved to another order or courier' USING ERRCODE = 'check_violation';
   END IF;
   IF NEW."status" <> OLD."status" THEN
-    IF OLD."status" IN ('DELIVERED', 'FAILED', 'CANCELLED', 'RETURNED') THEN
+    IF OLD."status" IN ('DELIVERED', 'CANCELLED', 'RETURNED') OR (OLD."status" = 'FAILED' AND NEW."status" <> 'RETURNED') THEN
+      -- a failed job can still be marked returned (the parcel came back); nothing else leaves a finished state
       RAISE EXCEPTION 'A % delivery job is final and cannot become %', OLD."status", NEW."status" USING ERRCODE = 'check_violation';
     END IF;
     IF OLD."status" = 'IN_TRANSIT' AND NEW."status" IN ('BOOKED', 'PICKED_UP', 'CANCELLED') THEN
