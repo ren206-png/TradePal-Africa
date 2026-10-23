@@ -5,6 +5,18 @@ import { recordAuditLog } from "./auditLog.js";
 export class FeatureFlagNotFoundError extends Error {}
 
 /**
+ * Flags that cannot be turned ON through the generic flag tools. `reorderForecastLive` is the per-merchant forecast promotion
+ * gate: it opens only through `flipForecastGate` (thresholds checked, owner action, audited). A database trigger enforces
+ * the same rule, so this error is the friendly front door, not the only lock.
+ */
+export const PROTECTED_FLAG_KEYS: ReadonlySet<string> = new Set(["reorderForecastLive"]);
+export class ProtectedFlagError extends Error {
+  constructor(flagKey: string) {
+    super(`'${flagKey}' cannot be turned on here. It opens only through its own controlled gate.`);
+  }
+}
+
+/**
  * Non-Negotiable Standard #7: every FeatureFlag defaults to `enabledByDefault:
  * false`, and a business only sees a feature once a BusinessFeatureFlag row
  * explicitly turns it on (or, for a flag the business has never overridden,
@@ -67,6 +79,7 @@ export async function setFeatureFlagForBusiness(
   options: SetFeatureFlagForBusinessOptions = {},
 ) {
   await assertFlagExists(scopedPrisma, flagKey);
+  if (enabled && PROTECTED_FLAG_KEYS.has(flagKey)) throw new ProtectedFlagError(flagKey);
 
   const override = await scopedPrisma.businessFeatureFlag.upsert({
     where: { businessId_flagKey: { businessId, flagKey } },
@@ -149,6 +162,7 @@ export async function setFeatureFlagGlobalDefault(
 ): Promise<FeatureFlag> {
   const existing = await prisma.featureFlag.findUnique({ where: { key: flagKey } });
   if (!existing) throw new FeatureFlagNotFoundError(`Feature flag '${flagKey}' does not exist.`);
+  if (enabledByDefault && PROTECTED_FLAG_KEYS.has(flagKey)) throw new ProtectedFlagError(flagKey);
 
   return prisma.featureFlag.update({ where: { key: flagKey }, data: { enabledByDefault } });
 }

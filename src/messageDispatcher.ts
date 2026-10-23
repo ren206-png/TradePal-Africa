@@ -4,13 +4,14 @@ import { applyLoggableIntent, type LoggableParsedIntent } from "./ai/applyParsed
 import { assertWithinQuotaIfEnabled, getEffectivePlan, QuotaExceededError } from "./domain/billing.js";
 import { evaluateAiBudget } from "./domain/aiBudget.js";
 import { isFeatureEnabled } from "./domain/featureFlags.js";
-import { DebtOverpaymentError } from "./domain/debtBook.js";
+import { DebtOverpaymentError, findCustomerByName, listOpenDebtsForCustomer } from "./domain/debtBook.js";
 import { formatMoney } from "./domain/money.js";
 import { parseListMessage, type ListSection, type ParsedList } from "./ai/listEntry.js";
-import { isUndoTypo, matchBareCommand, UNDO_CONFIRM_REPLY } from "./commands/bareCommands.js";
+import { isUndoTypo, matchBareCommand, matchBareCommandWithArgs, matchPlainWord, UNDO_CONFIRM_REPLY } from "./commands/bareCommands.js";
 import { recordAiParseLog } from "./ai/logParse.js";
 import { buildAiParseResult, parseTransactionText, type AiParseResult } from "./ai/parse.js";
-import { isAiProviderConfigurationError, type AiProvider } from "./ai/provider.js";
+import { classifyAiProviderFailure } from "./ai/failureClass.js";
+import type { AiProvider } from "./ai/provider.js";
 import type { DeepSeekAiProvider } from "./ai/deepseekProvider.js";
 import { estimateCostMicroUsd, resolveAiModel } from "./ai/modelRegistry.js";
 import type { ParsedIntent } from "./ai/schema.js";
@@ -38,6 +39,10 @@ import { reportIncident } from "./monitoring/alerts.js";
 import type { CircuitBreaker } from "./monitoring/circuitBreaker.js";
 import type { SttProvider } from "./stt/provider.js";
 import { downloadWhatsAppMedia } from "./whatsapp/mediaGateway.js";
+import { conversationEnabled, proposeLoggable, tryHandleReply, type ConversationCtx, type InputSource } from "./conversation/flow.js";
+import { applyStart, applyStop, consentKeyword, hasConsentHistory, parseUpdatesMessage, verifyUpdatesByCode } from "./messaging/consent.js";
+import { sendMessage } from "./messaging/send.js";
+import { whatsappTransport } from "./messaging/transport.js";
 import { sendWhatsAppTextMessage, type OutboundGatewayDeps } from "./whatsapp/outboundGateway.js";
 import type { InboundMessageJob } from "./whatsapp/webhookHandler.js";
 import { maybeSendUnsupportedCountryNotice } from "./whatsapp/unsupportedCountryNotice.js";
@@ -346,13 +351,11 @@ async function parseWithCircuitBreaker(
     // also covers ordinary transient blips) keeps it from being lost in routine noise, and
     // gives it its own alerts.ts dedupe window so it doesn't get silently suppressed by an
     // unrelated transient failure that happened to fire first.
-    const configurationFailure = isAiProviderConfigurationError(error);
+    const failure = classifyAiProviderFailure(error);
     await reportIncident(deps.alerts, {
       service: SERVICE_NAME,
-      title: configurationFailure
-        ? "AI provider billing/auth failure (non-retryable — needs manual fix, not a retry)"
-        : "AI provider call failed",
-      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+      title: failure ? failure.title : "AI provider call failed",
+      detail: `${failure ? `${failure.advice} (HTTP ${failure.status ?? "?"})\n` : ""}${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
     });
     return { result: AI_PROVIDER_UNAVAILABLE_RESULT, degraded: true };
   }
@@ -455,10 +458,12 @@ async function tryParseWithDeepSeek(
         detail: releaseError instanceof Error ? (releaseError.stack ?? releaseError.message) : String(releaseError),
       });
     });
+    // DeepSeek out of balance, or its key rejected, never fixes itself and is invisible to merchants while Anthropic covers: it gets its own title.
+    const failure = classifyAiProviderFailure(error);
     await reportIncident(deps.alerts, {
       service: SERVICE_NAME,
-      title: "DeepSeek transaction-parse call failed — falling back to Anthropic",
-      detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+      title: failure ? failure.title : "DeepSeek transaction-parse call failed — falling back to Anthropic",
+      detail: `${failure ? `${failure.advice} (HTTP ${failure.status ?? "?"}). Merchants are being served by the fallback provider meanwhile.\n` : ""}${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
     });
     return undefined;
   }
@@ -704,6 +709,7 @@ async function dispatchCommandOrParse(
   merchant: Merchant,
   text: string,
   whatsappMessageId: string,
+  source: InputSource = "TEXT",
 ): Promise<void> {
   const business = await deps.prisma.business.findUniqueOrThrow({
     where: { id: merchant.businessId },
@@ -711,15 +717,53 @@ async function dispatchCommandOrParse(
   });
   const scopedPrisma = getTenantScopedClient(deps.prisma, business.id);
 
+  // Phase 7 (per-business flag, default OFF): AI-read entries are previewed and saved only after the person confirms. With the
+  // flag off, every line below behaves exactly as it did before.
+  const conversational = await conversationEnabled(scopedPrisma, business.id);
+  const convCtx: ConversationCtx = { prisma: deps.prisma, scoped: scopedPrisma, merchant, business };
+  if (conversational) {
+    if (source === "VOICE") text = text.replace(/^\s*\/+/, ""); // a transcript is never run as a slash command
+    if (!text.trim().startsWith("/")) {
+      const answer = await tryHandleReply(convCtx, text, source);
+      if (answer !== null) {
+        await reply(deps, merchant.phoneNumber, answer);
+        return;
+      }
+    }
+  }
+
   // Shop owners on a phone often type just the word, with a slip of the finger ("Today", "stok", "debst",
   // "remnd Amina"): a few unambiguous read-only commands work without the slash and with one wrong letter.
   // See commands/bareCommands.ts for exactly what is (and deliberately isn't) matched.
   const bare = matchBareCommand(text);
+  // A command typed WITHOUT its slash but WITH a name or amount ("paid Amina 300", "customer Amina", "add staff 0803..."): see
+  // commands/bareCommands.ts. If the command turns out not to be available to this business, the message is read the normal way instead.
+  let viaBare: { original: string; hint: string } | null = null;
   if (bare) text = bare;
   else if (isUndoTypo(text)) {
     // A near-miss of "undo" is never acted on (an undo can't itself be undone); ask for the exact word.
     await reply(deps, merchant.phoneNumber, UNDO_CONFIRM_REPLY);
     return;
+  } else if (source !== "VOICE" && !text.trim().startsWith("/")) {
+    // (A voice note is never read this way: a mis-heard word must not change a record.)
+    const plain = matchPlainWord(text);
+    if (plain) {
+      viaBare = { original: text, hint: "" };
+      text = plain;
+    }
+    else {
+      const match = await matchBareCommandWithArgs(text, {
+        customerExists: async (name) => (await findCustomerByName(scopedPrisma, name)) !== null,
+        customerHasOpenDebt: async (name) => {
+          const c = await findCustomerByName(scopedPrisma, name);
+          return c !== null && (await listOpenDebtsForCustomer(scopedPrisma, c.id)).length > 0;
+        },
+      });
+      if (match) {
+        viaBare = { original: text, hint: match.hint };
+        text = match.command;
+      }
+    }
   }
 
   if (text.trim().startsWith("/")) {
@@ -751,8 +795,13 @@ async function dispatchCommandOrParse(
         await redactPayerNumberInStoredMessage(deps.prisma, whatsappMessageId);
       }
     }
-    await reply(deps, merchant.phoneNumber, replyText);
-    return;
+    if (viaBare && /^Unrecognized command/.test(replyText)) {
+      // Not a command this business has switched on: it was ordinary writing after all. Read it the normal way.
+      text = viaBare.original;
+    } else {
+      await reply(deps, merchant.phoneNumber, viaBare?.hint ? `${replyText}\n\n${viaBare.hint}` : replyText);
+      return;
+    }
   }
 
   // A whole day written as a list (heading + one entry per line) is read with plain rules, not the AI.
@@ -782,6 +831,20 @@ async function dispatchCommandOrParse(
     : replyForParseResult(result, stockTrackingEnabled);
   let finalAction = outcome.finalAction;
   let replyText: string;
+
+  if (outcome.loggable && conversational) {
+    try {
+      await assertWithinQuotaIfEnabled(scopedPrisma, business.id, business.timezone);
+    } catch (error) {
+      if (!(error instanceof QuotaExceededError)) throw error;
+      await recordAiParseLog(deps.prisma, { businessId: business.id, whatsappMessageId, rawInput: text, result, finalAction: "REJECTED" });
+      await reply(deps, merchant.phoneNumber, error.message);
+      return;
+    }
+    const proposal = await proposeLoggable(convCtx, { parsed: outcome.loggable, parse: result, rawText: text, whatsappMessageId, source });
+    await reply(deps, merchant.phoneNumber, proposal.reply);
+    return;
+  }
 
   if (outcome.loggable) {
     try {
@@ -845,12 +908,50 @@ async function dispatchCommandOrParse(
  * retry a job just because a reply failed, per this doc comment's own
  * long-standing rule above).
  */
+/**
+ * STOP / START from a number that is NOT a registered merchant and has a consent history with us (Phase 7). Handled before the
+ * onboarding path so a shopper who replies STOP is never signed up as a merchant. The only message sent back is the one
+ * confirmation, and it is allowed even though the number is now blocked. Returns false (untouched) for anything else, including
+ * a STOP from a number we have no consent record for, so the older behaviour for strangers is unchanged.
+ */
+async function handleConsentKeyword(deps: DispatcherDeps, job: InboundMessageJob, text: string): Promise<boolean> {
+  // "UPDATES <code>" from the shopper's own phone verifies their order-update consent (never a sign-up; never from a registered merchant).
+  const updatesCode = parseUpdatesMessage(text);
+  if (updatesCode) {
+    const transport = whatsappTransport({ prisma: deps.prisma, ...deps.outboundGateway });
+    const now = new Date();
+    const v = await verifyUpdatesByCode(deps.prisma, { phone: job.fromNumber, code: updatesCode, now });
+    const base = { toPhone: job.fromNumber, idempotencyKey: `updates:${job.waMessageId}`, lastInboundAt: now, now };
+    if (v.result === "VERIFIED") await sendMessage(deps.prisma, transport, { ...base, classId: "CONSUMER_UPDATES_STARTED", params: { seller: v.sellerName, reference: v.reference } });
+    else await sendMessage(deps.prisma, transport, { ...base, classId: v.result === "BLOCKED" ? "CONSUMER_UPDATES_BLOCKED" : "CONSUMER_UPDATES_UNMATCHED" });
+    return true;
+  }
+  const keyword = consentKeyword(text);
+  if (!keyword || !(await hasConsentHistory(deps.prisma, job.fromNumber))) return false;
+  const transport = whatsappTransport({ prisma: deps.prisma, ...deps.outboundGateway });
+  const now = new Date();
+  if (keyword === "STOP") {
+    await applyStop(deps.prisma, job.fromNumber);
+    await sendMessage(deps.prisma, transport, { classId: "CONSUMER_OPT_OUT_CONFIRMATION", toPhone: job.fromNumber, idempotencyKey: `stop:${job.waMessageId}`, lastInboundAt: now, now });
+  } else {
+    const result = await applyStart(deps.prisma, job.fromNumber);
+    // Only say "on again" when something was actually turned back on; an operator block, or a number whose consents were never
+    // withdrawn by STOP, gets no claim it cannot keep (and no reply).
+    if (result.restored > 0) {
+      await sendMessage(deps.prisma, transport, { classId: "CONSUMER_OPT_IN_CONFIRMATION", toPhone: job.fromNumber, idempotencyKey: `start:${job.waMessageId}`, lastInboundAt: now, now });
+    }
+  }
+  return true;
+}
+
 export async function dispatchInboundMessage(deps: DispatcherDeps, job: InboundMessageJob): Promise<void> {
   try {
     const text = await extractMessageText(deps.prisma, job);
     const merchant = await findMerchantByPhoneNumber(deps.prisma, job.fromNumber);
 
-    if (!merchant) {
+    if (!merchant && text !== null && (await handleConsentKeyword(deps, job, text))) {
+      // A shopper's STOP / START: recorded and answered. Never treated as a sign-up.
+    } else if (!merchant) {
       try {
         const started = await startOnboarding(deps.prisma, job.fromNumber);
         try {
@@ -956,7 +1057,7 @@ export async function dispatchInboundMessage(deps: DispatcherDeps, job: InboundM
         } else if (outcome.kind === "transcription_failed") {
           await reply(deps, job.fromNumber, VOICE_TRANSCRIPTION_FAILED_REPLY);
         } else {
-          await dispatchCommandOrParse(deps, merchant, outcome.text, job.waMessageId);
+          await dispatchCommandOrParse(deps, merchant, outcome.text, job.waMessageId, "VOICE");
         }
       }
     } else {

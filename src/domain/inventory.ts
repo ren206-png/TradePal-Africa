@@ -1,3 +1,4 @@
+import { mirrorLegacyMovement } from "./stock.js";
 import { Prisma } from "@prisma/client";
 import type { InventoryItem, MovementSource } from "@prisma/client";
 import type { TenantScopedClient } from "../db/tenantScope.js";
@@ -133,7 +134,7 @@ export async function applyStockMovement(
     data: { estimatedStockQty: { increment: quantityDelta } },
   });
 
-  await scopedPrisma.inventoryMovement.create({
+  const legacyMovement = await scopedPrisma.inventoryMovement.create({
     data: {
       businessId,
       inventoryItemId: item.id,
@@ -141,6 +142,16 @@ export async function applyStockMovement(
       source,
       ...(transactionId ? { transactionId } : {}),
     },
+  });
+
+  // Expansion Phase 2: mirror into the movement-based stock log for items that adopted a catalog variant.
+  // OFF unless the stockV2 flag is on; never throws.
+  await mirrorLegacyMovement(scopedPrisma, {
+    businessId,
+    inventoryItemId: item.id,
+    legacyMovementId: legacyMovement.id,
+    quantityDelta,
+    ...(transactionId ? { transactionId } : {}),
   });
 
   return { item: updated, quantityDelta };

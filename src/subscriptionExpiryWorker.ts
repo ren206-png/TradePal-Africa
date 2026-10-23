@@ -1,3 +1,4 @@
+import { isJobPaused } from "./ops/jobControl.js";
 import "dotenv/config";
 import { Worker } from "bullmq";
 import { buildSubscriptionExpiryOutboundGatewayFromEnv } from "./config/outboundGatewayEnv.js";
@@ -58,6 +59,7 @@ async function main() {
   const worker = new Worker(
     SUBSCRIPTION_EXPIRY_QUEUE_NAME,
     async () => {
+      if (await isJobPaused(prisma, "subscription-expiry")) return { paused: true };
       const result = await expireLapsedSubscriptions(prisma, new Date(), outboundGateway);
       if (result.expiredCount > 0) {
         console.log(`Subscription expiry sweep: expired ${result.expiredCount} subscription(s).`);

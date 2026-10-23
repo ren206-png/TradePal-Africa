@@ -22,16 +22,22 @@ model Country {
   currency      Currency        @relation(fields: [defaultCurrency], references: [code])
   countryConfig CountryConfig[]
   businesses    Business[]
+  planPrices    PlanPrice[]
 
   @@index([defaultCurrency])
 }
 
 model Currency {
-  code         String @id // ISO 4217, e.g. NGN, KES, GHS, SLE, TZS
-  name         String
-  minorUnitExp Int // decimal places of the minor unit; TZS documented as 0 (whole shilling treated as minor unit)
+  storeOrders    StoreOrder[]
+  tradeOrders    TradeOrder[]
+  priceLists     PriceList[]
+  journalEntries JournalEntry[]
+  code           String         @id // ISO 4217, e.g. NGN, KES, GHS, SLE, TZS
+  name           String
+  minorUnitExp   Int // decimal places of the minor unit; TZS documented as 0 (whole shilling treated as minor unit)
 
   countries       Country[]
+  planPrices      PlanPrice[]
   businesses      Business[]
   transactions    Transaction[]
   debts           Debt[]
@@ -76,23 +82,88 @@ enum BusinessStatus {
 }
 
 model Business {
-  id               String         @id @default(uuid())
-  name             String
-  countryCode      String
-  currencyCode     String
-  languageCode     String
-  timezone         String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
+  storefronts             Storefront[]
+  providerConnections     ProviderConnection[]
+  paymentIntents          PaymentIntent[]
+  paymentAttempts         PaymentAttempt[]
+  paymentAttemptEvents    PaymentAttemptEvent[]
+  paymentAllocations      PaymentAllocation[]
+  providerRefunds         ProviderRefund[]
+  providerSettlements     ProviderSettlement[]
+  providerSettlementLines ProviderSettlementLine[]
+  moderationActions       ModerationAction[]
+  appeals                 Appeal[]
+  deliveryZones           DeliveryZone[]
+  listings                Listing[]
+  storeOrders             StoreOrder[]
+  storeOrderLines         StoreOrderLine[]
+  storePayments           StorePayment[]
+  storeCancellations      StoreCancellationRequest[]
+  storeRefunds            StoreRefundRequest[]
+  storeRefundLines        StoreRefundLine[]
+  paymentExceptions       PaymentException[]
+  supportCases            SupportCase[]
+  supportCaseNotes        SupportCaseNote[]
+  tradePartners           TradePartner[]
+  linksInvited            BusinessLink[]             @relation("LinkInviter")
+  linksReceived           BusinessLink[]             @relation("LinkInvitee")
+  priceListShares         PriceListShare[]
+  tradeOrders             TradeOrder[]
+  tradeOrderLines         TradeOrderLine[]
+  shipments               Shipment[]
+  shipmentLines           ShipmentLine[]
+  goodsReceipts           GoodsReceipt[]
+  goodsReceiptLines       GoodsReceiptLine[]
+  tradeInvoices           TradeInvoice[]
+  tradeInvoiceLines       TradeInvoiceLine[]
+  tradePayments           TradePayment[]
+  creditNotes             CreditNote[]
+  reorderRules            ReorderRule[]
+  reorderSuggestions      ReorderSuggestion[]
+  forecastPredictions     ForecastPrediction[]
+  forecastScores          ForecastScore[]
+  forecastGateEvents      ForecastGateEvent[]
+  products                Product[]
+  productImages           ProductImage[]
+  deliveryShipments       DeliveryShipment[]
+  deliveryShipmentEvents  DeliveryShipmentEvent[]
+  productVariants         ProductVariant[]
+  variantAliases          VariantAlias[]
+  packConversions         PackConversion[]
+  priceLists              PriceList[]
+  priceRules              PriceRule[]
+  stockMovements          StockMovement[]
+  stockBalances           StockBalance[]
+  stockReservations       StockReservation[]
+  stockCounts             StockCount[]
+  stockCountLines         StockCountLine[]
+  stockTransfers          StockTransfer[]
+  stockTransferLines      StockTransferLine[]
+  accounts                Account[]
+  journalEntries          JournalEntry[]
+  journalLines            JournalLine[]
+  dailyCloses             DailyClose[]
+  stockPolicy             StockPolicy?
+  id                      String                     @id @default(uuid())
+  name                    String
+  countryCode             String
+  currencyCode            String
+  languageCode            String
+  timezone                String // IANA tz stored explicitly on the business (KQ7): all "today"/"week" boundaries computed here
   // Phase 29: platform-moderation suspension (src/domain/businessModeration.ts),
   // distinct from Merchant.removedAt's per-staff soft-deactivation — this cuts
   // off every merchant on the business at once, for a platform-rules
   // violation. suspendedAt/suspensionReason are null whenever status is
   // ACTIVE (reinstateBusiness clears them). Enforced in the live message path
   // by messageDispatcher.ts's own gate, not just by hiding admin UI.
-  status           BusinessStatus @default(ACTIVE)
-  suspendedAt      DateTime?      @db.Timestamptz()
-  suspensionReason String?
-  createdAt        DateTime       @default(now()) @db.Timestamptz()
-  updatedAt        DateTime       @updatedAt @db.Timestamptz()
+  status                  BusinessStatus             @default(ACTIVE)
+  suspendedAt             DateTime?                  @db.Timestamptz()
+  /// True only for synthetic/test/demo organizations. The ONLY businesses whose financial rows may ever be hard-deleted
+  /// (database triggers enforce this); set at creation and immutable afterwards. See docs/expansion/db-protection.md.
+  isSynthetic             Boolean                    @default(false)
+  suspensionReason        String?
+  createdAt               DateTime                   @default(now()) @db.Timestamptz()
+  updatedAt               DateTime                   @updatedAt @db.Timestamptz()
 
   country  Country  @relation(fields: [countryCode], references: [code])
   currency Currency @relation(fields: [currencyCode], references: [code])
@@ -119,6 +190,18 @@ model Business {
   businessFeatureFlags BusinessFeatureFlag[]
   paymentRequests      PaymentRequest[]
   aiUsageLedgerEntries AiUsageLedger[]
+  shops                Shop[]
+  memberships          Membership[]
+  supportAccesses      SupportAccess[]
+  billingAttempts      BillingAttempt[]
+  billingAllocations   BillingAllocation[]
+  billingRefunds       BillingRefund[]
+  entitlementEvents    EntitlementEvent[]
+  contactConsents      ContactConsent[]
+  contactConsentEvents ContactConsentEvent[]
+  pendingActions       PendingAction[]
+  deviceSessions       DeviceSession[]
+  offlineDrafts        OfflineDraft[]
 
   @@index([countryCode])
 }
@@ -126,6 +209,80 @@ model Business {
 enum MerchantRole {
   OWNER
   STAFF
+}
+
+/// What a person may do inside one business (expansion Phase 1). The permission matrix lives in src/auth/permissions.ts.
+/// Legacy mapping: Merchant OWNER -> OWNER, Merchant STAFF -> SALES_CLERK.
+enum MembershipRole {
+  OWNER
+  MANAGER
+  SALES_CLERK
+  INVENTORY_OPERATOR
+  FINANCE_OPERATOR
+  RESTRICTED_SUPPORT
+}
+
+enum MembershipStatus {
+  ACTIVE
+  REVOKED
+}
+
+/// A physical or logical shop inside a business (tenant). Every business has exactly one default shop; more can be added
+/// in later phases. Additive: no existing table references Shop yet.
+model Shop {
+  reorderRules        ReorderRule[]
+  reorderSuggestions  ReorderSuggestion[]
+  forecastPredictions ForecastPrediction[]
+  stockMovements      StockMovement[]
+  stockBalances       StockBalance[]
+  stockReservations   StockReservation[]
+  stockCounts         StockCount[]
+  transfersFrom       StockTransfer[]      @relation("TransferFrom")
+  transfersTo         StockTransfer[]      @relation("TransferTo")
+  id                  String               @id @default(uuid())
+  businessId          String
+  name                String
+  isDefault           Boolean              @default(false)
+  createdAt           DateTime             @default(now()) @db.Timestamptz()
+  updatedAt           DateTime             @updatedAt @db.Timestamptz()
+
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  memberships Membership[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+}
+
+/// Links a verified person (their WhatsApp number, normalized) to a business with a role, optionally limited to one shop.
+/// Lets one person belong to several businesses and be revoked without losing history. The legacy `Merchant` row stays the
+/// source of truth for the WhatsApp conversation; memberships are kept in sync by src/domain/memberships.ts.
+model Membership {
+  id          String           @id @default(uuid())
+  businessId  String
+  /// null = every shop of the business.
+  shopId      String?
+  phoneNumber String
+  role        MembershipRole
+  status      MembershipStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now()) @db.Timestamptz()
+  updatedAt   DateTime         @updatedAt @db.Timestamptz()
+  revokedAt   DateTime?        @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  shop     Shop?    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, phoneNumber])
+  @@index([phoneNumber])
+  @@index([businessId])
+}
+
+/// Which business (and shop) a person is currently acting in, when they belong to more than one. Never guessed from
+/// the phone number or the last conversation: set explicitly (src/domain/memberships.ts setActiveContext).
+model ActiveContext {
+  phoneNumber String   @id
+  businessId  String
+  shopId      String?
+  updatedAt   DateTime @updatedAt @db.Timestamptz()
 }
 
 enum OnboardingStep {
@@ -173,16 +330,21 @@ enum AdminRole {
   SUPER_ADMIN
   ANALYST
   SUPPORT
+  /// Platform operator (expansion Phase 1): runs day-to-day operations (replays, exception queues, flags) without owner-only powers.
+  OPERATOR
 }
 
 /// Internal TradePal staff — never tenant-scoped, backs the Phase 2 admin dashboard (read-only first, RBAC before any write).
 model AdminUser {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  name         String
-  role         AdminRole
-  passwordHash String // bcrypt hash (see src/admin/auth.ts) — never stores or logs the raw password
-  createdAt    DateTime  @default(now()) @db.Timestamptz()
+  supportAccesses SupportAccess[]
+  id              String          @id @default(uuid())
+  email           String          @unique
+  name            String
+  role            AdminRole
+  passwordHash    String // bcrypt hash (see src/admin/auth.ts) — never stores or logs the raw password
+  createdAt       DateTime        @default(now()) @db.Timestamptz()
+  /// Phase 8: a disabled admin cannot log in and any token they already hold stops working on its next request. Never deleted (audit rows point at them).
+  disabledAt      DateTime?       @db.Timestamptz()
 }
 
 /// Revocation list for admin JWTs (see src/admin/tokenRevocation.ts). A stateless JWT can't be
@@ -285,13 +447,14 @@ enum RiskLabel {
 /// WhatsApp/phone number for a merchant's customer, since that person has not consented to TradePal
 /// processing their data. Only the merchant-given label is stored.
 model Customer {
-  id           String    @id @default(uuid())
+  priceLists   PriceList[]
+  id           String      @id @default(uuid())
   businessId   String
   name         String // merchant-given label, e.g. "John the tailor" — anonymized to a placeholder on deletion request
-  riskLabel    RiskLabel @default(UNKNOWN) // derived only from payment history (src/domain/riskLabel.ts), never from AI inference
-  isAnonymized Boolean   @default(false)
-  createdAt    DateTime  @default(now()) @db.Timestamptz()
-  updatedAt    DateTime  @updatedAt @db.Timestamptz()
+  riskLabel    RiskLabel   @default(UNKNOWN) // derived only from payment history (src/domain/riskLabel.ts), never from AI inference
+  isAnonymized Boolean     @default(false)
+  createdAt    DateTime    @default(now()) @db.Timestamptz()
+  updatedAt    DateTime    @updatedAt @db.Timestamptz()
 
   business        Business         @relation(fields: [businessId], references: [id])
   transactions    Transaction[]
@@ -367,7 +530,8 @@ model DebtPayment {
 // ─────────────────────────────────────────────────────────────────────────
 
 model InventoryItem {
-  id                String   @id @default(uuid())
+  variant           ProductVariant?
+  id                String          @id @default(uuid())
   businessId        String
   name              String
   // Phase 17: lowercased/trimmed mirror of `name`, maintained by the application layer
@@ -380,12 +544,12 @@ model InventoryItem {
   // index, so the app computes this column itself on every write.
   normalizedName    String
   unit              String? // e.g. "bottle", "bag", "kg"
-  estimatedStockQty Int      @default(0) // an estimate; a sale is never blocked by this reaching zero
+  estimatedStockQty Int             @default(0) // an estimate; a sale is never blocked by this reaching zero
   lowStockThreshold Int?
   // Phase 24: set via /setprice. Nullable — most items still have no price, same as lowStockThreshold.
   priceMinor        BigInt?
-  createdAt         DateTime @default(now()) @db.Timestamptz()
-  updatedAt         DateTime @updatedAt @db.Timestamptz()
+  createdAt         DateTime        @default(now()) @db.Timestamptz()
+  updatedAt         DateTime        @updatedAt @db.Timestamptz()
 
   business  Business            @relation(fields: [businessId], references: [id])
   items     TransactionItem[]
@@ -653,6 +817,7 @@ model Plan {
 
   currency      Currency       @relation(fields: [currencyCode], references: [code])
   subscriptions Subscription[]
+  versions      PlanVersion[]
 }
 
 enum SubscriptionStatus {
@@ -668,30 +833,46 @@ enum SubscriptionStatus {
 }
 
 model Subscription {
-  id                 String             @id @default(uuid())
-  businessId         String
-  planCode           String
-  status             SubscriptionStatus @default(ACTIVE)
-  currentPeriodStart DateTime           @db.Timestamptz()
-  currentPeriodEnd   DateTime           @db.Timestamptz()
-  createdAt          DateTime           @default(now()) @db.Timestamptz()
+  id                   String             @id @default(uuid())
+  businessId           String
+  planCode             String
+  status               SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart   DateTime           @db.Timestamptz()
+  currentPeriodEnd     DateTime           @db.Timestamptz()
+  createdAt            DateTime           @default(now()) @db.Timestamptz()
+  /// Phase 6: which published plan version this subscription is on (null for subscriptions created before versions existed).
+  planVersionId        String?
+  /// A plan change scheduled for the next renewal. There is no silent proration: the current period is paid for and runs out first.
+  pendingPlanVersionId String?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  cancelledAt          DateTime?          @db.Timestamptz()
 
-  business Business  @relation(fields: [businessId], references: [id])
-  plan     Plan      @relation(fields: [planCode], references: [code])
-  invoices Invoice[]
+  business       Business     @relation(fields: [businessId], references: [id])
+  plan           Plan         @relation(fields: [planCode], references: [code])
+  planVersion    PlanVersion? @relation("SubscriptionPlanVersion", fields: [planVersionId], references: [id])
+  pendingVersion PlanVersion? @relation("SubscriptionPendingVersion", fields: [pendingPlanVersionId], references: [id])
+  invoices       Invoice[]
 
   @@index([businessId])
 }
 
+/// Which kind of money a payment record is (expansion decisions G5-G7; see src/domain/paymentPurpose.ts).
+/// PLATFORM_SUBSCRIPTION = a business paying TradePal; MERCHANT_SALE = a merchant's customer paying that merchant.
+enum PaymentPurpose {
+  PLATFORM_SUBSCRIPTION
+  MERCHANT_SALE
+}
+
 model Invoice {
-  id                String    @id @default(uuid())
+  id                String         @id @default(uuid())
   subscriptionId    String
   amountMinor       BigInt
   currencyCode      String
   status            String // PENDING, PAID, FAILED
-  dueDate           DateTime  @db.Timestamptz()
-  paidAt            DateTime? @db.Timestamptz()
-  createdAt         DateTime  @default(now()) @db.Timestamptz()
+  purpose           PaymentPurpose @default(PLATFORM_SUBSCRIPTION)
+  dueDate           DateTime       @db.Timestamptz()
+  paidAt            DateTime?      @db.Timestamptz()
+  createdAt         DateTime       @default(now()) @db.Timestamptz()
   // Phase 22: reconciles a Flutterwave webhook back to this Invoice. tx_ref is
   // a string we generate at checkout-link creation time and pass to
   // Flutterwave; it comes back unchanged on both the webhook payload and the
@@ -702,11 +883,23 @@ model Invoice {
   // instead of creating a duplicate charge record. providerCode is nullable
   // because every Invoice created before Phase 22 has no provider at all.
   providerCode      String?
-  providerReference String?   @unique
+  providerReference String?        @unique
+  /// Phase 6 (pawaPay subscription billing). All null/zero for invoices created by the earlier hosted-checkout path.
+  planVersionId     String?
+  kind              String? // NEW | RENEWAL | PLAN_CHANGE
+  reference         String?        @unique // the support reference quoted to the merchant (INV-xxxxxxxx)
+  paidMinor         BigInt         @default(0)
+  refundedMinor     BigInt         @default(0)
+  periodStart       DateTime?      @db.Timestamptz() // set when the payment is allocated, never before
+  periodEnd         DateTime?      @db.Timestamptz()
+  cancelledAt       DateTime?      @db.Timestamptz()
 
-  subscription Subscription     @relation(fields: [subscriptionId], references: [id])
-  currency     Currency         @relation(fields: [currencyCode], references: [code])
-  provider     PaymentProvider? @relation(fields: [providerCode], references: [code])
+  planVersion     PlanVersion?     @relation(fields: [planVersionId], references: [id])
+  billingAttempts BillingAttempt[]
+  billingRefunds  BillingRefund[]
+  subscription    Subscription     @relation(fields: [subscriptionId], references: [id])
+  currency        Currency         @relation(fields: [currencyCode], references: [code])
+  provider        PaymentProvider? @relation(fields: [providerCode], references: [code])
 
   @@index([subscriptionId])
 }
@@ -728,23 +921,24 @@ model PaymentProvider {
 /// Flutterwave (`/paylink`), as opposed to Invoice which is TradePal's own subscription
 /// billing of the merchant. Tenant-scoped (direct businessId), unlike Invoice.
 model PaymentRequest {
-  id                String    @id @default(uuid())
+  id                String         @id @default(uuid())
   businessId        String
   customerId        String?
   description       String
   amountMinor       BigInt
   currencyCode      String
   status            String // PENDING, PAID, FAILED, EXPIRED
+  purpose           PaymentPurpose @default(MERCHANT_SALE)
   // Phase 24: same reconciliation role as Invoice.providerReference (see comment there),
   // but prefixed "tpr_" (vs Invoice's "tp_") so the two txRef namespaces never collide even
   // though they live in different tables/unique constraints.
   providerCode      String?
-  providerReference String?   @unique
+  providerReference String?        @unique
   checkoutUrl       String?
   // Set once confirmPaymentRequestPayment records the sale via recordTransaction.
   transactionId     String?
-  createdAt         DateTime  @default(now()) @db.Timestamptz()
-  paidAt            DateTime? @db.Timestamptz()
+  createdAt         DateTime       @default(now()) @db.Timestamptz()
+  paidAt            DateTime?      @db.Timestamptz()
 
   business       Business         @relation(fields: [businessId], references: [id])
   customer       Customer?        @relation(fields: [customerId], references: [id])
@@ -880,4 +1074,2508 @@ model DeletionRequest {
   business Business @relation(fields: [businessId], references: [id])
 
   @@index([businessId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 1: reliable event delivery (docs/expansion/decisions.md P6)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum OutboxStatus {
+  PENDING
+  /// Claimed by a worker; reclaimable after the visibility timeout if that worker died.
+  PROCESSING
+  PUBLISHED
+  /// Gave up after the retry budget; needs a human (dead-letter replay in the admin console).
+  DEAD
+}
+
+/// Transactional outbox: an event is inserted in the SAME database transaction as the business change that causes it,
+/// and published asynchronously, so a crash can neither lose the event nor publish one for a change that rolled back.
+/// `dedupeKey` makes enqueueing idempotent (the same business effect is never queued twice).
+model OutboxEvent {
+  id            String       @id @default(uuid())
+  /// Tenant-owned events carry their business; platform events leave it null.
+  businessId    String?
+  aggregateType String
+  aggregateId   String
+  eventType     String
+  payload       Json
+  dedupeKey     String       @unique
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  /// Earliest time the next attempt may run (exponential backoff).
+  availableAt   DateTime     @default(now()) @db.Timestamptz()
+  claimedAt     DateTime?    @db.Timestamptz()
+  lastError     String?
+  publishedAt   DateTime?    @db.Timestamptz()
+  createdAt     DateTime     @default(now()) @db.Timestamptz()
+
+  @@index([status, availableAt])
+  @@index([eventType, status])
+}
+
+enum InboxStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  DEAD
+}
+
+/// Durable inbox for provider callbacks (payments and others): persisted before the HTTP acknowledgement, deduplicated
+/// on (provider, externalId), processed asynchronously. The WhatsApp inbox stays WebhookEvent.
+model CallbackInbox {
+  id                String      @id @default(uuid())
+  provider          String
+  /// The provider's own event/transaction id: the same callback delivered twice has the same one.
+  externalId        String
+  payload           Json
+  /// True only when the provider's documented authentication was verified before the row was stored.
+  signatureVerified Boolean     @default(false)
+  status            InboxStatus @default(RECEIVED)
+  attempts          Int         @default(0)
+  availableAt       DateTime    @default(now()) @db.Timestamptz()
+  claimedAt         DateTime?   @db.Timestamptz()
+  lastError         String?
+  receivedAt        DateTime    @default(now()) @db.Timestamptz()
+  processedAt       DateTime?   @db.Timestamptz()
+
+  @@unique([provider, externalId])
+  @@index([status, availableAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 1: platform admin console core (docs/expansion §18)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A platform admin's recorded, time-boxed reason for opening one merchant's books ("support access"). Append-only (a
+/// database trigger rejects edits and deletes): it is the audit evidence of who looked at whose data and why.
+model SupportAccess {
+  id          String   @id @default(uuid())
+  adminUserId String
+  businessId  String
+  reason      String
+  openedAt    DateTime @default(now()) @db.Timestamptz()
+  expiresAt   DateTime @db.Timestamptz()
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+  business  Business  @relation(fields: [businessId], references: [id])
+
+  @@index([adminUserId, businessId, expiresAt])
+  @@index([businessId, openedAt])
+}
+
+/// Last time each long-running process reported in. Feeds the admin health view and the public /heartbeat endpoint an
+/// external monitor (independent of Railway) can poll as a dead-man's switch.
+model SystemHeartbeat {
+  service    String   @id
+  lastSeenAt DateTime @db.Timestamptz()
+  meta       Json?
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 2: catalog, price lists, stock, journals, daily close.
+// Every table below is new and carries businessId (tenant scoping + RLS). Quantities are integers in the
+// variant's BASE unit; money is integer minor units with the currency stated on the parent row.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// A thing the business sells or stocks. Variants carry SKU, unit and stock; the product is the shared name/description.
+model Product {
+  id          String        @id @default(uuid())
+  businessId  String
+  name        String
+  description String?
+  category    String?
+  imageUrls   String[]
+  status      ProductStatus @default(DRAFT)
+  createdAt   DateTime      @default(now()) @db.Timestamptz()
+  updatedAt   DateTime      @updatedAt @db.Timestamptz()
+
+  business Business         @relation(fields: [businessId], references: [id])
+  variants ProductVariant[]
+  images   ProductImage[]
+
+  @@index([businessId, status])
+}
+
+/// A product photo, stored in the database and served from our own address (never from a seller-supplied link, which would hand every
+/// shopper's address to a third party and is blocked by the security headers anyway). Removing a photo keeps the row and empties the bytes.
+model ProductImage {
+  id          String    @id @default(uuid())
+  businessId  String
+  productId   String
+  position    Int       @default(0)
+  contentType String
+  bytes       Int
+  width       Int
+  height      Int
+  sha256      String
+  data        Bytes
+  createdBy   String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz()
+  removedAt   DateTime? @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@index([productId, removedAt])
+  @@index([businessId])
+}
+
+model ProductVariant {
+  listings            Listing[]
+  storeOrderLines     StoreOrderLine[]
+  tradeOrderLines     TradeOrderLine[]
+  reorderRules        ReorderRule[]
+  reorderSuggestions  ReorderSuggestion[]
+  forecastPredictions ForecastPrediction[]
+  id                  String               @id @default(uuid())
+  businessId          String
+  productId           String
+  sku                 String
+  barcode             String?
+  name                String // e.g. "500 ml", "Red / L"; the product name is on Product
+  baseUnit            String // smallest tracked quantum: piece, bottle, gram. Pack sizes convert to this explicitly.
+  trackStock          Boolean              @default(true)
+  lowStockThreshold   Int? // in base units
+  status              ProductStatus        @default(DRAFT)
+  inventoryItemId     String?              @unique // bridge to the legacy InventoryItem this variant adopted (Phase 2 adoption)
+  createdAt           DateTime             @default(now()) @db.Timestamptz()
+  updatedAt           DateTime             @updatedAt @db.Timestamptz()
+
+  business      Business           @relation(fields: [businessId], references: [id])
+  product       Product            @relation(fields: [productId], references: [id])
+  inventoryItem InventoryItem?     @relation(fields: [inventoryItemId], references: [id])
+  aliases       VariantAlias[]
+  packs         PackConversion[]
+  priceRules    PriceRule[]
+  balances      StockBalance[]
+  movements     StockMovement[]
+  reservations  StockReservation[]
+
+  @@unique([businessId, sku])
+  @@unique([businessId, barcode])
+  @@index([businessId, productId])
+}
+
+/// Names a merchant (or a customer) actually uses for a variant: "sugar 1kg", "ndiyo". Normalized for lookup.
+model VariantAlias {
+  id              String   @id @default(uuid())
+  businessId      String
+  variantId       String
+  alias           String
+  normalizedAlias String
+  createdAt       DateTime @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([businessId, normalizedAlias])
+  @@index([variantId])
+}
+
+/// A declared pack size: "1 carton = 24 pieces". Without a row here a carton is NOT convertible to pieces.
+model PackConversion {
+  id             String   @id @default(uuid())
+  businessId     String
+  variantId      String
+  name           String // carton, bag, box, dozen
+  normalizedName String
+  baseQuantity   Int // how many base units one pack holds (>= 2, enforced by a CHECK)
+  createdAt      DateTime @default(now()) @db.Timestamptz()
+
+  business   Business       @relation(fields: [businessId], references: [id])
+  variant    ProductVariant @relation(fields: [variantId], references: [id])
+  priceRules PriceRule[]
+
+  @@unique([variantId, normalizedName])
+  @@index([businessId])
+}
+
+enum PriceListKind {
+  RETAIL
+  WHOLESALE
+  CUSTOMER
+}
+
+enum PriceStatus {
+  ACTIVE
+  RETIRED
+}
+
+model PriceList {
+  shares       PriceListShare[]
+  id           String           @id @default(uuid())
+  businessId   String
+  name         String
+  kind         PriceListKind
+  currencyCode String
+  customerId   String? // CUSTOMER lists: the one customer these approved prices apply to
+  status       PriceStatus      @default(ACTIVE)
+  validFrom    DateTime?        @db.Timestamptz()
+  validTo      DateTime?        @db.Timestamptz()
+  createdAt    DateTime         @default(now()) @db.Timestamptz()
+
+  business Business    @relation(fields: [businessId], references: [id])
+  currency Currency    @relation(fields: [currencyCode], references: [code])
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  rules    PriceRule[]
+
+  @@index([businessId, kind, status])
+}
+
+/// One price point: "from minQuantity units (of this pack, or base unit when packConversionId is null) the unit price is X".
+/// Several rules for the same variant/unit form quantity breaks.
+model PriceRule {
+  id               String      @id @default(uuid())
+  businessId       String
+  priceListId      String
+  variantId        String
+  packConversionId String?
+  minQuantity      Int         @default(1)
+  unitPriceMinor   BigInt
+  status           PriceStatus @default(ACTIVE)
+  validFrom        DateTime?   @db.Timestamptz()
+  validTo          DateTime?   @db.Timestamptz()
+  createdAt        DateTime    @default(now()) @db.Timestamptz()
+
+  business       Business        @relation(fields: [businessId], references: [id])
+  priceList      PriceList       @relation(fields: [priceListId], references: [id])
+  variant        ProductVariant  @relation(fields: [variantId], references: [id])
+  packConversion PackConversion? @relation(fields: [packConversionId], references: [id])
+
+  @@index([priceListId, variantId])
+  @@index([businessId])
+}
+
+enum StockMovementKind {
+  OPENING_BALANCE // migrated/declared starting stock, labelled as such
+  RECEIPT
+  SALE_FULFILLMENT
+  RETURN_RESTOCK
+  COUNT_ADJUSTMENT
+  SPOILAGE
+  OWNER_WITHDRAWAL
+  DAMAGE_QUARANTINE
+  TRANSFER_DISPATCH
+  TRANSFER_RECEIPT
+  MANUAL_ADJUSTMENT
+  LEGACY_MIRROR // mirrored from the legacy InventoryItem path
+  REVERSAL
+}
+
+enum Provenance {
+  MERCHANT_ENTERED
+  DOCUMENT_SUPPORTED
+  PROVIDER_CONFIRMED
+  RECONCILED
+  MIGRATED_OPENING
+  SYSTEM_DERIVED
+}
+
+/// Append-only. The balance is the sum of these; a correction is a new REVERSAL/adjustment row.
+model StockMovement {
+  id                   String            @id @default(uuid())
+  businessId           String
+  shopId               String
+  variantId            String
+  kind                 StockMovementKind
+  onHandDelta          Int               @default(0)
+  damagedDelta         Int               @default(0)
+  inTransitDelta       Int               @default(0)
+  unitCostMinor        BigInt? // per base unit, when known (receipts, restocks); null = cost unknown
+  costCurrency         String?
+  costIncomplete       Boolean           @default(false) // a SALE_FULFILLMENT whose cost could not be fully determined
+  costMinor            BigInt? // cost of the units that LEFT on-hand (sale, spoilage, withdrawal...), computed at posting time
+  occurredAt           DateTime          @default(now()) @db.Timestamptz()
+  createdAt            DateTime          @default(now()) @db.Timestamptz()
+  provenance           Provenance        @default(MERCHANT_ENTERED)
+  sourceType           String?
+  sourceId             String?
+  actorType            ActorType         @default(SYSTEM)
+  actorId              String?
+  note                 String?
+  idempotencyKey       String?
+  reversalOfMovementId String?           @unique
+
+  business   Business       @relation(fields: [businessId], references: [id])
+  shop       Shop           @relation(fields: [shopId], references: [id])
+  variant    ProductVariant @relation(fields: [variantId], references: [id])
+  reversalOf StockMovement? @relation("StockMovementReversal", fields: [reversalOfMovementId], references: [id])
+  reversedBy StockMovement? @relation("StockMovementReversal")
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, variantId, createdAt])
+  @@index([sourceType, sourceId])
+}
+
+/// Running balance per variant per shop. The conditional updates that touch it (see src/domain/stock) are what
+/// stop two concurrent orders taking the last unit; stockReconcile compares it with the movement sums.
+model StockBalance {
+  id           String   @id @default(uuid())
+  businessId   String
+  shopId       String
+  variantId    String
+  onHand       Int      @default(0)
+  reserved     Int      @default(0)
+  damaged      Int      @default(0)
+  inTransit    Int      @default(0)
+  avgCostMinor BigInt? // moving weighted average over COSTED units only; null until a costed receipt
+  uncostedQty  Int      @default(0) // on-hand units that arrived without a cost
+  costCurrency String?
+  updatedAt    DateTime @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([shopId, variantId])
+  @@index([businessId, variantId])
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+  EXPIRED
+}
+
+model StockReservation {
+  id             String                 @id @default(uuid())
+  businessId     String
+  shopId         String
+  variantId      String
+  quantity       Int
+  status         StockReservationStatus @default(ACTIVE)
+  expiresAt      DateTime               @db.Timestamptz()
+  reference      String // what holds it: "order:<id>", "basket:<id>"
+  idempotencyKey String
+  createdAt      DateTime               @default(now()) @db.Timestamptz()
+  settledAt      DateTime?              @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([businessId, idempotencyKey])
+  @@index([status, expiresAt])
+  @@index([businessId, variantId])
+}
+
+enum NegativeStockPolicy {
+  ALLOW // a sale is never blocked by an estimate reaching zero (legacy behaviour, the default)
+  BLOCK // reservations/fulfilments beyond available stock are refused unless an approver is named
+}
+
+model StockPolicy {
+  id             String              @id @default(uuid())
+  businessId     String              @unique
+  negativeStock  NegativeStockPolicy @default(ALLOW)
+  allowBackorder Boolean             @default(false)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+}
+
+enum StockCountStatus {
+  OPEN
+  APPROVED
+  CANCELLED
+}
+
+model StockCount {
+  id         String           @id @default(uuid())
+  businessId String
+  shopId     String
+  status     StockCountStatus @default(OPEN)
+  note       String?
+  openedBy   String?
+  approvedBy String?
+  createdAt  DateTime         @default(now()) @db.Timestamptz()
+  approvedAt DateTime?        @db.Timestamptz()
+
+  business Business         @relation(fields: [businessId], references: [id])
+  shop     Shop             @relation(fields: [shopId], references: [id])
+  lines    StockCountLine[]
+
+  @@index([businessId, status])
+}
+
+model StockCountLine {
+  id          String   @id @default(uuid())
+  businessId  String
+  countId     String
+  variantId   String
+  expectedQty Int // on-hand when the count was opened (snapshot)
+  countedQty  Int
+  discrepancy Int // countedQty - expectedQty
+  reason      String? // required to approve a non-zero discrepancy
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+
+  business Business   @relation(fields: [businessId], references: [id])
+  count    StockCount @relation(fields: [countId], references: [id])
+
+  @@unique([countId, variantId])
+}
+
+enum StockTransferStatus {
+  DRAFT
+  DISPATCHED
+  RECEIVED
+  CANCELLED
+}
+
+model StockTransfer {
+  id           String              @id @default(uuid())
+  businessId   String
+  fromShopId   String
+  toShopId     String
+  status       StockTransferStatus @default(DRAFT)
+  note         String?
+  createdAt    DateTime            @default(now()) @db.Timestamptz()
+  dispatchedAt DateTime?           @db.Timestamptz()
+  receivedAt   DateTime?           @db.Timestamptz()
+
+  business Business            @relation(fields: [businessId], references: [id])
+  fromShop Shop                @relation("TransferFrom", fields: [fromShopId], references: [id])
+  toShop   Shop                @relation("TransferTo", fields: [toShopId], references: [id])
+  lines    StockTransferLine[]
+
+  @@index([businessId, status])
+}
+
+model StockTransferLine {
+  id               String  @id @default(uuid())
+  businessId       String
+  transferId       String
+  variantId        String
+  quantitySent     Int
+  quantityReceived Int?
+  unitCostMinor    BigInt? // cost carried from the source shop at dispatch
+
+  business Business      @relation(fields: [businessId], references: [id])
+  transfer StockTransfer @relation(fields: [transferId], references: [id])
+
+  @@unique([transferId, variantId])
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+model Account {
+  id         String      @id @default(uuid())
+  businessId String
+  code       String
+  name       String
+  type       AccountType
+  systemKey  String? // stable key the posting rules use: CASH, MOBILE_MONEY, AR, ...
+  active     Boolean     @default(true)
+  createdAt  DateTime    @default(now()) @db.Timestamptz()
+
+  business Business      @relation(fields: [businessId], references: [id])
+  lines    JournalLine[]
+
+  @@unique([businessId, code])
+  @@unique([businessId, systemKey])
+}
+
+/// Append-only. Balanced per entry (deferred constraint trigger). One currency per entry.
+model JournalEntry {
+  id                String     @id @default(uuid())
+  businessId        String
+  currencyCode      String
+  occurredAt        DateTime   @db.Timestamptz()
+  postedAt          DateTime   @default(now()) @db.Timestamptz()
+  kind              String // SALE, EXPENSE, STOCK_PURCHASE, DEBT_PAYMENT, REFUND, OWNER_WITHDRAWAL, FEE, SETTLEMENT, CASH_ADJUSTMENT, ...
+  memo              String?
+  sourceType        String?
+  sourceId          String?
+  provenance        Provenance @default(MERCHANT_ENTERED)
+  evidenceRef       String?
+  actorType         ActorType  @default(SYSTEM)
+  actorId           String?
+  idempotencyKey    String
+  reversalOfEntryId String?    @unique
+
+  business   Business      @relation(fields: [businessId], references: [id])
+  currency   Currency      @relation(fields: [currencyCode], references: [code])
+  lines      JournalLine[]
+  reversalOf JournalEntry? @relation("JournalReversal", fields: [reversalOfEntryId], references: [id])
+  reversedBy JournalEntry? @relation("JournalReversal")
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, occurredAt])
+  @@index([sourceType, sourceId])
+}
+
+model JournalLine {
+  id          String  @id @default(uuid())
+  businessId  String
+  entryId     String
+  accountId   String
+  debitMinor  BigInt  @default(0)
+  creditMinor BigInt  @default(0)
+  memo        String?
+
+  business Business     @relation(fields: [businessId], references: [id])
+  entry    JournalEntry @relation(fields: [entryId], references: [id])
+  account  Account      @relation(fields: [accountId], references: [id])
+
+  @@index([entryId])
+  @@index([businessId, accountId])
+}
+
+/// The end-of-day cash count for one business day. Append-only once written: a difference is explained by a
+/// CASH_ADJUSTMENT journal entry, never by editing the row.
+model DailyClose {
+  id                String   @id @default(uuid())
+  businessId        String
+  businessDate      DateTime @db.Date
+  currencyCode      String
+  expectedCashMinor BigInt
+  countedCashMinor  BigInt
+  differenceMinor   BigInt
+  summary           Json // snapshot of the day: sales by method, credit sales, collections, refunds, fees, wallet matching
+  note              String?
+  closedBy          String?
+  closedAt          DateTime @default(now()) @db.Timestamptz()
+  adjustmentEntryId String?
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, businessDate, currencyCode])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 3: B2B procurement and wholesale, reorder engine, forecasting.
+// Each business owns ITS OWN row of every document (buyer's purchase order, seller's sales order). The two rows are
+// linked by plain counterpart ids (deliberately no foreign key across tenants) and kept in step by outbox events that
+// copy only agreed fields. Neither side ever reads the other's books.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum TradePartnerRole {
+  SUPPLIER
+  CUSTOMER
+  BOTH
+}
+
+enum PartnerLinkStatus {
+  NONE
+  INVITED
+  LINKED
+  REVOKED
+}
+
+enum BusinessLinkStatus {
+  INVITED
+  ACTIVE
+  REVOKED
+}
+
+/// A trade counterparty in ONE business's books. Registered on TradePal or not; being linked shares nothing but agreed documents.
+model TradePartner {
+  id                   String            @id @default(uuid())
+  businessId           String
+  name                 String
+  normalizedName       String
+  phone                String?
+  role                 TradePartnerRole  @default(SUPPLIER)
+  linkStatus           PartnerLinkStatus @default(NONE)
+  linkedBusinessId     String? // the partner's own TradePal business, once an explicit link is ACTIVE
+  linkId               String?
+  paymentTermsDays     Int?
+  creditLimitMinor     BigInt? // seller-approved terms recorded by the merchant; TradePal does not lend, guarantee or score
+  blockWhenOverdueDays Int?
+  note                 String?
+  createdAt            DateTime          @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, normalizedName])
+  @@index([businessId, role])
+}
+
+/// An explicit, reversible authorization between two businesses. Not tenant-scoped (it has two parties).
+model BusinessLink {
+  id                String             @id @default(uuid())
+  inviterBusinessId String
+  inviteeBusinessId String?
+  inviterPartnerId  String
+  inviteePartnerId  String?
+  tokenHash         String             @unique // sha256 of the one-time invite token; the token itself is never stored
+  status            BusinessLinkStatus @default(INVITED)
+  expiresAt         DateTime           @db.Timestamptz()
+  createdBy         String?
+  acceptedBy        String?
+  acceptedAt        DateTime?          @db.Timestamptz()
+  revokedBy         String?
+  revokedAt         DateTime?          @db.Timestamptz()
+  createdAt         DateTime           @default(now()) @db.Timestamptz()
+
+  inviter Business  @relation("LinkInviter", fields: [inviterBusinessId], references: [id])
+  invitee Business? @relation("LinkInvitee", fields: [inviteeBusinessId], references: [id])
+
+  @@index([inviterBusinessId, status])
+  @@index([inviteeBusinessId, status])
+}
+
+/// A seller's wholesale price list shared with one linked buyer. Revoking stops new orders; agreed documents stay.
+model PriceListShare {
+  id          String    @id @default(uuid())
+  businessId  String
+  priceListId String
+  linkId      String
+  createdAt   DateTime  @default(now()) @db.Timestamptz()
+  revokedAt   DateTime? @db.Timestamptz()
+
+  business  Business  @relation(fields: [businessId], references: [id])
+  priceList PriceList @relation(fields: [priceListId], references: [id])
+
+  @@unique([priceListId, linkId])
+  @@index([businessId])
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+/// Acceptance state machine only. Goods movement, invoicing and payment are separate states.
+enum OrderAcceptance {
+  DRAFT
+  REQUESTED
+  QUOTED
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum GoodsMovementStatus {
+  NOT_SHIPPED
+  PARTIALLY_SHIPPED
+  SHIPPED
+  PARTIALLY_RECEIVED
+  RECEIVED
+}
+
+model TradeOrder {
+  id                 String              @id @default(uuid())
+  businessId         String
+  side               TradeSide
+  partnerId          String
+  counterpartOrderId String?             @unique // the other business's row of this same order
+  reference          String
+  currencyCode       String
+  acceptance         OrderAcceptance     @default(DRAFT)
+  movement           GoodsMovementStatus @default(NOT_SHIPPED)
+  totalMinor         BigInt              @default(0)
+  paymentTermsDays   Int?
+  validUntil         DateTime?           @db.Timestamptz()
+  holdUntil          DateTime?           @db.Timestamptz()
+  note               String?
+  frozenTerms        Json? // snapshot taken on acceptance: lines, prices, terms. Catalog edits never rewrite it.
+  acceptedAt         DateTime?           @db.Timestamptz()
+  closedAt           DateTime?           @db.Timestamptz()
+  createdBy          String?
+  createdAt          DateTime            @default(now()) @db.Timestamptz()
+  updatedAt          DateTime            @updatedAt @db.Timestamptz()
+
+  business  Business         @relation(fields: [businessId], references: [id])
+  currency  Currency         @relation(fields: [currencyCode], references: [code])
+  lines     TradeOrderLine[]
+  shipments Shipment[]
+  invoices  TradeInvoice[]
+
+  @@unique([businessId, reference])
+  @@index([businessId, side, acceptance])
+  @@index([partnerId])
+}
+
+model TradeOrderLine {
+  id                   String   @id @default(uuid())
+  businessId           String
+  orderId              String
+  lineNo               Int
+  variantId            String? // this business's own variant (stock is received/shipped against it)
+  counterpartVariantId String? // the other business's variant id, for linked orders (no cross-tenant foreign key)
+  description          String
+  sku                  String
+  unit                 String // pack name or base unit, as ordered
+  packBaseQuantity     Int      @default(1) // snapshot of the declared conversion
+  quantity             Int // in `unit`
+  baseQuantity         Int // quantity x packBaseQuantity
+  unitPriceMinor       BigInt // per `unit`, frozen on acceptance
+  lineTotalMinor       BigInt
+  shippedBase          Int      @default(0)
+  receivedBase         Int      @default(0) // goods the buyer has accepted or quarantined (short units are not received)
+  reservationId        String?
+  counterpartLineId    String?  @unique
+  createdAt            DateTime @default(now()) @db.Timestamptz()
+
+  business Business        @relation(fields: [businessId], references: [id])
+  order    TradeOrder      @relation(fields: [orderId], references: [id])
+  variant  ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@unique([orderId, lineNo])
+  @@index([businessId])
+}
+
+enum ShipmentStatus {
+  DISPATCHED
+  PARTIALLY_RECEIVED
+  RECEIVED
+}
+
+model Shipment {
+  id                    String         @id @default(uuid())
+  businessId            String
+  orderId               String
+  side                  TradeSide
+  number                Int
+  waybillRef            String?
+  carrier               String?
+  status                ShipmentStatus @default(DISPATCHED)
+  dispatchedAt          DateTime       @default(now()) @db.Timestamptz()
+  counterpartShipmentId String?        @unique
+  createdBy             String?
+
+  business Business       @relation(fields: [businessId], references: [id])
+  order    TradeOrder     @relation(fields: [orderId], references: [id])
+  lines    ShipmentLine[]
+  receipts GoodsReceipt[]
+
+  @@unique([orderId, number])
+  @@index([businessId])
+}
+
+model ShipmentLine {
+  id           String @id @default(uuid())
+  businessId   String
+  shipmentId   String
+  orderLineId  String
+  baseQuantity Int
+  acceptedBase Int    @default(0)
+  damagedBase  Int    @default(0)
+  shortBase    Int    @default(0)
+
+  business Business @relation(fields: [businessId], references: [id])
+  shipment Shipment @relation(fields: [shipmentId], references: [id])
+
+  @@unique([shipmentId, orderLineId])
+  @@index([businessId])
+}
+
+/// The buyer's confirmation of what actually arrived. Only a receipt increases the buyer's stock. Append-only.
+model GoodsReceipt {
+  id         String   @id @default(uuid())
+  businessId String
+  shipmentId String
+  note       String?
+  receivedBy String?
+  receivedAt DateTime @default(now()) @db.Timestamptz()
+
+  business Business           @relation(fields: [businessId], references: [id])
+  shipment Shipment           @relation(fields: [shipmentId], references: [id])
+  lines    GoodsReceiptLine[]
+
+  @@index([businessId, shipmentId])
+}
+
+model GoodsReceiptLine {
+  id             String  @id @default(uuid())
+  businessId     String
+  receiptId      String
+  shipmentLineId String
+  acceptedBase   Int
+  damagedBase    Int     @default(0)
+  shortBase      Int     @default(0)
+  reason         String?
+  valueMinor     BigInt // value booked for what was received (accepted + quarantined), by cumulative rounding
+
+  business Business     @relation(fields: [businessId], references: [id])
+  receipt  GoodsReceipt @relation(fields: [receiptId], references: [id])
+
+  @@index([businessId])
+}
+
+enum TradeInvoiceStatus {
+  ISSUED
+  CANCELLED
+}
+
+/// A seller's invoice for ONE shipment, and the buyer's copy (the payable). Totals equal the shipped lines exactly.
+model TradeInvoice {
+  id                   String             @id @default(uuid())
+  businessId           String
+  side                 TradeSide
+  partnerId            String
+  orderId              String
+  shipmentId           String
+  counterpartInvoiceId String?            @unique
+  number               String
+  externalNumber       String? // the supplier's own invoice number, on the buyer's copy
+  currencyCode         String
+  totalMinor           BigInt
+  creditedMinor        BigInt             @default(0)
+  paidMinor            BigInt             @default(0)
+  status               TradeInvoiceStatus @default(ISSUED)
+  issuedAt             DateTime           @default(now()) @db.Timestamptz()
+  dueDate              DateTime?          @db.Timestamptz()
+
+  business Business           @relation(fields: [businessId], references: [id])
+  order    TradeOrder         @relation(fields: [orderId], references: [id])
+  lines    TradeInvoiceLine[]
+  payments TradePayment[]
+  credits  CreditNote[]
+
+  @@unique([businessId, number])
+  @@index([businessId, side, status])
+  @@index([orderId])
+}
+
+model TradeInvoiceLine {
+  id               String @id @default(uuid())
+  businessId       String
+  invoiceId        String
+  orderLineId      String
+  description      String
+  sku              String
+  unit             String
+  packBaseQuantity Int
+  baseQuantity     Int
+  unitPriceMinor   BigInt
+  lineTotalMinor   BigInt
+
+  business Business     @relation(fields: [businessId], references: [id])
+  invoice  TradeInvoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
+}
+
+enum PaymentDirection {
+  OUT // the buyer paying
+  IN // the seller receiving
+}
+
+enum TradePaymentMethod {
+  CASH
+  MOBILE_MONEY
+  BANK
+  OTHER
+}
+
+/// How we know a payment happened. A buyer's report is only ever a PROPOSAL to the seller.
+enum TradePaymentEvidence {
+  MERCHANT_RECORDED
+  COUNTERPARTY_REPORTED
+  COUNTERPARTY_CONFIRMED
+  SIMULATOR_CONFIRMED
+  PROVIDER_CONFIRMED
+}
+
+enum TradePaymentState {
+  PROPOSED
+  APPLIED
+  HELD
+  REJECTED
+}
+
+model TradePayment {
+  id                   String               @id @default(uuid())
+  businessId           String
+  invoiceId            String
+  direction            PaymentDirection
+  amountMinor          BigInt
+  currencyCode         String
+  method               TradePaymentMethod
+  evidence             TradePaymentEvidence
+  state                TradePaymentState
+  reference            String?
+  provider             String?
+  externalId           String?
+  reason               String?
+  counterpartPaymentId String?              @unique
+  journalEntryId       String?
+  createdBy            String?
+  createdAt            DateTime             @default(now()) @db.Timestamptz()
+  appliedAt            DateTime?            @db.Timestamptz()
+
+  business Business     @relation(fields: [businessId], references: [id])
+  invoice  TradeInvoice @relation(fields: [invoiceId], references: [id])
+
+  @@unique([businessId, provider, externalId])
+  @@index([businessId, state])
+  @@index([invoiceId])
+}
+
+/// A seller-issued reduction of an invoice (short delivery, price correction). The buyer holds a mirror.
+model CreditNote {
+  id                      String    @id @default(uuid())
+  businessId              String
+  side                    TradeSide
+  invoiceId               String
+  number                  String
+  externalNumber          String?
+  amountMinor             BigInt
+  reason                  String
+  counterpartCreditNoteId String?   @unique
+  createdBy               String?
+  createdAt               DateTime  @default(now()) @db.Timestamptz()
+
+  business Business     @relation(fields: [businessId], references: [id])
+  invoice  TradeInvoice @relation(fields: [invoiceId], references: [id])
+
+  @@unique([businessId, number])
+  @@index([invoiceId])
+}
+
+enum ReorderMode {
+  FIXED
+  DAYS_OF_COVER
+}
+
+model ReorderRule {
+  id                 String      @id @default(uuid())
+  businessId         String
+  shopId             String
+  variantId          String
+  mode               ReorderMode
+  reorderPoint       Int?
+  reorderQuantity    Int?
+  targetCoverDays    Int?
+  windowDays         Int?
+  preferredPartnerId String?
+  active             Boolean     @default(true)
+  createdAt          DateTime    @default(now()) @db.Timestamptz()
+  updatedAt          DateTime    @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([shopId, variantId])
+  @@index([businessId])
+}
+
+enum SuggestionMethod {
+  TIER1_FIXED
+  TIER1_COVER
+  TIER2_FORECAST
+}
+
+enum SuggestionStatus {
+  PROPOSED
+  ACCEPTED
+  DISMISSED
+  SUPERSEDED
+}
+
+/// A reorder suggestion is a PROPOSAL (a draft purchase order with its reasoning). It never places or pays anything.
+model ReorderSuggestion {
+  id               String           @id @default(uuid())
+  businessId       String
+  shopId           String
+  variantId        String
+  ruleId           String?
+  method           SuggestionMethod
+  suggestedBaseQty Int
+  inputs           Json // every number the arithmetic used
+  arithmetic       String // the arithmetic, in words, shown to the merchant
+  status           SuggestionStatus @default(PROPOSED)
+  draftOrderId     String?
+  createdAt        DateTime         @default(now()) @db.Timestamptz()
+  decidedAt        DateTime?        @db.Timestamptz()
+  decidedBy        String?
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([businessId, status])
+  @@index([shopId, variantId])
+}
+
+/// Tier 2: a demand forecast written in SHADOW mode. Never shown to a merchant unless the per-merchant gate is open.
+/// Append-only; its score is a separate row.
+model ForecastPrediction {
+  id                  String   @id @default(uuid())
+  businessId          String
+  shopId              String
+  variantId           String
+  method              String // e.g. ses-v1 (documented in docs/expansion/decisions.md)
+  horizonDays         Int
+  periodStart         DateTime @db.Timestamptz()
+  periodEnd           DateTime @db.Timestamptz()
+  predictionMilli     Int // predicted units over the horizon, x1000 (integer arithmetic only)
+  baselineMilli       Int // the Tier 1 trailing-average prediction for the same period
+  suggestedReorderQty Int
+  inputs              Json // the series and parameters used
+  runAt               DateTime @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  shop     Shop           @relation(fields: [shopId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+  score    ForecastScore?
+
+  @@unique([shopId, variantId, method, periodStart])
+  @@index([businessId, periodEnd])
+}
+
+model ForecastScore {
+  id                    String   @id @default(uuid())
+  businessId            String
+  predictionId          String   @unique
+  actualMilli           Int
+  absErrorMilli         Int
+  apeBps                Int? // null when actual demand was zero (percentage error undefined)
+  baselineAbsErrorMilli Int
+  baselineApeBps        Int?
+  stockout              Boolean // stock ran out in the period: demand was censored, flagged and excluded from the headline metric
+  scoredAt              DateTime @default(now()) @db.Timestamptz()
+
+  business   Business           @relation(fields: [businessId], references: [id])
+  prediction ForecastPrediction @relation(fields: [predictionId], references: [id])
+}
+
+/// Platform-wide promotion thresholds. NULL until the owner sets them: there are no invented defaults.
+model ForecastGateConfig {
+  id                Int      @id @default(1)
+  minScoredWeeks    Int?
+  minImprovementBps Int?
+  updatedBy         String?
+  updatedAt         DateTime @default(now()) @db.Timestamptz()
+}
+
+enum GateAction {
+  ENABLED
+  DISABLED
+  REJECTED
+}
+
+/// Every attempt to flip a merchant's forecast gate, including rejected ones, with the metrics at the time. Append-only.
+model ForecastGateEvent {
+  id            String     @id @default(uuid())
+  businessId    String
+  action        GateAction
+  adminUserId   String
+  reason        String
+  metrics       Json
+  correlationId String?
+  createdAt     DateTime   @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 4: B2C storefront, checkout, fulfilment, returns, support cases.
+// A seller owns its OWN orders. The shopper's basket is the one cross-seller object (it holds only references and is reachable
+// only by an unguessable token); checkout splits it into independent per-seller orders, each with its own payment, receipt and terms.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ListingChannel {
+  STOREFRONT
+  MARKETPLACE
+}
+
+enum ListingStatus {
+  ACTIVE
+  PAUSED
+}
+
+/// A seller's own shop front. Nothing is public until `enabled` AND the `storefront` flag are both on.
+model Storefront {
+  id                 String            @id @default(uuid())
+  businessId         String            @unique
+  slug               String            @unique
+  enabled            Boolean           @default(false)
+  title              String
+  about              String?
+  supportPhone       String?
+  pickupEnabled      Boolean           @default(true)
+  pickupLocation     String? // landmark-style directions, not a map pin
+  pickupInstructions String?
+  deliveryEnabled    Boolean           @default(false)
+  reservationMinutes Int               @default(60) // how long stock is held for an unpaid online order
+  pickupHoldHours    Int               @default(48) // how long a confirmed pay-on-collection order is held
+  returnWindowDays   Int? // null = this seller does not accept returns by default
+  termsText          String? // shown to the buyer and snapshotted onto each order
+  /// Public marketplace presence (Phase 5). OFF until the seller opts in and is ready; SUSPENDED by a platform admin hides the
+  /// shop, its listings and checkout everywhere public, while orders already placed carry on.
+  marketplaceStatus  MarketplaceStatus @default(OFF)
+  marketplaceNote    String? // why it is suspended, shown to the seller
+  createdAt          DateTime          @default(now()) @db.Timestamptz()
+  updatedAt          DateTime          @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  zones    DeliveryZone[]
+}
+
+/// A merchant-defined delivery area with its own fee. There is no courier integration: delivery is the seller's.
+model DeliveryZone {
+  id            String   @id @default(uuid())
+  businessId    String
+  storefrontId  String
+  name          String
+  feeMinor      BigInt
+  minOrderMinor BigInt?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @db.Timestamptz()
+
+  business   Business   @relation(fields: [businessId], references: [id])
+  storefront Storefront @relation(fields: [storefrontId], references: [id])
+
+  @@unique([storefrontId, name])
+  @@index([businessId])
+}
+
+/// Which variants a seller shows on which channel. Separate from wholesale publishing (a different audience).
+model Listing {
+  id               String            @id @default(uuid())
+  businessId       String
+  variantId        String
+  channel          ListingChannel
+  status           ListingStatus     @default(ACTIVE)
+  /// Marketplace category from the fixed list in src/domain/marketplace.ts (null for storefront listings).
+  category         String?
+  /// A platform admin can unpublish a listing everywhere public without touching the seller's own setting.
+  moderation       ListingModeration @default(VISIBLE)
+  moderationReason String?
+  createdAt        DateTime          @default(now()) @db.Timestamptz()
+  updatedAt        DateTime          @default(now()) @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([variantId, channel])
+  @@index([businessId, channel, status])
+}
+
+enum BasketStatus {
+  OPEN
+  CHECKED_OUT
+  EXPIRED
+}
+
+/// The shopper's basket. NOT tenant data: it holds only references to sellers' listings and is reachable only by its secret token.
+model Basket {
+  id        String       @id @default(uuid())
+  tokenHash String       @unique
+  status    BasketStatus @default(OPEN)
+  expiresAt DateTime     @db.Timestamptz()
+  createdAt DateTime     @default(now()) @db.Timestamptz()
+  updatedAt DateTime     @updatedAt @db.Timestamptz()
+
+  lines  BasketLine[]
+  orders StoreOrder[]
+}
+
+model BasketLine {
+  id               String   @id @default(uuid())
+  basketId         String
+  sellerBusinessId String
+  variantId        String
+  unit             String
+  quantity         Int
+  addedAt          DateTime @default(now()) @db.Timestamptz()
+
+  basket Basket @relation(fields: [basketId], references: [id])
+
+  @@unique([basketId, variantId, unit])
+  @@index([basketId])
+}
+
+enum StoreFulfilment {
+  PICKUP
+  DELIVERY
+}
+
+enum StoreOrderStatus {
+  PLACED
+  CONFIRMED
+  READY
+  OUT_FOR_DELIVERY
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum StorePaymentMethod {
+  PAY_ON_COLLECTION
+  ONLINE_SIMULATED
+}
+
+model StoreOrder {
+  id               String             @id @default(uuid())
+  businessId       String
+  reference        String
+  basketId         String?
+  status           StoreOrderStatus   @default(PLACED)
+  fulfilment       StoreFulfilment
+  paymentMethod    StorePaymentMethod
+  buyerName        String
+  buyerPhone       String // E.164 digits
+  contactConsent   Boolean            @default(false)
+  buyerNote        String?
+  addressLine      String?
+  landmark         String?
+  area             String?
+  latitude         Float?
+  longitude        Float?
+  deliveryZoneId   String?
+  deliveryZoneName String?
+  deliveryFeeMinor BigInt             @default(0)
+  subtotalMinor    BigInt
+  totalMinor       BigInt
+  currencyCode     String
+  paidMinor        BigInt             @default(0)
+  refundedMinor    BigInt             @default(0)
+  accessTokenHash  String             @unique
+  accessExpiresAt  DateTime           @db.Timestamptz()
+  pickupCode       String
+  reservedUntil    DateTime?          @db.Timestamptz()
+  terms            Json // seller identity, delivery/pickup terms and returns policy as they were when the order was placed
+  deliveryRef      String?
+  carrier          String?
+  cancelReason     String?
+  cancelledBy      String?
+  placedAt         DateTime           @default(now()) @db.Timestamptz()
+  confirmedAt      DateTime?          @db.Timestamptz()
+  readyAt          DateTime?          @db.Timestamptz()
+  dispatchedAt     DateTime?          @db.Timestamptz()
+  completedAt      DateTime?          @db.Timestamptz()
+  cancelledAt      DateTime?          @db.Timestamptz()
+  createdAt        DateTime           @default(now()) @db.Timestamptz()
+
+  business      Business                   @relation(fields: [businessId], references: [id])
+  currency      Currency                   @relation(fields: [currencyCode], references: [code])
+  basket        Basket?                    @relation(fields: [basketId], references: [id])
+  lines         StoreOrderLine[]
+  payments      StorePayment[]
+  cancellations StoreCancellationRequest[]
+  refunds       StoreRefundRequest[]
+  exceptions    PaymentException[]
+  cases         SupportCase[]
+  shipments     DeliveryShipment[]
+
+  @@unique([businessId, reference])
+  @@unique([basketId, businessId])
+  @@index([businessId, status])
+}
+
+model StoreOrderLine {
+  id               String  @id @default(uuid())
+  businessId       String
+  orderId          String
+  lineNo           Int
+  variantId        String
+  sku              String
+  description      String
+  unit             String
+  packBaseQuantity Int
+  quantity         Int
+  baseQuantity     Int
+  unitPriceMinor   BigInt
+  lineTotalMinor   BigInt
+  reservationId    String?
+  fulfilMovementId String?
+  returnedBase     Int     @default(0)
+
+  business Business       @relation(fields: [businessId], references: [id])
+  order    StoreOrder     @relation(fields: [orderId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([orderId, lineNo])
+  @@index([businessId])
+}
+
+enum StorePaymentState {
+  APPLIED
+  HELD
+}
+
+model StorePayment {
+  id           String               @id @default(uuid())
+  businessId   String
+  orderId      String
+  direction    PaymentDirection
+  amountMinor  BigInt
+  currencyCode String
+  method       TradePaymentMethod
+  evidence     TradePaymentEvidence
+  state        StorePaymentState
+  provider     String?
+  externalId   String?
+  reason       String?
+  createdBy    String?
+  createdAt    DateTime             @default(now()) @db.Timestamptz()
+
+  business Business   @relation(fields: [businessId], references: [id])
+  order    StoreOrder @relation(fields: [orderId], references: [id])
+
+  @@unique([businessId, provider, externalId])
+  @@index([orderId])
+}
+
+enum StoreRequestStatus {
+  REQUESTED
+  APPROVED
+  DENIED
+}
+
+/// The buyer asks to cancel an order that is already confirmed. A request is not a cancellation: the seller decides.
+model StoreCancellationRequest {
+  id         String             @id @default(uuid())
+  businessId String
+  orderId    String
+  reason     String
+  status     StoreRequestStatus @default(REQUESTED)
+  decidedBy  String?
+  decidedAt  DateTime?          @db.Timestamptz()
+  createdAt  DateTime           @default(now()) @db.Timestamptz()
+
+  business Business   @relation(fields: [businessId], references: [id])
+  order    StoreOrder @relation(fields: [orderId], references: [id])
+
+  @@index([businessId, status])
+}
+
+enum StoreRefundKind {
+  RETURN
+  REFUND_ONLY
+}
+
+enum StoreRefundStatus {
+  REQUESTED
+  APPROVED
+  DENIED
+  GOODS_RECEIVED
+  REFUNDED
+  CLOSED
+}
+
+/// A return or refund REQUEST. Nothing is refunded until the seller approves and records it, bounded by what was actually paid.
+model StoreRefundRequest {
+  id                   String            @id @default(uuid())
+  businessId           String
+  orderId              String
+  kind                 StoreRefundKind
+  reason               String
+  status               StoreRefundStatus @default(REQUESTED)
+  requestedAmountMinor BigInt?
+  approvedAmountMinor  BigInt?
+  decisionNote         String?
+  decidedBy            String?
+  decidedAt            DateTime?         @db.Timestamptz()
+  createdAt            DateTime          @default(now()) @db.Timestamptz()
+
+  business Business          @relation(fields: [businessId], references: [id])
+  order    StoreOrder        @relation(fields: [orderId], references: [id])
+  lines    StoreRefundLine[]
+
+  @@index([businessId, status])
+}
+
+model StoreRefundLine {
+  id           String @id @default(uuid())
+  businessId   String
+  requestId    String
+  orderLineId  String
+  quantityBase Int
+  receivedBase Int    @default(0)
+
+  business Business           @relation(fields: [businessId], references: [id])
+  request  StoreRefundRequest @relation(fields: [requestId], references: [id])
+
+  @@unique([requestId, orderLineId])
+}
+
+enum PaymentExceptionType {
+  LATE_SUCCESS
+  OVERPAYMENT
+  UNDERPAYMENT
+  CURRENCY_MISMATCH
+}
+
+enum PaymentExceptionStatus {
+  OPEN
+  RESOLVED
+}
+
+/// Money that arrived but does not fit the order (late, too much, too little, wrong currency). Recoverable: re-reserve, refund or settle.
+model PaymentException {
+  id          String                 @id @default(uuid())
+  businessId  String
+  orderId     String
+  type        PaymentExceptionType
+  status      PaymentExceptionStatus @default(OPEN)
+  amountMinor BigInt
+  paymentId   String?
+  details     Json?
+  resolution  String?
+  resolvedBy  String?
+  resolvedAt  DateTime?              @db.Timestamptz()
+  createdAt   DateTime               @default(now()) @db.Timestamptz()
+
+  business Business   @relation(fields: [businessId], references: [id])
+  order    StoreOrder @relation(fields: [orderId], references: [id])
+
+  @@index([businessId, status])
+}
+
+enum SupportCaseType {
+  DELIVERY
+  PRODUCT_COMPLAINT
+  PAYMENT_DISPUTE
+  REFUND
+  OTHER
+}
+
+/// Who is responsible for sorting it out. The seller is responsible for goods and delivery; a provider dispute names the provider.
+enum SupportParty {
+  SELLER
+  PLATFORM
+  PROVIDER
+}
+
+enum SupportCaseStatus {
+  OPEN
+  ASSIGNED
+  CLOSED
+}
+
+enum SupportOpenedBy {
+  CONSUMER
+  SELLER
+  ADMIN
+}
+
+model SupportCase {
+  id              String            @id @default(uuid())
+  businessId      String
+  orderId         String?
+  type            SupportCaseType
+  handledBy       SupportParty
+  status          SupportCaseStatus @default(OPEN)
+  openedBy        SupportOpenedBy
+  contactName     String?
+  contactPhone    String?
+  summary         String
+  assignedAdminId String?
+  resolution      String?
+  closedAt        DateTime?         @db.Timestamptz()
+  createdAt       DateTime          @default(now()) @db.Timestamptz()
+
+  business Business          @relation(fields: [businessId], references: [id])
+  order    StoreOrder?       @relation(fields: [orderId], references: [id])
+  notes    SupportCaseNote[]
+
+  @@index([businessId, status])
+  @@index([status, handledBy])
+}
+
+enum SupportNoteAuthor {
+  CONSUMER
+  SELLER
+  ADMIN
+}
+
+/// Append-only: the case history is never rewritten.
+model SupportCaseNote {
+  id         String            @id @default(uuid())
+  businessId String
+  caseId     String
+  authorType SupportNoteAuthor
+  authorId   String?
+  body       String
+  createdAt  DateTime          @default(now()) @db.Timestamptz()
+
+  business Business    @relation(fields: [businessId], references: [id])
+  case     SupportCase @relation(fields: [caseId], references: [id])
+
+  @@index([caseId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 5: merchant sales payments (provider adapters) and the public marketplace
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ConnectionStatus {
+  ACTIVE
+  DISABLED
+}
+
+/// One merchant's own arrangement with one payment provider (section 12: "each connection belongs to one approved merchant arrangement").
+/// It holds NO secret: `credentialRef` names a server-side secret. `destinationKey` is the allow-listed account a provider must report
+/// for money collected for this merchant; a payment reported against any other destination is an exception, never applied.
+model ProviderConnection {
+  id                  String           @id @default(uuid())
+  businessId          String
+  provider            String
+  status              ConnectionStatus @default(ACTIVE)
+  arrangementRef      String
+  destinationKey      String
+  destinationLabel    String
+  credentialRef       String?
+  consecutiveFailures Int              @default(0)
+  lastFailureAt       DateTime?        @db.Timestamptz()
+  lastSuccessAt       DateTime?        @db.Timestamptz()
+  /// While in the future, new attempts are refused ("provider unavailable"); reconciliation of existing attempts is not.
+  openUntil           DateTime?        @db.Timestamptz()
+  createdBy           String?
+  createdAt           DateTime         @default(now()) @db.Timestamptz()
+
+  business    Business             @relation(fields: [businessId], references: [id])
+  attempts    PaymentAttempt[]
+  settlements ProviderSettlement[]
+
+  @@unique([businessId, provider])
+}
+
+enum PaymentSubjectType {
+  STORE_ORDER
+  TRADE_INVOICE
+}
+
+enum PaymentIntentStatus {
+  OPEN
+  PAID
+  EXPIRED
+  CANCELLED
+}
+
+/// The merchant's request to be paid a fixed amount for one thing. Merchant sales only (a CHECK refuses any other purpose).
+model PaymentIntent {
+  id             String              @id @default(uuid())
+  businessId     String
+  purpose        PaymentPurpose      @default(MERCHANT_SALE)
+  subjectType    PaymentSubjectType
+  subjectId      String
+  reference      String
+  amountMinor    BigInt
+  currencyCode   String
+  status         PaymentIntentStatus @default(OPEN)
+  paidMinor      BigInt              @default(0)
+  refundedMinor  BigInt              @default(0)
+  idempotencyKey String
+  expiresAt      DateTime            @db.Timestamptz()
+  createdAt      DateTime            @default(now()) @db.Timestamptz()
+  updatedAt      DateTime            @updatedAt @db.Timestamptz()
+
+  business    Business            @relation(fields: [businessId], references: [id])
+  attempts    PaymentAttempt[]
+  allocations PaymentAllocation[]
+  refunds     ProviderRefund[]
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, subjectType, subjectId])
+  @@index([businessId, status])
+}
+
+enum PaymentAttemptStatus {
+  CREATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  UNKNOWN
+  CANCELLED
+}
+
+/// One try to collect an intent through one provider. "Provider accepted" is PENDING, never paid. At most one attempt per intent is
+/// active (CREATED, PENDING or UNKNOWN) at a time: a partial unique index in the migration enforces it.
+model PaymentAttempt {
+  id             String               @id @default(uuid())
+  businessId     String
+  intentId       String
+  connectionId   String
+  provider       String
+  externalRef    String?
+  status         PaymentAttemptStatus @default(CREATED)
+  amountMinor    BigInt
+  currencyCode   String
+  capturedMinor  BigInt               @default(0)
+  refundedMinor  BigInt               @default(0)
+  feeMinor       BigInt?
+  checkoutUrl    String?
+  failureReason  String?
+  idempotencyKey String
+  expiresAt      DateTime             @db.Timestamptz()
+  pollCount      Int                  @default(0)
+  nextPollAt     DateTime?            @db.Timestamptz()
+  lastPolledAt   DateTime?            @db.Timestamptz()
+  settledAt      DateTime?            @db.Timestamptz()
+  createdAt      DateTime             @default(now()) @db.Timestamptz()
+  updatedAt      DateTime             @updatedAt @db.Timestamptz()
+
+  business       Business                @relation(fields: [businessId], references: [id])
+  intent         PaymentIntent           @relation(fields: [intentId], references: [id])
+  connection     ProviderConnection      @relation(fields: [connectionId], references: [id])
+  events         PaymentAttemptEvent[]
+  allocation     PaymentAllocation?
+  refunds        ProviderRefund[]
+  settlementLine ProviderSettlementLine?
+
+  @@unique([provider, externalRef])
+  @@unique([businessId, idempotencyKey])
+  @@index([intentId])
+  @@index([status, nextPollAt])
+}
+
+/// Full status history of an attempt. Append-only.
+model PaymentAttemptEvent {
+  id         String                @id @default(uuid())
+  businessId String
+  attemptId  String
+  fromStatus PaymentAttemptStatus?
+  toStatus   PaymentAttemptStatus
+  source     String // CREATE | CALLBACK | POLL | EXPIRY | ADMIN
+  detail     Json?
+  createdAt  DateTime              @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  attempt  PaymentAttempt @relation(fields: [attemptId], references: [id])
+
+  @@index([attemptId])
+}
+
+enum AllocationState {
+  APPLIED
+  HELD
+  REFUNDED
+}
+
+/// Where a confirmed attempt's money went: onto the order or invoice (APPLIED) or held as an exception (HELD). One per attempt.
+model PaymentAllocation {
+  id             String             @id @default(uuid())
+  businessId     String
+  attemptId      String             @unique
+  intentId       String
+  subjectType    PaymentSubjectType
+  subjectId      String
+  amountMinor    BigInt
+  state          AllocationState
+  storePaymentId String?
+  tradePaymentId String?
+  createdAt      DateTime           @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  attempt  PaymentAttempt @relation(fields: [attemptId], references: [id])
+  intent   PaymentIntent  @relation(fields: [intentId], references: [id])
+
+  @@index([businessId, subjectType, subjectId])
+}
+
+enum ProviderRefundStatus {
+  REQUESTED
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+/// A refund sent back through the provider that collected the money. Bounded by what the attempt captured (guarded UPDATE + CHECK).
+model ProviderRefund {
+  id                   String               @id @default(uuid())
+  businessId           String
+  attemptId            String
+  intentId             String
+  amountMinor          BigInt
+  status               ProviderRefundStatus @default(REQUESTED)
+  externalRef          String?
+  reason               String
+  failureReason        String?
+  idempotencyKey       String
+  storeRefundRequestId String?
+  storeOrderId         String?
+  storeExceptionId     String?
+  createdBy            String?
+  createdAt            DateTime             @default(now()) @db.Timestamptz()
+  updatedAt            DateTime             @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  attempt  PaymentAttempt @relation(fields: [attemptId], references: [id])
+  intent   PaymentIntent  @relation(fields: [intentId], references: [id])
+
+  @@unique([businessId, idempotencyKey])
+  @@index([attemptId])
+}
+
+enum SettlementStatus {
+  POSTED
+  MISMATCH
+}
+
+/// The provider paying collected money out to the merchant. A balance-sheet movement (Dr bank + fees, Cr provider clearing), never revenue.
+model ProviderSettlement {
+  id             String               @id @default(uuid())
+  businessId     String
+  connectionId   String
+  provider       String
+  reference      String
+  grossMinor     BigInt
+  feeMinor       BigInt
+  netMinor       BigInt
+  currencyCode   String
+  settledAt      DateTime             @db.Timestamptz()
+  status         SettlementStatus
+  evidence       TradePaymentEvidence
+  journalEntryId String?
+  createdAt      DateTime             @default(now()) @db.Timestamptz()
+
+  business   Business                 @relation(fields: [businessId], references: [id])
+  connection ProviderConnection       @relation(fields: [connectionId], references: [id])
+  lines      ProviderSettlementLine[]
+
+  @@unique([businessId, provider, reference])
+}
+
+model ProviderSettlementLine {
+  id           String @id @default(uuid())
+  businessId   String
+  settlementId String
+  attemptId    String @unique
+  grossMinor   BigInt
+  feeMinor     BigInt
+
+  business   Business           @relation(fields: [businessId], references: [id])
+  settlement ProviderSettlement @relation(fields: [settlementId], references: [id])
+  attempt    PaymentAttempt     @relation(fields: [attemptId], references: [id])
+
+  @@index([settlementId])
+}
+
+enum ProviderExceptionType {
+  UNKNOWN_REFERENCE
+  WRONG_TENANT
+  PURPOSE_MISMATCH
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  DESTINATION_MISMATCH
+  CONTRADICTORY_STATUS
+  UNRESOLVED_ATTEMPT
+  REFUND_FAILED
+  SETTLEMENT_MISMATCH
+  DUPLICATE_COLLECTION
+}
+
+/// Something about provider money that a machine must not decide: an unknown reference, a mismatch, a contradictory status, an attempt
+/// that never resolved, a failed refund, a settlement that does not add up. NOT tenant data (an unknown reference has no tenant);
+/// `businessId` is set when known. The `fingerprint` makes a replayed callback raise the same exception once.
+model ProviderException {
+  id           String                 @id @default(uuid())
+  businessId   String?
+  type         ProviderExceptionType
+  status       PaymentExceptionStatus @default(OPEN)
+  provider     String?
+  attemptId    String?
+  intentId     String?
+  amountMinor  BigInt?
+  currencyCode String?
+  details      Json?
+  fingerprint  String                 @unique
+  resolution   String?
+  resolvedBy   String?
+  resolvedAt   DateTime?              @db.Timestamptz()
+  createdAt    DateTime               @default(now()) @db.Timestamptz()
+
+  @@index([status, createdAt])
+}
+
+/// The SIMULATOR's own side of the world (what a provider would remember). Not tenant data; the simulator is for development and
+/// CI only and is refused whenever NODE_ENV=production.
+model SimulatorPayment {
+  id                String   @id @default(uuid())
+  externalRef       String   @unique
+  merchantReference String
+  amountMinor       BigInt
+  currencyCode      String
+  destinationKey    String
+  status            String   @default("PENDING") // PENDING | SUCCEEDED | FAILED
+  refundedMinor     BigInt   @default(0)
+  feeMinor          BigInt   @default(0)
+  behaviour         String   @default("NORMAL") // NORMAL | REFUND_FAILS | REFUND_PENDING
+  refunds           Json     @default("[]") // [{ key, externalRef, amountMinor, status }]
+  settledReference  String?
+  createdAt         DateTime @default(now()) @db.Timestamptz()
+}
+
+enum MarketplaceStatus {
+  OFF
+  ACTIVE
+  SUSPENDED
+}
+
+enum ListingModeration {
+  VISIBLE
+  UNPUBLISHED
+}
+
+enum ReportReason {
+  PROHIBITED_ITEM
+  COUNTERFEIT
+  MISLEADING_PRICE
+  SCAM
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  ACTIONED
+  DISMISSED
+}
+
+/// A public report about a listing or a seller. Anyone may file one (rate-limited); it proposes, a person decides. NOT tenant data.
+model MarketplaceReport {
+  id             String       @id @default(uuid())
+  businessId     String
+  listingId      String?
+  reason         ReportReason
+  details        String
+  contact        String?
+  status         ReportStatus @default(OPEN)
+  resolvedBy     String?
+  resolutionNote String?
+  resolvedAt     DateTime?    @db.Timestamptz()
+  createdAt      DateTime     @default(now()) @db.Timestamptz()
+
+  @@index([status, createdAt])
+  @@index([businessId])
+}
+
+enum ModerationActionType {
+  UNPUBLISH_LISTING
+  REINSTATE_LISTING
+  SUSPEND_SELLER
+  REINSTATE_SELLER
+}
+
+/// Every moderation decision, with the admin and the reason. Append-only.
+model ModerationAction {
+  id          String               @id @default(uuid())
+  businessId  String
+  listingId   String?
+  reportId    String?
+  type        ModerationActionType
+  reason      String
+  adminUserId String
+  createdAt   DateTime             @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+  appeals  Appeal[]
+
+  @@index([businessId, createdAt])
+}
+
+enum AppealStatus {
+  OPEN
+  UPHELD
+  OVERTURNED
+}
+
+/// A seller's appeal against a moderation action. Decided by a person; overturning reinstates.
+model Appeal {
+  id           String       @id @default(uuid())
+  businessId   String
+  actionId     String
+  text         String
+  status       AppealStatus @default(OPEN)
+  decidedBy    String?
+  decisionNote String?
+  decidedAt    DateTime?    @db.Timestamptz()
+  createdAt    DateTime     @default(now()) @db.Timestamptz()
+
+  business Business         @relation(fields: [businessId], references: [id])
+  action   ModerationAction @relation(fields: [actionId], references: [id])
+
+  @@index([status, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 6: platform subscriptions through pawaPay, plan versions, entitlements
+// (TradePal's own billing. Never merchant sales: see src/domain/paymentPurpose.ts.)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum PlanVersionStatus {
+  DRAFT
+  PUBLISHED
+  RETIRED
+}
+
+/// An immutable-once-published snapshot of what a plan includes. A subscription points at the version it was sold, so changing a
+/// plan never changes what an existing subscriber is entitled to until they renew onto a newer version.
+model PlanVersion {
+  id                              String            @id @default(uuid())
+  planCode                        String
+  version                         Int
+  status                          PlanVersionStatus @default(DRAFT)
+  billingPeriodDays               Int               @default(30)
+  /// Days after the period ends during which entitlements continue while renewal is still possible.
+  graceDays                       Int               @default(3)
+  /// Premium capabilities this version includes (see src/domain/entitlements.ts for the list).
+  features                        String[]
+  entryCapPerMonth                Int?
+  voiceEnabled                    Boolean           @default(false)
+  staffCapCount                   Int?
+  aiDeepseekMonthlyBudgetMicroUsd BigInt?
+  note                            String?
+  createdBy                       String?
+  publishedAt                     DateTime?         @db.Timestamptz()
+  retiredAt                       DateTime?         @db.Timestamptz()
+  createdAt                       DateTime          @default(now()) @db.Timestamptz()
+
+  plan          Plan           @relation(fields: [planCode], references: [code])
+  prices        PlanPrice[]
+  subscriptions Subscription[] @relation("SubscriptionPlanVersion")
+  pendingFor    Subscription[] @relation("SubscriptionPendingVersion")
+  invoices      Invoice[]
+
+  @@unique([planCode, version])
+}
+
+/// The price of one plan version in one country. Nothing is priced until an owner enters a price here: there are no defaults.
+model PlanPrice {
+  id            String   @id @default(uuid())
+  planVersionId String
+  countryCode   String
+  currencyCode  String
+  priceMinor    BigInt
+  createdAt     DateTime @default(now()) @db.Timestamptz()
+
+  planVersion PlanVersion @relation(fields: [planVersionId], references: [id])
+  country     Country     @relation(fields: [countryCode], references: [code])
+  currency    Currency    @relation(fields: [currencyCode], references: [code])
+
+  @@unique([planVersionId, countryCode])
+}
+
+enum BillingAttemptStatus {
+  INITIATED
+  ACCEPTED
+  PROCESSING
+  UNKNOWN
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+/// One customer-authorised charge (a PIN prompt on the payer's phone) against one subscription invoice, through pawaPay.
+/// `id` IS the pawaPay depositId (a UUIDv4 stored BEFORE the call). One active attempt per invoice (partial unique index).
+model BillingAttempt {
+  id                    String               @id // == pawaPay depositId
+  businessId            String
+  invoiceId             String
+  provider              String               @default("PAWAPAY")
+  environment           String // SANDBOX | PRODUCTION: the environment this attempt was made in; never mixed
+  providerCode          String? // the mobile-money operator, e.g. ORANGE_SLE
+  status                BillingAttemptStatus @default(INITIATED)
+  amountMinor           BigInt
+  currencyCode          String
+  capturedMinor         BigInt               @default(0)
+  /// Refunded out of this payment (only used for a payment that was HELD, i.e. never allocated; an allocated payment is bounded on its invoice).
+  refundedMinor         BigInt               @default(0)
+  payerPhoneLast4       String?
+  providerTransactionId String?
+  failureCode           String?
+  initiatedBy           String?
+  pollCount             Int                  @default(0)
+  nextPollAt            DateTime?            @db.Timestamptz()
+  createdAt             DateTime             @default(now()) @db.Timestamptz()
+  updatedAt             DateTime             @updatedAt @db.Timestamptz()
+
+  business   Business           @relation(fields: [businessId], references: [id])
+  invoice    Invoice            @relation(fields: [invoiceId], references: [id])
+  allocation BillingAllocation?
+  refunds    BillingRefund[]
+
+  @@index([invoiceId])
+  @@index([status, nextPollAt])
+}
+
+/// The one thing a confirmed payment bought: a billing period on a subscription. One per invoice and one per attempt (both unique),
+/// so a duplicate or replayed payment cannot extend a subscription twice. Append-only.
+model BillingAllocation {
+  id             String   @id @default(uuid())
+  businessId     String
+  attemptId      String   @unique
+  invoiceId      String   @unique
+  subscriptionId String
+  planVersionId  String?
+  periodStart    DateTime @db.Timestamptz()
+  periodEnd      DateTime @db.Timestamptz()
+  amountMinor    BigInt
+  createdAt      DateTime @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  attempt  BillingAttempt @relation(fields: [attemptId], references: [id])
+}
+
+enum BillingRefundStatus {
+  REQUESTED
+  ACCEPTED
+  PROCESSING
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+/// A refund of a SUBSCRIPTION charge, authorised by a named admin with a reason. `id` IS the pawaPay refundId.
+model BillingRefund {
+  id                String              @id // == pawaPay refundId
+  businessId        String
+  invoiceId         String
+  attemptId         String
+  amountMinor       BigInt
+  status            BillingRefundStatus @default(REQUESTED)
+  reason            String
+  adminUserId       String
+  revokeEntitlement Boolean             @default(false)
+  /// True when this refunds a payment that was held (never applied to an invoice), so the funds are reserved on the attempt, not the invoice.
+  heldPayment       Boolean             @default(false)
+  failureCode       String?
+  pollCount         Int                 @default(0)
+  nextPollAt        DateTime?           @db.Timestamptz()
+  createdAt         DateTime            @default(now()) @db.Timestamptz()
+  updatedAt         DateTime            @updatedAt @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  invoice  Invoice        @relation(fields: [invoiceId], references: [id])
+  attempt  BillingAttempt @relation(fields: [attemptId], references: [id])
+
+  @@index([invoiceId])
+}
+
+enum EntitlementEventKind {
+  GRANTED
+  EXTENDED
+  PLAN_CHANGE_SCHEDULED
+  PLAN_CHANGED
+  CANCEL_REQUESTED
+  CANCELLED
+  EXPIRY_NOTED
+  MANUAL_ADJUSTMENT
+  REFUND_REVOKED
+}
+
+/// Every change to what a business is entitled to, with its cause. Append-only.
+model EntitlementEvent {
+  id             String               @id @default(uuid())
+  businessId     String
+  subscriptionId String?
+  kind           EntitlementEventKind
+  fromPlanCode   String?
+  toPlanCode     String?
+  periodStart    DateTime?            @db.Timestamptz()
+  periodEnd      DateTime?            @db.Timestamptz()
+  source         String // PAYMENT | ADMIN | SWEEP | MERCHANT
+  invoiceId      String?
+  adminUserId    String?
+  reason         String?
+  createdAt      DateTime             @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+enum BillingExceptionType {
+  DUPLICATE_PAYMENT
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  UNKNOWN_DEPOSIT
+  ENVIRONMENT_MISMATCH
+  PAYMENT_AFTER_CANCELLATION
+  UNRESOLVED_ATTEMPT
+  REFUND_FAILED
+  CALLBACK_AUTH_FAILED
+}
+
+/// Subscription-billing problems for a person to look at. NOT tenant data (an unknown deposit has no tenant).
+model BillingException {
+  id          String                 @id @default(uuid())
+  businessId  String?
+  type        BillingExceptionType
+  status      PaymentExceptionStatus @default(OPEN)
+  attemptId   String?
+  invoiceId   String?
+  amountMinor BigInt?
+  details     Json?
+  fingerprint String                 @unique
+  resolution  String?
+  resolvedBy  String?
+  resolvedAt  DateTime?              @db.Timestamptz()
+  createdAt   DateTime               @default(now()) @db.Timestamptz()
+
+  @@index([status, createdAt])
+}
+
+/// Whether NEW subscription charges may be started, per provider and country (and always for the PLATFORM_SUBSCRIPTION purpose only).
+/// Absent means OFF: fail closed. Existing attempts are always reconciled regardless of this switch.
+model BillingSwitch {
+  id                 String         @id @default(uuid())
+  provider           String
+  countryCode        String
+  purpose            PaymentPurpose @default(PLATFORM_SUBSCRIPTION)
+  newAttemptsEnabled Boolean        @default(false)
+  reason             String?
+  updatedBy          String?
+  updatedAt          DateTime       @default(now()) @updatedAt @db.Timestamptz()
+
+  @@unique([provider, countryCode, purpose])
+}
+
+/// Verification keys fetched from the provider's public-keys endpoint, per environment, with rotation handled by refetching on an unknown key id.
+model ProviderSigningKey {
+  id          String   @id @default(uuid())
+  provider    String
+  environment String
+  keyId       String
+  pem         String
+  fetchedAt   DateTime @default(now()) @db.Timestamptz()
+
+  @@unique([provider, environment, keyId])
+}
+
+/// Binds an environment to the provider account it first authenticated as, so sandbox credentials against production (or another account) fail closed.
+model BillingAccountBinding {
+  id          String   @id @default(uuid())
+  provider    String
+  environment String
+  companyName String
+  boundAt     DateTime @default(now()) @db.Timestamptz()
+
+  @@unique([provider, environment])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Expansion Phase 7: messaging templates and consent, bound confirmations, offline drafts, alert delivery
+// ─────────────────────────────────────────────────────────────────────────
+
+enum TemplateCategory {
+  UTILITY
+  MARKETING
+  AUTHENTICATION
+  SERVICE
+}
+
+enum TemplateStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  DISABLED
+}
+
+/// Approval state of one outbound message class in one language. The CLASSES themselves are defined in code (src/messaging/registry.ts) and
+/// listed in docs/expansion/message-template-register.md; this table says whether Meta has approved a template for it. No row, or any
+/// status other than APPROVED, means that class cannot be sent. Nothing is APPROVED by default.
+model MessageTemplate {
+  id                   String           @id @default(uuid())
+  messageClass         String
+  language             String           @default("en")
+  category             TemplateCategory
+  status               TemplateStatus   @default(DRAFT)
+  providerTemplateName String?
+  approvalReference    String? // where the approval can be checked (a Meta template id, a ticket)
+  bodyPreview          String
+  paramCount           Int              @default(0)
+  disabledReason       String?
+  updatedBy            String?
+  createdAt            DateTime         @default(now()) @db.Timestamptz()
+  updatedAt            DateTime         @default(now()) @updatedAt @db.Timestamptz()
+
+  @@unique([messageClass, language])
+}
+
+enum ContactPurpose {
+  ORDER_UPDATES
+  MARKETING
+}
+
+enum ContactConsentStatus {
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum ContactConsentBasis {
+  ORDER_CHECKOUT
+  INBOUND_MESSAGE
+  WEB_FORM
+}
+
+/// A person's permission for ONE business to message them on WhatsApp for ONE purpose. Never inferred, never imported from a merchant's
+/// customer list: it exists only because that person said yes themselves (a checkbox at checkout, a message they sent, a form).
+/// Transaction updates and marketing are separate purposes with separate consent.
+model ContactConsent {
+  id             String               @id @default(uuid())
+  businessId     String
+  phone          String // digits, international format
+  purpose        ContactPurpose
+  status         ContactConsentStatus
+  basis          ContactConsentBasis
+  textVersion    String // the exact notice wording version the person saw
+  sourceRef      String? // e.g. the order id
+  /// A claim made by ticking a box is not proof the number belongs to the person. Messages are sent only once the person has sent TradePal
+  /// a WhatsApp message from that number carrying the code (verifiedAt set). The code is kept only as a hash.
+  verifiedAt     DateTime?            @db.Timestamptz()
+  verifyCodeHash String?
+  createdAt      DateTime             @default(now()) @db.Timestamptz()
+  updatedAt      DateTime             @default(now()) @updatedAt @db.Timestamptz()
+
+  business Business              @relation(fields: [businessId], references: [id])
+  events   ContactConsentEvent[]
+
+  @@unique([businessId, phone, purpose])
+  @@index([phone])
+}
+
+/// Every consent change, forever. Append-only.
+model ContactConsentEvent {
+  id          String   @id @default(uuid())
+  businessId  String
+  consentId   String
+  event       String // OPT_IN | OPT_OUT | GLOBAL_STOP | GLOBAL_START | ADMIN_BLOCK | ADMIN_UNBLOCK
+  source      String
+  textVersion String?
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+
+  business Business       @relation(fields: [businessId], references: [id])
+  consent  ContactConsent @relation(fields: [consentId], references: [id])
+
+  @@index([consentId])
+}
+
+/// A number TradePal must never message (a STOP from the person, or an admin block). Platform-wide: it overrides every consent.
+model BlockedNumber {
+  id         String    @id @default(uuid())
+  phone      String    @unique
+  source     String // STOP_KEYWORD | ADMIN
+  reason     String?
+  blockedBy  String?
+  createdAt  DateTime  @default(now()) @db.Timestamptz()
+  liftedAt   DateTime? @db.Timestamptz()
+  liftedBy   String?
+  liftReason String?
+}
+
+enum OutboundDecision {
+  SENT
+  SUPPRESSED
+  FAILED
+}
+
+/// Every attempt to send an outbound message of a registered class, and what was decided and why. Append-only. The recipient is kept as a
+/// hash and the last four digits only.
+model OutboundMessageLog {
+  id                String           @id @default(uuid())
+  businessId        String?
+  messageClass      String
+  audience          String // MERCHANT | CONSUMER | PARTNER
+  toPhoneHash       String
+  toPhoneLast4      String
+  decision          OutboundDecision
+  reason            String?
+  templateKey       String?
+  providerMessageId String?
+  relatedType       String?
+  relatedId         String?
+  idempotencyKey    String?          @unique
+  createdAt         DateTime         @default(now()) @db.Timestamptz()
+
+  @@index([messageClass, createdAt])
+  @@index([businessId, createdAt])
+}
+
+enum PendingActionKind {
+  PROPOSAL
+  CLARIFICATION
+}
+
+enum PendingActionStatus {
+  PENDING
+  EXECUTED
+  CANCELLED
+  EXPIRED
+  SUPERSEDED
+}
+
+/// A consequential change proposed from a message and waiting for the actor's answer. A confirmation is bound to the exact proposal
+/// (`actionDigest` over action, amount, currency, items and counterparty), the actor and an expiry. Only one is pending per actor at a time.
+model PendingAction {
+  id              String              @id @default(uuid())
+  businessId      String
+  merchantId      String
+  sourceMessageId String
+  kind            PendingActionKind
+  status          PendingActionStatus @default(PENDING)
+  actionDigest    String
+  summary         String
+  payload         Json
+  amountMinor     BigInt?
+  currencyCode    String?
+  requiresCode    Boolean             @default(false)
+  codeHash        String?
+  question        Json?
+  expiresAt       DateTime            @db.Timestamptz()
+  resolvedAt      DateTime?           @db.Timestamptz()
+  executedRef     String?
+  createdAt       DateTime            @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@unique([merchantId, sourceMessageId])
+  @@index([businessId, status])
+}
+
+/// A signed-in browser or phone for the offline drafts page. The token is shown once and stored hashed. Short-lived; a shared device gets
+/// the shortest life and its queue is cleared after sync.
+model DeviceSession {
+  id         String    @id @default(uuid())
+  businessId String
+  merchantId String
+  tokenHash  String    @unique
+  label      String?
+  shared     Boolean   @default(false)
+  expiresAt  DateTime  @db.Timestamptz()
+  revokedAt  DateTime? @db.Timestamptz()
+  lastSeenAt DateTime? @db.Timestamptz()
+  createdAt  DateTime  @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, merchantId])
+}
+
+enum DraftStatus {
+  PENDING_REVIEW
+  CONFLICT
+  CONFIRMED
+  DISCARDED
+  REJECTED
+}
+
+/// Something a person captured while offline. It is a DRAFT: not a transaction, not in any total, until the person confirms it after the
+/// server has re-checked it. `clientId` is stable, so syncing the same draft twice is one draft.
+model OfflineDraft {
+  id              String      @id @default(uuid())
+  businessId      String
+  merchantId      String
+  deviceSessionId String?
+  clientId        String
+  kind            String // SALE | EXPENSE
+  payload         Json
+  capturedAt      DateTime    @db.Timestamptz()
+  status          DraftStatus @default(PENDING_REVIEW)
+  conflicts       Json?
+  transactionId   String?
+  createdAt       DateTime    @default(now()) @db.Timestamptz()
+  updatedAt       DateTime    @default(now()) @updatedAt @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@unique([businessId, clientId])
+  @@index([businessId, status])
+}
+
+/// What happened when TradePal tried to tell a human about an incident: which channel, whether the provider accepted it. Lets the admin see
+/// whether alerting is verified to deliver. Platform data. Append-only.
+model AlertDelivery {
+  id                String   @id @default(uuid())
+  service           String
+  title             String
+  kind              String // INCIDENT | CHANNEL_CHECK
+  channel           String // EMAIL | WHATSAPP
+  status            String // DELIVERED | FAILED | DEDUPED
+  providerMessageId String?
+  httpStatus        Int?
+  error             String?
+  createdAt         DateTime @default(now()) @db.Timestamptz()
+
+  @@index([createdAt])
+  @@index([kind, status, createdAt])
+}
+
+/// Phase 9: an operator can pause a background job class (for an incident) and resume it. Scheduled runs skip a paused class; servicing of
+/// inbound messages is never a pausable class. Platform data, never deleted.
+model JobControl {
+  jobClass  String   @id
+  paused    Boolean  @default(false)
+  reason    String?
+  changedBy String?
+  changedAt DateTime @default(now()) @db.Timestamptz()
+}
+
+// ------------------------------------------------------------------------------------ couriers
+
+enum CourierJobStatus {
+  BOOKED //      the courier (or the seller's own rider) has the job
+  PICKED_UP //   the parcel left the seller
+  IN_TRANSIT //  on its way to the shopper
+  DELIVERED //   the courier says it arrived (the order itself completes only with the shopper's hand-over code)
+  FAILED //      the courier could not deliver
+  CANCELLED //   called off before pick-up
+  RETURNED //    came back to the seller
+}
+
+/// One delivery job for a store order. "manual" is the seller's own rider or any outside courier the seller tracks by hand; any other
+/// courier id is an adapter registered in src/couriers. The courier's fee is the SELLER's cost: it is never added to the shopper's total.
+model DeliveryShipment {
+  id             String         @id @default(uuid())
+  businessId     String
+  orderId        String
+  courier        String // adapter id, or "manual"
+  courierName    String // what the seller and the shopper see, e.g. "Own rider" or the courier's name
+  externalId     String?
+  trackingRef    String?
+  trackingUrl    String?
+  riderName      String?
+  riderPhone     String?
+  status         CourierJobStatus @default(BOOKED)
+  feeMinor       BigInt?
+  currencyCode   String?
+  failureReason  String?
+  idempotencyKey String
+  lastEventAt    DateTime?      @db.Timestamptz()
+  createdBy      String?
+  createdAt      DateTime       @default(now()) @db.Timestamptz()
+  updatedAt      DateTime       @updatedAt @db.Timestamptz()
+
+  business Business                @relation(fields: [businessId], references: [id])
+  order    StoreOrder              @relation(fields: [orderId], references: [id])
+  events   DeliveryShipmentEvent[]
+
+  @@unique([businessId, idempotencyKey])
+  @@unique([courier, externalId])
+  @@index([orderId, status])
+  @@index([businessId, status])
+}
+
+/// Append-only history of a shipment: who said what, when. A courier's own event id makes a repeated callback a no-op.
+model DeliveryShipmentEvent {
+  id              String         @id @default(uuid())
+  businessId      String
+  shipmentId      String
+  status          CourierJobStatus
+  source          String // SELLER | COURIER | SYSTEM
+  externalEventId String?
+  detail          String?
+  occurredAt      DateTime       @db.Timestamptz()
+  createdAt       DateTime       @default(now()) @db.Timestamptz()
+
+  business Business         @relation(fields: [businessId], references: [id])
+  shipment DeliveryShipment @relation(fields: [shipmentId], references: [id])
+
+  @@unique([shipmentId, externalEventId])
+  @@index([shipmentId, occurredAt])
 }

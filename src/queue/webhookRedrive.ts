@@ -1,3 +1,4 @@
+import { isJobPaused } from "../ops/jobControl.js";
 import type { PrismaClient } from "@prisma/client";
 import type { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -72,6 +73,7 @@ export function startWebhookRedriveSweep(deps: {
     if (running) return;
     running = true;
     try {
+      if (await isJobPaused(deps.prisma, "webhook-redrive")) return;
       const result = await redrivePendingWebhookEvents(deps.prisma, redriveQueue, counter);
       if (result.requeued > 0 || result.exhausted > 0) {
         console.warn(`webhook redrive: ${JSON.stringify(result)}`);

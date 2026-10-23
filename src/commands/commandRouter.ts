@@ -1,5 +1,6 @@
+import { isProviderAllowedForPurpose, ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY } from "../domain/paymentPurpose.js";
 import type { MerchantRole, PrismaClient } from "@prisma/client";
-import type { TenantScopedClient } from "../db/tenantScope.js";
+import { withScopedTransaction, type TenantScopedClient } from "../db/tenantScope.js";
 import {
   assertWithinQuotaIfEnabled,
   BILLING_QUOTA_FEATURE_FLAG_KEY,
@@ -17,7 +18,7 @@ import {
   setInventoryItemPrice,
   setLowStockThreshold,
 } from "../domain/inventory.js";
-import { reverseTransaction, TransactionAlreadyReversedError } from "../domain/ledger.js";
+import { DebtHasPaymentsError, reverseTransaction, TransactionAlreadyReversedError } from "../domain/ledger.js";
 import {
   addStaffMerchant,
   CannotRemoveOwnerError,
@@ -49,6 +50,7 @@ import { generateReminderForCustomer, NoOutstandingDebtError } from "../domain/r
 import type { FlutterwaveDeps } from "../flutterwave/client.js";
 import type { PawaPayDeps } from "../pawapay/client.js";
 import { initiatePawaPayCollection, PawaPayCollectionError } from "../domain/pawapayCollection.js";
+import { FLAG_CATALOG, FLAG_DAILY_CLOSE, FLAG_STOCK_V2, handleOperationsCommand, OPERATIONS_COMMANDS } from "./operationsCommands.js";
 
 const REMINDERS_FEATURE_FLAG_KEY = "reminders";
 const MOBILE_MONEY_FEATURE_FLAG_KEY = "mobileMoneyReconciliation";
@@ -132,15 +134,33 @@ const HELP_ENTRIES: ReadonlyArray<{ flag?: string; line: string }> = [
     line: "/collect <customer name> <amount> <customer mobile-money number> - ask a customer to pay by mobile money; they get a prompt on their phone",
   },
   { flag: CUSTOMER_PAYMENT_LINKS_FEATURE_FLAG_KEY, line: "/catalog - list your priced items as text to forward to a customer" },
+  // Expansion Phase 2 (each line appears only for a business with that flag on).
+  { flag: FLAG_DAILY_CLOSE, line: "/close [amount] - close the day: see what cash you should have, then enter what you counted" },
+  { flag: FLAG_CATALOG, line: "/products - list your products and pack sizes" },
+  { flag: FLAG_CATALOG, line: "/addproduct <sku> <unit> <name> - add a product" },
+  { flag: FLAG_CATALOG, line: "/pack <sku> <pack name> <how many> - say how many pieces are in a carton, bag or box" },
+  { flag: FLAG_STOCK_V2, line: "/receive <sku> <quantity> [pack] [cost <price>] - record stock that arrived" },
+  { flag: FLAG_STOCK_V2, line: "/count <sku> <how many> - count your stock, then /count approve" },
+  { flag: "reorderRules", line: "/reorder - see what to reorder and why; /reorder accept <number> makes a draft order (never sent by itself)" },
+  { flag: "tradeOrders", line: "/orders - your purchase and sales orders; /sendorder, /acceptorder, /shiporder, /receiveorder <order number>" },
+  { flag: "tradeOrders", line: "/partners, /partner add|invite|share|terms|unlink, /join <code> - trade partners and linking" },
+  { flag: "tradeOrders", line: "/invoices, /payinvoice <invoice> <amount> [cash|momo|bank], /confirmpayment, /rejectpayment - trade invoices and payments" },
+  { flag: "catalogV2", line: "/wholesale <sku> <price> [per <pack>] [from <qty>], /publish <sku>, /unpublish <sku> - wholesale prices for your partners" },
+  { flag: "storefront", line: "/store - your online shop: set it up, see and move orders, deal with cancellations, refunds and problems (/store help)" },
+  { flag: "pawapayBilling", line: "/plans, /billing, /renew <mobile-money number> [plan], /changeplan <plan>, /cancelplan - your TradePal subscription" },
+  { flag: "reportsV2", line: "/report - bookkeeping reports: sales, cash, stock value, money owed, margin, payments, stock differences (/report help)" },
+  { flag: "offlineDrafts", line: "/connect [shared], /disconnect - link a phone to write sales and expenses as drafts without a connection" },
   { line: "/help - show this message" },
 ];
 
-const HELP_PLAIN_LANGUAGE_TIP = 'You can also just tell me about a sale, expense or debt in plain language, e.g. "sold 2 bread for 500".';
+const HELP_PLAIN_LANGUAGE_TIP = 'You can also just tell me about a sale, expense or debt in plain language, e.g. "sold 2 bread for 500". The slash is optional: "today", "debts" and "paid Amina 300" work too.';
 
 async function buildHelpText(ctx: CommandContext): Promise<string> {
   const flags = new Set(HELP_ENTRIES.flatMap((entry) => (entry.flag ? [entry.flag] : [])));
   const enabledFlags = new Set<string>();
   for (const flag of flags) {
+    // offline drafts also need the platform switch, so help never advertises a command that would answer "Unrecognized"
+    if (flag === "offlineDrafts" && process.env["OFFLINE_DRAFTS_ENABLED"] !== "true") continue;
     if (await isFeatureEnabled(ctx.scopedPrisma, ctx.businessId, flag)) enabledFlags.add(flag);
   }
   const lines = HELP_ENTRIES.filter((entry) => !entry.flag || enabledFlags.has(entry.flag)).map((entry) => entry.line);
@@ -480,7 +500,8 @@ async function handleToday(ctx: CommandContext): Promise<string> {
     `Sales: ${formatMoney(summary.totalSalesMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
     `Expenses: ${formatMoney(summary.totalExpensesMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
     `Payments received: ${formatMoney(summary.totalPaymentsReceivedMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
-    `Net: ${formatMoney(summary.netMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
+    // With the reports flag on the line says what it is: sales minus expenses is NOT profit (stock cost, fees and drawings are not in it).
+    `${(await isFeatureEnabled(ctx.scopedPrisma, ctx.businessId, "reportsV2")) ? "Sales minus expenses (not profit)" : "Net"}: ${formatMoney(summary.netMinor, ctx.minorUnitExp)} ${ctx.currencyCode}`,
   ].join("\n");
 }
 
@@ -493,10 +514,40 @@ async function handleUndo(ctx: CommandContext): Promise<string> {
   if (!lastTransaction) return "Nothing to undo.";
 
   try {
-    await reverseTransaction(ctx.scopedPrisma, lastTransaction.id, "undone by merchant via /undo");
+    // One /paid can be split across several of a customer's debts (one payment entry per debt). That is ONE action for the owner, so
+    // undoing it takes back all of its parts together, never just one of them.
+    const parts = [lastTransaction];
+    if (lastTransaction.type === "PAYMENT_RECEIVED" && lastTransaction.whatsappMessageId && lastTransaction.customerId) {
+      const siblings = await ctx.scopedPrisma.transaction.findMany({
+        where: {
+          type: "PAYMENT_RECEIVED", whatsappMessageId: lastTransaction.whatsappMessageId, customerId: lastTransaction.customerId,
+          reversalOfTransactionId: null, reversedBy: null, NOT: { id: lastTransaction.id }, debtPayments: { some: {} },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      parts.push(...siblings);
+    }
+    await withScopedTransaction(ctx.scopedPrisma, async (db) => {
+      for (const t of parts) await reverseTransaction(db, t.id, "undone by merchant via /undo");
+    });
+    const total = parts.reduce((sum, t) => sum + t.amountMinor, 0n);
+    const amount = `${formatMoney(total, ctx.minorUnitExp)} ${ctx.currencyCode}`;
+    if (lastTransaction.type === "PAYMENT_RECEIVED" && lastTransaction.customerId) {
+      const customer = await ctx.scopedPrisma.customer.findUnique({ where: { id: lastTransaction.customerId } });
+      const owed = sumMoney((await listOpenDebtsForCustomer(ctx.scopedPrisma, lastTransaction.customerId)).map((d) => d.outstandingAmountMinor));
+      if (customer && (await ctx.scopedPrisma.debtPayment.count({ where: { transactionId: { in: parts.map((t) => t.id) } } })) > 0) {
+        return `Undone: payment of ${amount} from ${customer.name}. ${customer.name} owes ${formatMoney(owed, ctx.minorUnitExp)} ${ctx.currencyCode} again.`;
+      }
+    }
+    if (lastTransaction.type === "DEBT_NOTE" && lastTransaction.customerId) {
+      const customer = await ctx.scopedPrisma.customer.findUnique({ where: { id: lastTransaction.customerId } });
+      if (customer && (await ctx.scopedPrisma.debt.count({ where: { originTransactionId: lastTransaction.id } })) > 0) {
+        return `Undone: debt of ${amount} for ${customer.name}. That debt is removed.`;
+      }
+    }
     return `Undone: ${lastTransaction.type} of ${formatMoney(lastTransaction.amountMinor, ctx.minorUnitExp)} ${ctx.currencyCode}.`;
   } catch (error) {
-    if (error instanceof TransactionAlreadyReversedError) return error.message;
+    if (error instanceof TransactionAlreadyReversedError || error instanceof DebtHasPaymentsError) return error.message;
     throw error;
   }
 }
@@ -792,6 +843,10 @@ async function handlePayLink(ctx: CommandContext, args: string): Promise<string>
     return "Payment links aren't configured for your account yet. Please contact support.";
   }
 
+  // Hard lock (expansion decisions G6-G7): a Flutterwave link for a merchant sale would pay TradePal's own
+  // account, so it is refused before any side effect until proceeds can settle to the merchant.
+  if (!isProviderAllowedForPurpose("flutterwave", "MERCHANT_SALE")) return ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY;
+
   const customer = await findOrCreateCustomerByName(ctx.scopedPrisma, ctx.businessId, split.name);
   const result = await initiatePaymentRequest(
     ctx.prisma,
@@ -853,6 +908,10 @@ async function handleCollect(ctx: CommandContext, args: string): Promise<string>
     return "Mobile-money collection isn't configured for your account yet. Please contact support.";
   }
 
+  // Hard lock (expansion decision G5): pawaPay may not collect merchant sales, whatever the flag says.
+  // Checked before any side effect (no customer is created, no provider is called).
+  if (!isProviderAllowedForPurpose("pawapay", "MERCHANT_SALE")) return ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY;
+
   const customer = await findOrCreateCustomerByName(ctx.scopedPrisma, ctx.businessId, split.name);
   try {
     const result = await initiatePawaPayCollection(
@@ -908,6 +967,12 @@ export async function handleCommand(ctx: CommandContext, rawText: string): Promi
   const firstSpace = trimmed.indexOf(" ");
   const command = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
   const args = firstSpace === -1 ? "" : trimmed.slice(firstSpace + 1);
+
+  // Expansion Phase 2 commands: null while their flag is off, so the answer below is exactly what it always was.
+  if (OPERATIONS_COMMANDS.has(command)) {
+    const reply = await handleOperationsCommand(ctx, command, args);
+    if (reply !== null) return reply;
+  }
 
   switch (command) {
     case "/debt":

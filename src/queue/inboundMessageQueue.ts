@@ -17,3 +17,19 @@ export function getInboundMessageQueue(): Queue<InboundMessageJob> {
 export async function enqueueInboundMessage(job: InboundMessageJob): Promise<void> {
   await getInboundMessageQueue().add("process-inbound-message", job, { jobId: job.waMessageId });
 }
+
+/**
+ * Puts a message that never finished back on the queue (admin replay). BullMQ ignores an add() whose jobId already exists, so a leftover
+ * finished or failed job is removed first; a job that is still waiting or running is left alone and reported as in flight.
+ */
+export async function replayInboundMessage(job: InboundMessageJob): Promise<"QUEUED" | "IN_FLIGHT"> {
+  const q = getInboundMessageQueue();
+  const existing = await q.getJob(job.waMessageId);
+  if (existing) {
+    const state = await existing.getState();
+    if (["waiting", "active", "delayed", "prioritized", "waiting-children"].includes(state)) return "IN_FLIGHT";
+    await existing.remove();
+  }
+  await q.add("process-inbound-message", job, { jobId: job.waMessageId });
+  return "QUEUED";
+}

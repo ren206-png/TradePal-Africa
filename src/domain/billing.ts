@@ -1,6 +1,8 @@
 import type { TenantScopedClient } from "../db/tenantScope.js";
 import { getMonthBoundsInTimezone } from "./dailySummary.js";
 import { isFeatureEnabled } from "./featureFlags.js";
+import { FLAG_ENTITLEMENTS } from "./subscriptions/common.js";
+import { getEntitlement } from "./subscriptions/entitlements.js";
 
 /**
  * Phase 4: quota enforcement only — never payment collection. Charging a
@@ -64,6 +66,12 @@ export async function getEffectivePlan(
   businessId: string,
   now: Date = new Date(),
 ): Promise<EffectivePlan> {
+  // Phase 6: with entitlement enforcement on, the plan (and its caps) comes from the entitlement matrix, which honours the grace period
+  // and the plan VERSION the business bought. With the flag off this is exactly the code below, unchanged.
+  if (await isFeatureEnabled(scopedPrisma, businessId, FLAG_ENTITLEMENTS)) {
+    const ent = await getEntitlement(scopedPrisma, businessId, now);
+    return { code: ent.planCode, entryCapPerMonth: ent.entryCapPerMonth, voiceEnabled: ent.voiceEnabled, staffCapCount: ent.staffCapCount };
+  }
   const subscription = await scopedPrisma.subscription.findFirst({
     where: { businessId, status: "ACTIVE", currentPeriodEnd: { gt: now } },
     orderBy: { createdAt: "desc" },

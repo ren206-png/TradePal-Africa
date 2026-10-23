@@ -152,6 +152,7 @@ function formatWeekOverWeekLine(
   previousWeekSummary: DailySummary,
   currencyCode: string,
   minorUnitExp: number,
+  netWord = "net",
 ): string {
   if (previousWeekSummary.transactionCount === 0) {
     return "vs last week: no data from the previous week to compare.";
@@ -160,7 +161,7 @@ function formatWeekOverWeekLine(
   const sign = deltaMinor >= 0n ? "+" : "";
   return (
     `vs last week: ${sign}${formatMoney(deltaMinor, minorUnitExp)} ${currencyCode} ` +
-    `(last week's net was ${formatMoney(previousWeekSummary.netMinor, minorUnitExp)} ${currencyCode})`
+    `(last week's ${netWord} was ${formatMoney(previousWeekSummary.netMinor, minorUnitExp)} ${currencyCode})`
   );
 }
 
@@ -175,6 +176,8 @@ function buildDigestLines(
   timezone: string,
   currencyCode: string,
   minorUnitExp: number,
+  /** With the `reportsV2` flag on, sales minus expenses is labelled for what it is. The label is part of a template PARAMETER, so no template change is needed. */
+  honestLabel = false,
 ): string[] {
   const { summary, previousWeekSummary, topDebtor, weekStart, weekEnd } = digest;
 
@@ -183,8 +186,8 @@ function buildDigestLines(
     `Transactions: ${summary.transactionCount}`,
     `Sales: ${formatMoney(summary.totalSalesMinor, minorUnitExp)} ${currencyCode}`,
     `Expenses: ${formatMoney(summary.totalExpensesMinor, minorUnitExp)} ${currencyCode}`,
-    `Net: ${formatMoney(summary.netMinor, minorUnitExp)} ${currencyCode}`,
-    formatWeekOverWeekLine(summary, previousWeekSummary, currencyCode, minorUnitExp),
+    `${honestLabel ? "Sales minus expenses (not profit)" : "Net"}: ${formatMoney(summary.netMinor, minorUnitExp)} ${currencyCode}`,
+    formatWeekOverWeekLine(summary, previousWeekSummary, currencyCode, minorUnitExp, honestLabel ? "sales minus expenses" : "net"),
     topDebtor
       ? `Top outstanding debt: ${topDebtor.customerName} owes ${formatMoney(topDebtor.outstandingAmountMinor, minorUnitExp)} ${currencyCode}`
       : "No outstanding debts.",
@@ -197,8 +200,9 @@ export function buildWeeklyDigestMessage(
   timezone: string,
   currencyCode: string,
   minorUnitExp: number,
+  honestLabel = false,
 ): string {
-  return buildDigestLines(digest, timezone, currencyCode, minorUnitExp).join("\n");
+  return buildDigestLines(digest, timezone, currencyCode, minorUnitExp, honestLabel).join("\n");
 }
 
 /**
@@ -214,8 +218,9 @@ export function buildWeeklyDigestTemplateParams(
   timezone: string,
   currencyCode: string,
   minorUnitExp: number,
+  honestLabel = false,
 ): string[] {
-  return buildDigestLines(digest, timezone, currencyCode, minorUnitExp);
+  return buildDigestLines(digest, timezone, currencyCode, minorUnitExp, honestLabel);
 }
 
 export class DigestSendFailedError extends Error {
@@ -312,7 +317,8 @@ export async function sendWeeklyBusinessDigests(
 
     if (!outboundGateway) continue;
 
-    const message = buildWeeklyDigestMessage(digest, business.timezone, business.currencyCode, business.currency.minorUnitExp);
+    const honestLabel = await isFeatureEnabled(scoped, business.id, "reportsV2");
+    const message = buildWeeklyDigestMessage(digest, business.timezone, business.currencyCode, business.currency.minorUnitExp, honestLabel);
     const merchants = await scoped.merchant.findMany({ where: { businessId: business.id } });
     const gatewayDeps = { prisma, ...outboundGateway };
     const template = outboundGateway.weeklyDigestTemplate;
@@ -342,6 +348,7 @@ export async function sendWeeklyBusinessDigests(
                   business.timezone,
                   business.currencyCode,
                   business.currency.minorUnitExp,
+                  honestLabel,
                 ),
               })
             : sendWhatsAppTextMessage(gatewayDeps, { toPhoneNumber: merchant.phoneNumber, body: message }),

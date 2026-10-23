@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import type { PrismaClient } from "@prisma/client";
-import { createTestDb, type TestDb } from "./helpers/db.js";
+import { createTestDb, type TestDb, backdateTransaction } from "./helpers/db.js";
 import { getTenantScopedClient, type TenantScopedClient } from "../src/db/tenantScope.js";
 import { recordTransaction } from "../src/domain/ledger.js";
 import {
@@ -123,7 +123,7 @@ describe("getDailySummary", () => {
         paymentStatus: "PAID",
       },
     });
-    await prisma.transaction.update({ where: { id: stale.id }, data: { createdAt: yesterday } });
+    await backdateTransaction(prisma, stale.id, yesterday);
 
     const summary = await getDailySummary(scoped, "Africa/Lagos", now);
 

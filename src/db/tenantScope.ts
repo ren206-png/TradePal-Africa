@@ -7,7 +7,7 @@ import type { PrismaClient } from "@prisma/client";
  * Reference/master data (Country, Currency, Language, Plan, ...) and
  * AdminUser are deliberately excluded: they are not tenant data.
  */
-const TENANT_SCOPED_MODELS = new Set([
+export const TENANT_SCOPED_MODELS = new Set([
   "Merchant",
   "User",
   "Transaction",
@@ -29,6 +29,86 @@ const TENANT_SCOPED_MODELS = new Set([
   "BusinessFeatureFlag",
   "PaymentRequest",
   "PawaPayDeposit",
+  // Expansion Phase 1: shops and memberships belong to one business.
+  "Shop",
+  "Membership",
+  // Expansion Phase 2: catalog, stock, journals, daily close.
+  "Product",
+  "ProductVariant",
+  "VariantAlias",
+  "PackConversion",
+  "PriceList",
+  "PriceRule",
+  "StockMovement",
+  "StockBalance",
+  "StockReservation",
+  "StockPolicy",
+  "StockCount",
+  "StockCountLine",
+  "StockTransfer",
+  "StockTransferLine",
+  "Account",
+  "JournalEntry",
+  "JournalLine",
+  "DailyClose",
+  // Expansion Phase 3: trade documents, reorder and forecasting.
+  "TradePartner",
+  "PriceListShare",
+  "TradeOrder",
+  "TradeOrderLine",
+  "Shipment",
+  "ShipmentLine",
+  "GoodsReceipt",
+  "GoodsReceiptLine",
+  "TradeInvoice",
+  "TradeInvoiceLine",
+  "TradePayment",
+  "CreditNote",
+  "ReorderRule",
+  "ReorderSuggestion",
+  "ForecastPrediction",
+  "ForecastScore",
+  "ForecastGateEvent",
+  // Expansion Phase 4: storefront, store orders, returns, support cases (Basket and BasketLine are shopper-owned, not tenant data).
+  "Storefront",
+  "DeliveryZone",
+  "Listing",
+  "StoreOrder",
+  "StoreOrderLine",
+  "StorePayment",
+  "StoreCancellationRequest",
+  "StoreRefundRequest",
+  "StoreRefundLine",
+  "PaymentException",
+  "SupportCase",
+  "SupportCaseNote",
+  // Expansion Phase 5: merchant payments through providers, and marketplace moderation as the seller sees it.
+  "ProviderConnection",
+  "PaymentIntent",
+  "PaymentAttempt",
+  "PaymentAttemptEvent",
+  "PaymentAllocation",
+  "ProviderRefund",
+  "ProviderSettlement",
+  "ProviderSettlementLine",
+  "ModerationAction",
+  "Appeal",
+  // Expansion Phase 6: subscription billing records that belong to one business.
+  "BillingAttempt",
+  "BillingAllocation",
+  "BillingRefund",
+  "EntitlementEvent",
+  // Expansion Phase 7: consent, pending confirmations, device sessions and offline drafts belong to one business.
+  "ContactConsent",
+  "ContactConsentEvent",
+  "PendingAction",
+  "DeviceSession",
+  "OfflineDraft",
+  // Product photos belong to one business.
+  "ProductImage",
+  // Couriers: delivery jobs for store orders belong to one business.
+  "DeliveryShipment",
+  "DeliveryShipmentEvent",
   // DeepSeek Integration Phase 3 (INTEGRATION_DESIGN.md §3): carries a
   // required businessId. Deliberately NOT added to APPEND_ONLY_MODELS below —
   // see AiUsageLedger's own schema.prisma docstring for why there is no
@@ -129,3 +209,24 @@ export function getTenantScopedClient<TClient extends PrismaClient>(prisma: TCli
 }
 
 export type TenantScopedClient = ReturnType<typeof getTenantScopedClient>;
+
+/**
+ * `$transaction` hands its callback a client without the `$transaction`/`$connect` helpers. It has the same model
+ * delegates and the same tenant scoping, so domain code that needs atomicity treats it as a TenantScopedClient.
+ * One reviewed cast, here, instead of one at every call site.
+ */
+export function asTenantScoped(tx: unknown): TenantScopedClient {
+  return tx as TenantScopedClient;
+}
+
+/** Runs `work` in one database transaction against the business-scoped client. */
+export async function withScopedTransaction<T>(
+  scoped: TenantScopedClient,
+  work: (tx: TenantScopedClient) => Promise<T>,
+  options?: { timeoutMs?: number },
+): Promise<T> {
+  // Already inside a transaction (the client handed to us came from one): join it, so callers can compose
+  // stock/accounting operations with their own writes atomically.
+  if (typeof (scoped as { $transaction?: unknown }).$transaction !== "function") return work(scoped);
+  return scoped.$transaction((tx) => work(asTenantScoped(tx)), { timeout: options?.timeoutMs ?? 15_000 });
+}

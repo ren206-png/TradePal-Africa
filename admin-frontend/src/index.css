@@ -509,3 +509,19 @@ label {
     padding: 3rem;
   }
 }
+
+/* Expansion Phase 1: overview cards and guard prompts */
+.stat-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+.stat-card { border: 1px solid #d0d5dd; border-radius: 8px; padding: 12px 16px; min-width: 150px; background: #fff; }
+.stat-card.stat-warn { border-color: #b54708; background: #fffaeb; }
+.stat-value { font-size: 1.6rem; font-weight: 600; }
+.stat-label { color: #475467; font-size: 0.85rem; }
+.muted { color: #667085; font-size: 0.85rem; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(16, 24, 40, 0.5); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.modal { background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 10px; }
+.modal input, .modal textarea { width: 100%; box-sizing: border-box; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.tab-row { display: flex; gap: 8px; margin: 8px 0 12px; }
+.tab { border: 1px solid #d0d5dd; background: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.tab.active { background: #101828; color: #fff; border-color: #101828; }
+.link-button { background: none; border: none; padding: 0; color: #175cd3; text-decoration: underline; cursor: pointer; font: inherit; }

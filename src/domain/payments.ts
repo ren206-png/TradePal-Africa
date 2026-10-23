@@ -1,3 +1,4 @@
+import { assertProviderAllowedForPurpose } from "./paymentPurpose.js";
 import crypto from "node:crypto";
 import type { PrismaClient, Subscription } from "@prisma/client";
 import { recordAuditLog } from "./auditLog.js";
@@ -105,6 +106,7 @@ export async function initiateSubscriptionCheckout(
   input: InitiateSubscriptionCheckoutInput,
   flutterwave: FlutterwaveDeps,
 ): Promise<InitiateSubscriptionCheckoutResult> {
+  assertProviderAllowedForPurpose("flutterwave", "PLATFORM_SUBSCRIPTION");
   const scoped = getTenantScopedClient(prisma, input.businessId);
 
   const plan = await prisma.plan.findUnique({ where: { code: input.planCode } });

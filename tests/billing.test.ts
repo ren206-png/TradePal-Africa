@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import type { PrismaClient } from "@prisma/client";
-import { createTestDb, type TestDb } from "./helpers/db.js";
+import { createTestDb, type TestDb, backdateTransaction } from "./helpers/db.js";
 import { getTenantScopedClient, type TenantScopedClient } from "../src/db/tenantScope.js";
 import { recordTransaction, reverseTransaction } from "../src/domain/ledger.js";
 import { setFeatureFlagForBusiness } from "../src/domain/featureFlags.js";
@@ -219,7 +219,7 @@ describe("getQuotaStatus / assertWithinQuota", () => {
     });
     const lastMonth = new Date();
     lastMonth.setUTCMonth(lastMonth.getUTCMonth() - 1);
-    await prisma.transaction.update({ where: { id: stale.id }, data: { createdAt: lastMonth } });
+    await backdateTransaction(prisma, stale.id, lastMonth);
 
     const status = await getQuotaStatus(scoped, businessId, "Africa/Lagos");
     expect(status.usedThisMonth).toBe(0);

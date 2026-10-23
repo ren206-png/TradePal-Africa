@@ -172,6 +172,21 @@ describe("confirmSubscriptionPayment", () => {
     expect(auditRows[0]?.actorType).toBe("SYSTEM");
   });
 
+  it("keeps subscription money out of the merchant's books: the paid invoice is a PLATFORM_SUBSCRIPTION and writes no merchant Transaction (scenario 13)", async () => {
+    const { businessId, invoice } = await makePendingCheckout("Boundary Shop", "+2340002229901");
+    expect(invoice.purpose).toBe("PLATFORM_SUBSCRIPTION");
+
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({ status: "success", data: { status: "successful", amount: 5000, currency: "NGN", tx_ref: invoice.providerReference } }),
+    );
+    await confirmSubscriptionPayment(prisma, { txRef: invoice.providerReference!, flutterwaveTransactionId: "flw-tx-boundary" }, { secretKey: "test-secret", fetchImpl });
+
+    expect((await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } })).status).toBe("PAID");
+    // What the business paid TradePal is not revenue, a sale, a payment received, or a debt in the business's own ledger.
+    expect(await prisma.transaction.count({ where: { businessId } })).toBe(0);
+    expect(await prisma.paymentRequest.count({ where: { businessId } })).toBe(0);
+  });
+
   it("is idempotent — replaying a webhook for an already-PAID invoice short-circuits without re-verifying", async () => {
     const { invoice } = await makePendingCheckout("Replay Shop", "+2340002220011");
 

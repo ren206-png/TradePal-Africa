@@ -4,12 +4,22 @@ import express from "express";
 import helmet from "helmet";
 import { Redis } from "ioredis";
 import { createAdminRouter } from "./admin/adminRoutes.js";
+import { createOfflineRouter } from "./offline/routes.js";
+import { installAlertDeliveryRecorder } from "./monitoring/alertRecorder.js";
+import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
+import { wireConsumerMessaging } from "./messaging/wire.js";
+import { sendWhatsAppTextMessage } from "./whatsapp/outboundGateway.js";
+import { createStorefrontRouter } from "./storefront/routes.js";
+import { getAdapterRegistry } from "./payments/registry.js";
+import { createMerchantPaymentWebhookRouter } from "./payments/webhookRoute.js";
+import { createPawaPayBillingWebhookRouter } from "./pawapay/billingWebhook.js";
+import { createCourierWebhookRouter } from "./couriers/webhook.js";
+import { couriersEnabled, getCourierRegistry } from "./couriers/registry.js";
 import { RedisLoginRateLimiter } from "./admin/rateLimiter.js";
 import {
   buildDeletionResolutionOutboundGatewayFromEnv,
   buildSubscriptionExpiryOutboundGatewayFromEnv,
 } from "./config/outboundGatewayEnv.js";
-import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
 import {
   buildFlutterwaveDepsFromEnv,
   buildPawaPayDepsFromEnv,
@@ -22,7 +32,8 @@ import { createPawaPayWebhookPostHandler } from "./pawapay/webhookRoute.js";
 import { installCrashReporting, installGracefulShutdown } from "./monitoring/processGuards.js";
 import { createRequestErrorHandler } from "./monitoring/requestErrorHandler.js";
 import { getRedisConnectionOptions } from "./queue/connection.js";
-import { enqueueInboundMessage } from "./queue/inboundMessageQueue.js";
+import { evaluateHeartbeats, heartbeatEnabled, requiredHeartbeatServices, startHeartbeat } from "./monitoring/heartbeat.js";
+import { enqueueInboundMessage, replayInboundMessage } from "./queue/inboundMessageQueue.js";
 import { RedisInboundMessageRateLimiter } from "./whatsapp/inboundRateLimiter.js";
 import { createWebhookPostHandler, verifyWebhookSubscription, type RequestWithRawBody } from "./whatsapp/webhookRoute.js";
 
@@ -59,6 +70,8 @@ installCrashReporting("server", alerts);
 // subscription-lapse notification (see adminRoutes.ts, subscriptionExpiry.ts);
 // when absent, that route still runs the sweep, just without notifications.
 const outboundGateway = buildSubscriptionExpiryOutboundGatewayFromEnv();
+wireConsumerMessaging(prisma);
+installAlertDeliveryRecorder(prisma);
 
 // Same optionality as outboundGateway above, for the Phase 18 deletion-request
 // resolution notification (see adminRoutes.ts, domain/deletion.ts) instead of
@@ -130,6 +143,24 @@ app.get("/", (_req, res) => {
   res.status(200).json({ status: "ok", service: "tradepal-africa-api" });
 });
 
+// Expansion Phase 1: dead-man's-switch endpoint for an external monitor (independent of Railway). 404 unless
+// HEARTBEAT_ENABLED=true. Reports only ok/stale: no service names, ages or counts.
+if (heartbeatEnabled()) startHeartbeat(prisma, "api");
+
+app.get("/heartbeat", async (_req, res) => {
+  if (!heartbeatEnabled()) {
+    res.status(404).end();
+    return;
+  }
+  try {
+    const statuses = await evaluateHeartbeats(prisma, requiredHeartbeatServices());
+    const stale = statuses.filter((s) => requiredHeartbeatServices().includes(s.service) && s.stale);
+    res.status(stale.length === 0 ? 200 : 503).json({ status: stale.length === 0 ? "ok" : "stale" });
+  } catch {
+    res.status(503).json({ status: "unknown" });
+  }
+});
+
 app.get("/webhooks/whatsapp", (req, res) => {
   verifyWebhookSubscription(req, res, verifyToken);
 });
@@ -198,10 +229,56 @@ app.use(
   }),
   createAdminRouter(prisma, adminJwtSecret, {
     ...(outboundGateway ? { outboundGateway } : {}),
+    // Phase 6: the admin "send reminder" action uses the same WhatsApp credentials as the other subscription notices, to the business's own owner.
+    platform: {
+      ...(outboundGateway ? { sendRenewalReminder: (toPhoneNumber: string, body: string) => sendWhatsAppTextMessage({ prisma, ...outboundGateway }, { toPhoneNumber, body }) } : {}),
+      // Phase 7: the admin messaging panel can run an alert channel check and replay a stuck inbound message.
+      alertDeps: buildAlertEmailDepsFromEnv(),
+      replayInbound: replayInboundMessage,
+    },
     ...(deletionResolutionOutboundGateway ? { deletionResolutionOutboundGateway } : {}),
     ...(loginRateLimiter ? { loginRateLimiter } : {}),
   }),
 );
+
+// Merchant-payment provider callbacks (expansion Phase 5). Always mounted, but only providers in the adapter registry answer: in production
+// the registry is empty until a real adapter is added, so this is a 404 for everything.
+app.use(createMerchantPaymentWebhookRouter(prisma, () => getAdapterRegistry(prisma)));
+
+// pawaPay callbacks about TradePal SUBSCRIPTION billing (expansion Phase 6): signed (RFC 9421) and processed asynchronously. Mounted
+// regardless of the billing flags, because finishing a charge that already exists must never depend on new charges being allowed.
+app.use(createPawaPayBillingWebhookRouter(prisma));
+
+// Courier status callbacks (delivery tracking). Off unless COURIERS_ENABLED=true; even then only couriers in the registry answer, and in
+// production the registry is empty until a real adapter is added by a reviewed change, so every path is a 404.
+if (couriersEnabled()) app.use(createCourierWebhookRouter(prisma, () => getCourierRegistry()));
+
+// Public storefront (expansion Phase 4): server-rendered pages for shoppers. Off unless STOREFRONT_ENABLED=true; even then a shop
+// only appears once its owner switches the per-business `storefront` flag on and opens the shop. Behind a proxy set TRUST_PROXY so
+// the per-client rate limits see the shopper's address, not the proxy's. Online "test" payments additionally need the simulator
+// secret and are refused whenever NODE_ENV=production.
+if (process.env["STOREFRONT_ENABLED"] === "true") {
+  if (process.env["TRUST_PROXY"]) app.set("trust proxy", Number(process.env["TRUST_PROXY"]) || process.env["TRUST_PROXY"]);
+  const paymentRegistry = getAdapterRegistry(prisma);
+  app.use(
+    createStorefrontRouter(prisma, {
+      payments: { registry: paymentRegistry },
+      // Marketplace discovery is a separate switch from having storefronts, and each seller is separately flagged.
+      marketplace: process.env["MARKETPLACE_ENABLED"] === "true",
+      // Shared across instances when Redis is configured (RATE_LIMIT_BACKEND), otherwise per process and reset on restart.
+      ...(rateLimitRedisClient
+        ? { limiters: { read: new RedisLoginRateLimiter(rateLimitRedisClient, 300, 60_000), write: new RedisLoginRateLimiter(rateLimitRedisClient, 120, 10 * 60_000), order: new RedisLoginRateLimiter(rateLimitRedisClient, 10, 60 * 60_000) } }
+        : {}),
+    }),
+  );
+}
+
+// Offline drafts page and API (expansion Phase 7). Off unless OFFLINE_DRAFTS_ENABLED=true; every request is also checked against the
+// per-business `offlineDrafts` flag. Behind a proxy set TRUST_PROXY so rate limits see the phone's address.
+if (process.env["OFFLINE_DRAFTS_ENABLED"] === "true" || process.env["REPORTS_WEB_ENABLED"] === "true" || process.env["CATALOG_WEB_ENABLED"] === "true") {
+  if (process.env["TRUST_PROXY"]) app.set("trust proxy", Number(process.env["TRUST_PROXY"]) || process.env["TRUST_PROXY"]);
+  app.use(createOfflineRouter(prisma));
+}
 
 // Centralized error handler — MUST be registered last (after every route,
 // including the /admin mount above), per Express's own rule that a 4-arg

@@ -186,6 +186,9 @@ export async function commitAiUsage(
     const reserve = await loadReserveForTerminalWrite(tx, requestId);
 
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${reserve.idempotencyKey} || ${reserve.provider}))`;
+    // The first look above happened BEFORE the lock, so a concurrent commit/release of this same requestId may have landed while we
+    // waited. Look again now that we hold the lock (found by running the suite on a real Postgres: two commits for one requestId).
+    await loadReserveForTerminalWrite(tx, requestId);
 
     const existingCommit = await tx.aiUsageLedger.findFirst({
       where: {
@@ -229,22 +232,27 @@ export async function releaseAiUsage(
   requestId: string,
   params: ReleaseAiUsageParams,
 ): Promise<void> {
-  const reserve = await loadReserveForTerminalWrite(scopedPrisma, requestId);
+  await scopedPrisma.$transaction(async (tx) => {
+    const reserve = await loadReserveForTerminalWrite(tx, requestId);
+    // Same lock as commit/reserve, then re-check: a release racing a commit (or another release) of this requestId must not add a second outcome.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${reserve.idempotencyKey} || ${reserve.provider}))`;
+    await loadReserveForTerminalWrite(tx, requestId);
 
-  await scopedPrisma.aiUsageLedger.create({
-    data: {
-      requestId,
-      phase: "RELEASE",
-      businessId: reserve.businessId,
-      feature: reserve.feature,
-      provider: reserve.provider,
-      requestedModel: reserve.requestedModel,
-      resolvedModel: reserve.resolvedModel,
-      promptHash: reserve.promptHash,
-      idempotencyKey: reserve.idempotencyKey,
-      errorClass: params.errorClass,
-      httpStatus: params.httpStatus ?? null,
-    },
+    await tx.aiUsageLedger.create({
+      data: {
+        requestId,
+        phase: "RELEASE",
+        businessId: reserve.businessId,
+        feature: reserve.feature,
+        provider: reserve.provider,
+        requestedModel: reserve.requestedModel,
+        resolvedModel: reserve.resolvedModel,
+        promptHash: reserve.promptHash,
+        idempotencyKey: reserve.idempotencyKey,
+        errorClass: params.errorClass,
+        httpStatus: params.httpStatus ?? null,
+      },
+    });
   });
 }
 

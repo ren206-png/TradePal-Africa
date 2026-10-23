@@ -325,4 +325,35 @@ describe("first-day journey of a new Sierra Leone shop owner", () => {
     expect(await say("undo")).toMatch(/^Undone:/);
     expect(await prisma.transaction.count()).toBe(before + 1); // the reversal row
   });
+  it("understands commands with a name or an amount typed without the slash, and says how it read them", async () => {
+    const debt = await say("debt Mariama 500");
+    expect(debt).toContain("Recorded: Mariama owes 500.00 SLE.");
+    expect(debt).toContain('(I read that as: /debt Mariama 500. Not what you meant? Send "undo".)');
+    expect(await say("Customer mariama")).toContain("mariama owes 500.00 SLE across 1 debt(s).".replace("mariama owes", "Mariama owes"));
+    const paid = await say("paid Mariama 300");
+    expect(paid).toContain("Applied 300.00 SLE to Mariama's debt. Remaining owed: 200.00 SLE.");
+    expect(paid).toContain("(I read that as: /paid Mariama 300.");
+    expect(await say("paid Mariama 1,000")).toMatch(/more than|exceed|only owes|overpay/i); // the command's own checks still apply
+    expect(await say("customer Mariama")).toContain("Mariama owes 200.00 SLE");
+    expect(await say("undo")).toBe("Undone: payment of 300.00 SLE from Mariama. Mariama owes 500.00 SLE again."); // the way out the hint offers
+    expect(await say("customer Mariama")).toContain("Mariama owes 500.00 SLE");
+  });
+
+  it("does not turn ordinary writing into a command: a payment to a non-customer is an expense, and a lookup never creates a customer", async () => {
+    activeParser = { parseTransactionText: async () => ({ intent: "EXPENSE", amountMinor: 150_000, confidence: 0.95 }) };
+    try {
+      expect(await say("paid transport 1500")).toBe("Logged expense of 1500.00 SLE.");
+      expect(await say("customer Zed")).toBe("Logged expense of 1500.00 SLE."); // not an existing customer: read the normal way
+      expect(await say("debt collected from Amina 500")).toBe("Logged expense of 1500.00 SLE.");
+    } finally {
+      activeParser = saleParser;
+    }
+    expect(await prisma.customer.count({ where: { name: { equals: "Zed", mode: "insensitive" } } })).toBe(0);
+  });
+
+  it("says plainly when a command typed without the slash is not available to the shop, as the slash version does", async () => {
+    expect(await say("add staff 0803 123 4567")).toMatch(/isn't available/i);
+    expect(await say("set price rice 4500")).toMatch(/isn't available/i);
+    expect(await say("usage")).toMatch(/isn't (available|enabled)/i);
+  });
 });

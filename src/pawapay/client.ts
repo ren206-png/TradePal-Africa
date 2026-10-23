@@ -97,6 +97,9 @@ export interface ProviderOperationConfig {
   decimalsInAmount: "NONE" | "TWO_PLACES";
   minAmount: string;
   maxAmount: string;
+  /** The reference page's example shows these names instead of minAmount/maxAmount; accept either until a sandbox settles it. */
+  minTransactionLimit?: string;
+  maxTransactionLimit?: string;
   authType: "PROVIDER_AUTH" | "PRE_AUTH" | "REDIRECT_AUTH";
   pinPrompt?: "AUTOMATIC" | "MANUAL";
   pinPromptRevivable?: boolean;
@@ -120,6 +123,8 @@ export interface ActiveProvider {
 
 export interface ActiveConfigurationResult {
   companyName: string;
+  /** Account-level callback signing configuration (top level, not per country). */
+  signatureConfiguration?: { signedRequestsOnly?: boolean; signedCallbacks?: boolean };
   countries: Array<{
     country: string;
     prefix: string;
@@ -343,4 +348,84 @@ export async function predictProvider(
   }
 
   return response.json() as Promise<PredictProviderResult>;
+}
+
+// ── Phase 6: subscription billing additions (refunds, availability, signing keys) ──────────────
+
+export type OperationAvailability = "OPERATIONAL" | "DELAYED" | "CLOSED";
+
+/** Provider availability for one country and operation (https://docs.pawapay.io/v2/api-reference/toolkit/availability). Check before every charge. */
+export async function getAvailability(
+  deps: PawaPayDeps,
+  country: string,
+  operationType: "DEPOSIT" | "REFUND" = "DEPOSIT",
+): Promise<Array<{ provider: string; status: OperationAvailability }>> {
+  const response = await pawaPayFetch(deps, `/availability?country=${encodeURIComponent(country)}&operationType=${operationType}`, { method: "GET" });
+  if (!response.ok) throw new PawaPayApiError(`PawaPay getAvailability failed (${response.status})`, response.status);
+  const body = (await response.json()) as Array<{ country: string; providers: Array<{ provider: string; operationTypes: Array<{ operationType: string; status: OperationAvailability }> }> }>;
+  const out: Array<{ provider: string; status: OperationAvailability }> = [];
+  for (const c of body) {
+    if (c.country !== country) continue;
+    for (const p of c.providers) {
+      const op = p.operationTypes.find((o) => o.operationType === operationType);
+      if (op) out.push({ provider: p.provider, status: op.status });
+    }
+  }
+  return out;
+}
+
+export type RefundStatus = "ACCEPTED" | "ENQUEUED" | "PROCESSING" | "IN_RECONCILIATION" | "COMPLETED" | "FAILED" | "REJECTED";
+
+export interface InitiateRefundResult {
+  refundId: string;
+  status: "ACCEPTED" | "REJECTED" | "DUPLICATE_IGNORED";
+  rejectionReason?: { rejectionCode: string; rejectionMessage: string };
+}
+
+/** POST /v2/refunds. `amount` omitted means a full refund; with `amount`, `currency` is sent too (partial refunds). */
+export async function initiateRefund(deps: PawaPayDeps, params: { refundId: string; depositId: string; amount?: string; currency?: string }): Promise<InitiateRefundResult> {
+  const response = await pawaPayFetch(deps, "/refunds", {
+    method: "POST",
+    body: JSON.stringify({ refundId: params.refundId, depositId: params.depositId, ...(params.amount !== undefined ? { amount: params.amount, currency: params.currency } : {}) }),
+  });
+  if (!response.ok) {
+    throw new PawaPayApiError(`PawaPay refund initiation failed (${response.status}): ${await response.text()}`, response.status);
+  }
+  const body = (await response.json()) as { refundId?: string; payoutId?: string; status: InitiateRefundResult["status"]; rejectionReason?: InitiateRefundResult["rejectionReason"] };
+  return { refundId: body.refundId ?? body.payoutId ?? params.refundId, status: body.status, ...(body.rejectionReason ? { rejectionReason: body.rejectionReason } : {}) };
+}
+
+export interface CheckRefundStatusResult {
+  found: boolean;
+  data?: { refundId: string; status: RefundStatus; amount?: string; currency?: string; failureReason?: { failureCode: string; failureMessage: string } };
+}
+
+/** GET /v2/refunds/{refundId}. `found: false` is the only case in which a refund we initiated may be treated as never having happened. */
+export async function checkRefundStatus(deps: PawaPayDeps, refundId: string): Promise<CheckRefundStatusResult> {
+  const response = await pawaPayFetch(deps, `/refunds/${encodeURIComponent(refundId)}`, { method: "GET" });
+  if (response.status === 404) return { found: false };
+  if (!response.ok) throw new PawaPayApiError(`PawaPay checkRefundStatus failed (${response.status})`, response.status);
+  const body = (await response.json()) as { status: "FOUND" | "NOT_FOUND"; data?: { refundId: string; status: RefundStatus; amount?: string; currency?: string; failureReason?: { failureCode: string; failureMessage: string } } };
+  if (body.status === "NOT_FOUND" || !body.data) return { found: false };
+  return { found: true, data: body.data };
+}
+
+/** GET /v2/public-key/http: the verification keys for signed callbacks, `[{ id, key (PEM) }]`. */
+export async function getPublicKeys(deps: PawaPayDeps): Promise<Array<{ id: string; key: string }>> {
+  const response = await pawaPayFetch(deps, "/public-key/http", { method: "GET" });
+  if (!response.ok) throw new PawaPayApiError(`PawaPay getPublicKeys failed (${response.status})`, response.status);
+  return (await response.json()) as Array<{ id: string; key: string }>;
+}
+
+/** SANDBOX or PRODUCTION from the configured base URL (the two only differ by base URL and token). Unknown hosts are neither: fail closed. */
+export function pawaPayEnvironmentOf(deps: Pick<PawaPayDeps, "apiBaseUrl">): "SANDBOX" | "PRODUCTION" | null {
+  const url = deps.apiBaseUrl ?? SANDBOX_BASE_URL;
+  try {
+    const host = new URL(url).host;
+    if (host === "api.sandbox.pawapay.io") return "SANDBOX";
+    if (host === "api.pawapay.io") return "PRODUCTION";
+  } catch {
+    return null;
+  }
+  return null;
 }
