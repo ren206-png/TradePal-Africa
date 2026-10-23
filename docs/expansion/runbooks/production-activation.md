@@ -4,7 +4,7 @@
 
 ## Gate 0: before ANY expansion code reaches production
 1. Review the branch (`expansion/phase-1`, local only). Decide how it is merged: a push to `main` deploys production AND runs `prisma migrate deploy` (see `PHASE_0_FINDINGS.md`).
-2. **Rehearse the migrations** on a restored copy of the production backup: `REHEARSAL_DATABASE_URL=<scratch> ./scripts/rehearseMigrations.sh`. It has been run on a real local Postgres 18 (empty database, and the legacy-data rehearsal as a non-superuser owner: see `real-postgres-local.md`), but **not yet on a restored copy of the real production backup**. Needs a scratch Postgres (restore a backup into it) and `psql`. Record the timing and any lock waits.
+2. **Rehearse the migrations** on a restored copy of the production backup: `REHEARSAL_DATABASE_URL=<scratch> ./scripts/rehearseMigrations.sh`. It has been run on a real local Postgres 18 (empty database, and the legacy-data rehearsal as a non-superuser owner: see `real-postgres-local.md`), and on **2026-10-23 on a restored copy of the real production backup (clean; see `migration-rehearsal.md`)**. Repeat it with a FRESH backup right before the real deploy. Needs a scratch Postgres (restore a backup into it) and `psql`. Record the timing and any lock waits.
 3. Take a fresh production backup and note the restore command.
 4. Confirm production alerts work: send a synthetic incident and a channel check from System health; confirm they arrive. Set up the external heartbeat monitor on `/heartbeat` with a second alert channel (owner action, open since Phase 0).
 5. Set `OPERATIONS_SWEEP_ENABLED`, `OUTBOX_SWEEP_ENABLED`, `HEARTBEAT_ENABLED`, `TRUST_PROXY` on server and worker.

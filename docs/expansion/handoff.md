@@ -27,7 +27,7 @@ Evidence with real command output: `test-evidence.md`. Self-checks with the fail
 1. **No merchant-sales payment provider is chosen** (OPEN-4). Without one, shop payment is the simulator, cash, or recorded-by-the-seller only. A real adapter must be built against the provider's sandbox.
 2. **No pawaPay sandbox token or account approval.** Billing has only run against an in-memory fake; the callback signature code has never seen a real callback.
 3. **No WhatsApp template exists or is approved.** Shopper messages are suppressed until each class has an approved template recorded in the register.
-4. **No rehearsal on a restored production backup.** The migrations and the whole suite now run on a real local PostgreSQL 18 (empty and synthetic legacy data); timing and lock waits on production-sized data are still unknown.
+4. **Migrations rehearsed on a restored copy of the production backup (2026-10-23): clean** (see `migration-rehearsal.md`). Still unknown: behaviour under live traffic and the Railway role's exact privileges.
 5. **Product decisions:** plan prices and feature split (OPEN-5, OPEN-12), Flutterwave's future (OPEN-2), forecasting promotion thresholds (OPEN-6), seller terms (OPEN-7), tax and legal review (OPEN-8), language review (OPEN-9), double opt-in (OPEN-15), confirmations default (OPEN-14), digest wording (OPEN-17).
 
 ## 4. Exact remaining owner and provider actions (in order)
