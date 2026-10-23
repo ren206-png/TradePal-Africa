@@ -1,0 +1,64 @@
+diff --git a/landing/src/components/FAQ.astro b/landing/src/components/FAQ.astro
+index 4c80a4f..5927061 100644
+--- a/landing/src/components/FAQ.astro
++++ b/landing/src/components/FAQ.astro
+@@ -13,7 +13,7 @@ const faqs = [
+   {
+     question: "Will TradePal message my customers?",
+     answer:
+-      "Never. TradePal only ever replies to you, the merchant. Payment links, reminders, and your catalog are text you choose to copy and forward yourself.",
++      "TradePal replies to you, the merchant, and never messages your customers on its own. Payment links, reminders, and your catalog are text you choose to copy and forward yourself. The one exception: if a shopper orders from a TradePal online shop and ticks the box asking for WhatsApp updates about that order, TradePal may send them short updates about that order only (confirmed, ready, on its way, cancelled). Those messages name the shop, never contain marketing or payment demands, and stop at once when the shopper replies STOP. We never message a number your shop already knows unless that person has opted in this way.",
+   },
+   {
+     question: "How do I get paid online?",
+diff --git a/landing/src/pages/privacy.astro b/landing/src/pages/privacy.astro
+index 0d0a9fa..b41d240 100644
+--- a/landing/src/pages/privacy.astro
++++ b/landing/src/pages/privacy.astro
+@@ -4,7 +4,7 @@ import Header from "../components/Header.astro";
+ import Footer from "../components/Footer.astro";
+ import { SITE } from "../lib/site";
+ 
+-const lastUpdated = "July 24, 2026";
++const lastUpdated = "October 20, 2026";
+ ---
+ 
+ <Layout
+@@ -59,11 +59,36 @@ const lastUpdated = "July 24, 2026";
+         </p>
+       </section>
+ 
++      <section>
++        <h2 class="display text-2xl font-semibold text-ink">Messages to shoppers</h2>
++        <p class="mt-2 leading-relaxed">
++          If you order from a shop that uses TradePal and you tick the box asking for WhatsApp updates, we then ask you
++          to confirm by sending one short message from your own WhatsApp number (so nobody can sign up a number that
++          is not theirs). Only after that confirmation may we send you short messages about that order (for example, that it was confirmed, is ready, is on its way, or was
++          cancelled), naming the shop. We record that you agreed, the wording you saw, and when. These messages are
++          about your order only; we do not send marketing, and we do not use them to ask you to pay anything. Reply
++          STOP at any time and we stop messaging that number; reply START to turn them on again. Ticking this box is
++          separate from letting the seller contact you.
++        </p>
++      </section>
++
++      <section>
++        <h2 class="display text-2xl font-semibold text-ink">Deliveries and photos</h2>
++        <p class="mt-2 leading-relaxed">
++          If a seller delivers your order with a courier, your name, phone number, delivery address and the list of items
++          (not the prices) are given to that courier so it can deliver, and your order page may show the courier's name,
++          the delivery status, a tracking link and the rider's name and phone number. Product photos on a shop are
++          uploaded by the seller and stored by us; we do not load pictures from other websites on shop pages.
++        </p>
++      </section>
++
+       <section>
+         <h2 class="display text-2xl font-semibold text-ink">Data retention</h2>
+         <p class="mt-2 leading-relaxed">
+           We keep your business's records for as long as your account is active, so your bookkeeping history stays
+-          available to you. You can request deletion of your account and data at any time by contacting us below.
++          available to you. You can request deletion of your account and data at any time by contacting us below. For
++          people who order from a shop, the name, phone number, address and notes on a finished order are removed 24
++          months after the order's last update; the amounts and the shop's accounting records stay with the shop.
+         </p>
+       </section>
+ 

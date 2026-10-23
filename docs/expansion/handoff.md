@@ -39,7 +39,7 @@ Evidence with real command output: `test-evidence.md`. Self-checks with the fail
 4. Review the decisions in `decisions-final.md` (all OPEN items now have a decision); you still must: choose and contract the merchant-sales provider (OPEN-4), set plan prices (OPEN-5), get legal review of the seller terms and notices (OPEN-7, OPEN-8), submit the templates (OPEN-13), and run the confidence calibration (OPEN-14).
 5. Assign someone to each local-review item in `country-configuration-guide.md` and to the tax/legal review (OPEN-8).
 6. Have an accountant compare one real merchant's reports with their books; test the phone page on a real low-end phone over a throttled connection.
-7. Deploy the landing FAQ and privacy edits **at the time** shop orders and shopper messages are activated, not before.
+7. Deploy the landing FAQ and privacy edits **at the time** shop orders and shopper messages are activated, not before (they are held back: `landing-copy-for-activation.patch`; `git apply` it then).
 8. Disable any admin account that should not have access (`scripts/disableAdmin.ts`); keep `dailyClose` OFF.
 
 **pawaPay:** sandbox account and token; enable signed callbacks and set callback URLs in the dashboard; complete the ten scenarios in `runbooks/sandbox-verification.md`; KYB/partner approval and a production token when ready.

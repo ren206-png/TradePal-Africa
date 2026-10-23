@@ -41,3 +41,6 @@ That TradePal is "approved" by Meta, pawaPay or any regulator; that reports are 
 - Privacy page (`landing/src/pages/privacy.astro`): the one-message WhatsApp confirmation for shopper updates; removal of shopper personal details 24 months after an order; a new "Deliveries and photos" section (what a courier is given; photos are stored by us and no outside pictures load).
 - Seller terms and WhatsApp templates are drafts in `docs/expansion/drafts-for-review/`.
 - Deploy these with the shop and messaging activation, not before.
+
+## Held back from the 2026-10-23 release
+The shop and shopper-messaging wording in `landing/src/pages/privacy.astro` and `landing/src/components/FAQ.astro` was NOT published with the first release, because it describes features that are switched off (shop orders, shopper WhatsApp updates, couriers, photos, retention). It is saved as `docs/expansion/landing-copy-for-activation.patch`. At activation, run `git apply docs/expansion/landing-copy-for-activation.patch` from the repository root, check the build, and deploy the landing site BEFORE turning shopper messaging on. The How to use page and its video were published (they describe features that are live).
