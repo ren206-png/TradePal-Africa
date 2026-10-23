@@ -48,19 +48,21 @@ SCENES = [
          narration="Step two. Write down what happens, just like texting a friend. No forms. No app to install.",
          chat=[("out", "sold 2 bags of rice for 12000"), ("in", MONEY_SALE), ("out", "paid transport 1500"), ("in", "Logged expense of 1500.00 NGN.")]),
     dict(id="today", kind="chat", label="STEP 3", title="Check your numbers",
-         body=["At the end of the day,", "type /today to see your sales,", "expenses and payments."],
-         narration="Step three. At the end of the day, send slash today, to see your sales, your expenses, and what came in.",
-         chat=[("out", "/today"), ("in", "Today (Africa/Lagos):\nTransactions: 2\nSales: 12000.00 NGN\nExpenses: 1500.00 NGN\nPayments received: 0.00 NGN\nNet: 10500.00 NGN")]),
+         body=["At the end of the day,", "type today to see your sales,", "expenses and payments.", "The slash is optional."],
+         narration="Step three. At the end of the day, type today, to see your sales, your expenses, and what came in. You don't need the slash.",
+         chat=[("out", "today"), ("in", "Today (Africa/Lagos):\nTransactions: 2\nSales: 12000.00 NGN\nExpenses: 1500.00 NGN\nPayments received: 0.00 NGN\nNet: 10500.00 NGN")]),
     dict(id="debts", kind="chat", label="SELLING ON CREDIT", title="Know who owes you",
-         body=["/debt Amina 500  - note a debt", "/paid Amina 300  - record a payment", "/debts  - see everyone who owes you"],
-         narration="Selling on credit? Use slash debt to note who owes you. Slash paid when they pay. And slash debts to see everyone who still owes you.",
-         chat=[("out", "/debt Amina 500"), ("in", "Recorded: Amina owes 500.00 NGN."), ("out", "/paid Amina 300"), ("in", "Applied 300.00 NGN to Amina's debt. Remaining owed: 200.00 NGN."), ("out", "/debts"), ("in", "Who owes you: 200.00 NGN across 1 customer\nAmina: 200.00 NGN")]),
+         body=["debt Amina 500  - note a debt", "paid Amina 300  - record a payment", "debts  - see who owes you"],
+         narration="Selling on credit? Type debt, a name, and an amount, to note who owes you. Type paid when they pay. And type debts to see everyone who still owes you.",
+         chat=[("out", "debt Amina 500"), ("in", "Recorded: Amina owes 500.00 NGN.\n\n(I read that as: /debt Amina 500. Not what you meant? Send \"undo\".)"),
+               ("out", "paid Amina 300"), ("in", "Applied 300.00 NGN to Amina's debt. Remaining owed: 200.00 NGN.\n\n(I read that as: /paid Amina 300. Not what you meant? Send \"undo\".)"),
+               ("out", "debts"), ("in", "Who owes you: 200.00 NGN across 1 customer\nAmina: 200.00 NGN")]),
     dict(id="undo", kind="chat", label="STEP 4", title="Fix mistakes fast",
-         body=["Typed the wrong amount?", "Send /undo and the last entry", "is reversed. Nothing is silently deleted."],
-         narration="Step four. Made a mistake? Send slash undo, and the last entry is reversed. Nothing is silently deleted.",
-         chat=[("out", "sold rice for 120000"), ("in", "Logged sale of 120000.00 NGN."), ("out", "/undo"), ("in", "Undone: SALE of 120000.00 NGN.")]),
-    dict(id="outro", kind="outro", narration="Send slash help any time to see what else you can do. Start free on WhatsApp, at tradepal africa dot com.",
-         label="NEED A HAND?", title="Send /help any time", body=["It lists everything", "you can do."]),
+         body=["Typed the wrong amount?", "Send undo and the last entry", "is reversed. Nothing is silently deleted."],
+         narration="Step four. Made a mistake? Send undo, and the last entry is reversed. Nothing is silently deleted.",
+         chat=[("out", "sold rice for 120000"), ("in", "Logged sale of 120000.00 NGN."), ("out", "undo"), ("in", "Undone: SALE of 120000.00 NGN.")]),
+    dict(id="outro", kind="outro", narration="Send help any time to see what else you can do. Start free on WhatsApp, at tradepal africa dot com.",
+         label="NEED A HAND?", title="Send help any time", body=["It lists everything", "you can do."]),
 ]
 
 # ------------------------------------------------------------------------------------------------ geometry (1x units)
@@ -211,7 +213,7 @@ def caption(d, sc, t, dark=False, center=False, top=None):
         yy += 64
     yy += 14
     for i, b in enumerate(sc["body"]):
-        kind = "mono" if b.startswith("/") else "sans"
+        kind = "mono" if (b.startswith("/") or b.split(" ")[0] in ("debt", "paid", "debts")) and " - " in b else "sans"
         line(yy, b, kind, 24 if kind == "mono" else 28, "#cfe1d8" if dark else "#34463f", 0.6 + i * 0.35, anc, x)
         yy += 42
     return yy

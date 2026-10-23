@@ -147,7 +147,7 @@ describe("commands with a name or an amount, typed without the slash", () => {
   });
 
   it("tells the person how it was read, and how to check it when a record was written", async () => {
-    expect((await matchBareCommandWithArgs("paid Amina 300", lookups))!.hint).toBe('(I read that as: /paid Amina 300. Not what you meant? Check with /customer Amina.)');
+    expect((await matchBareCommandWithArgs("paid Amina 300", lookups))!.hint).toBe('(I read that as: /paid Amina 300. Not what you meant? Send "undo".)');
     expect((await matchBareCommandWithArgs("add staff 08031234567", lookups))!.hint).toBe("(I read that as: /addstaff 08031234567.)");
   });
 

@@ -2,7 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { getTenantScopedClient } from "../db/tenantScope.js";
-import { reverseTransaction, TransactionAlreadyReversedError } from "../domain/ledger.js";
+import { DebtHasPaymentsError, reverseTransaction, TransactionAlreadyReversedError } from "../domain/ledger.js";
 import { asyncHandler } from "./asyncHandler.js";
 import { correlationIdOf } from "./adminAudit.js";
 import type { AuthenticatedAdminRequest } from "./authMiddleware.js";
@@ -319,6 +319,10 @@ export function createAdminTransactionsRouter(prisma: PrismaClient, jwtSecret: s
       } catch (error) {
         if (error instanceof TransactionAlreadyReversedError) {
           res.status(409).json({ error: error.message, code: "ALREADY_REVERSED" });
+          return;
+        }
+        if (error instanceof DebtHasPaymentsError) {
+          res.status(409).json({ error: error.message, code: "DEBT_HAS_PAYMENTS" });
           return;
         }
         throw error;

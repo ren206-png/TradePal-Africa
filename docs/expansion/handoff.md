@@ -2,7 +2,7 @@
 
 Branch `expansion/phase-1` (local only: **not pushed, not merged, nothing deployed, no migration run against any real database**). Production is untouched. Date of this handoff: 2026-10-20.
 
-> **Update 2026-10-20 (second pass):** the owner's answers are applied (Flutterwave left alone, English only, daily close decided and made safe); bulk product editing + CSV, product photos and courier tracking were built; a real local PostgreSQL 18 ran the full suite and the migrations (it found and fixed two real problems); seller terms and WhatsApp templates are drafted for review in `drafts-for-review/`. Test counts: 124 backend files / 1,340 tests (7 only on a real server), 14 admin files / 59 tests.
+> **Update 2026-10-20 (second pass):** the owner's answers are applied (Flutterwave left alone, English only, daily close decided and made safe); bulk product editing + CSV, product photos and courier tracking were built; a real local PostgreSQL 18 ran the full suite and the migrations (it found and fixed two real problems); seller terms and WhatsApp templates are drafted for review in `drafts-for-review/`. Test counts (latest full run, in-process database): 124 backend files / 1,348 tests passed (7 real-server-only skipped), 14 admin files / 59 tests; the real-Postgres run (1,340 tests, three clean runs) predates the no-slash and undo changes. 2026-10-23: `undo` of a debt/payment now keeps the debt book in step with the ledger (see `progress.md`).
 
 > **Update 2026-10-20 (decisions pass):** every open decision was settled on the owner's behalf in `decisions-final.md`; remaining blockers are owner actions only (provider choice, pawaPay sandbox, templates, real Postgres). Added always-on behaviour is listed in `self-check-addendum-decisions.md`.
 

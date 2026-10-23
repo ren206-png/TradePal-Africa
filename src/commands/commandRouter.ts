@@ -1,6 +1,6 @@
 import { isProviderAllowedForPurpose, ONLINE_CUSTOMER_PAYMENTS_UNAVAILABLE_REPLY } from "../domain/paymentPurpose.js";
 import type { MerchantRole, PrismaClient } from "@prisma/client";
-import type { TenantScopedClient } from "../db/tenantScope.js";
+import { withScopedTransaction, type TenantScopedClient } from "../db/tenantScope.js";
 import {
   assertWithinQuotaIfEnabled,
   BILLING_QUOTA_FEATURE_FLAG_KEY,
@@ -18,7 +18,7 @@ import {
   setInventoryItemPrice,
   setLowStockThreshold,
 } from "../domain/inventory.js";
-import { reverseTransaction, TransactionAlreadyReversedError } from "../domain/ledger.js";
+import { DebtHasPaymentsError, reverseTransaction, TransactionAlreadyReversedError } from "../domain/ledger.js";
 import {
   addStaffMerchant,
   CannotRemoveOwnerError,
@@ -514,10 +514,40 @@ async function handleUndo(ctx: CommandContext): Promise<string> {
   if (!lastTransaction) return "Nothing to undo.";
 
   try {
-    await reverseTransaction(ctx.scopedPrisma, lastTransaction.id, "undone by merchant via /undo");
+    // One /paid can be split across several of a customer's debts (one payment entry per debt). That is ONE action for the owner, so
+    // undoing it takes back all of its parts together, never just one of them.
+    const parts = [lastTransaction];
+    if (lastTransaction.type === "PAYMENT_RECEIVED" && lastTransaction.whatsappMessageId && lastTransaction.customerId) {
+      const siblings = await ctx.scopedPrisma.transaction.findMany({
+        where: {
+          type: "PAYMENT_RECEIVED", whatsappMessageId: lastTransaction.whatsappMessageId, customerId: lastTransaction.customerId,
+          reversalOfTransactionId: null, reversedBy: null, NOT: { id: lastTransaction.id }, debtPayments: { some: {} },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      parts.push(...siblings);
+    }
+    await withScopedTransaction(ctx.scopedPrisma, async (db) => {
+      for (const t of parts) await reverseTransaction(db, t.id, "undone by merchant via /undo");
+    });
+    const total = parts.reduce((sum, t) => sum + t.amountMinor, 0n);
+    const amount = `${formatMoney(total, ctx.minorUnitExp)} ${ctx.currencyCode}`;
+    if (lastTransaction.type === "PAYMENT_RECEIVED" && lastTransaction.customerId) {
+      const customer = await ctx.scopedPrisma.customer.findUnique({ where: { id: lastTransaction.customerId } });
+      const owed = sumMoney((await listOpenDebtsForCustomer(ctx.scopedPrisma, lastTransaction.customerId)).map((d) => d.outstandingAmountMinor));
+      if (customer && (await ctx.scopedPrisma.debtPayment.count({ where: { transactionId: { in: parts.map((t) => t.id) } } })) > 0) {
+        return `Undone: payment of ${amount} from ${customer.name}. ${customer.name} owes ${formatMoney(owed, ctx.minorUnitExp)} ${ctx.currencyCode} again.`;
+      }
+    }
+    if (lastTransaction.type === "DEBT_NOTE" && lastTransaction.customerId) {
+      const customer = await ctx.scopedPrisma.customer.findUnique({ where: { id: lastTransaction.customerId } });
+      if (customer && (await ctx.scopedPrisma.debt.count({ where: { originTransactionId: lastTransaction.id } })) > 0) {
+        return `Undone: debt of ${amount} for ${customer.name}. That debt is removed.`;
+      }
+    }
     return `Undone: ${lastTransaction.type} of ${formatMoney(lastTransaction.amountMinor, ctx.minorUnitExp)} ${ctx.currencyCode}.`;
   } catch (error) {
-    if (error instanceof TransactionAlreadyReversedError) return error.message;
+    if (error instanceof TransactionAlreadyReversedError || error instanceof DebtHasPaymentsError) return error.message;
     throw error;
   }
 }

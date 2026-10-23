@@ -113,7 +113,7 @@ export async function matchBareCommandWithArgs(text: string, lookups: BareArgsLo
   const t = tidy(text).replace(/[.!?]+$/, "");
   if (!t || t.startsWith("/") || t.length > 160) return null;
   let m: RegExpExecArray | null;
-  const out = (command: string, check?: string): BareArgsMatch => ({ command, hint: `(I read that as: ${command}.${check ? ` Not what you meant? Check with ${check}.` : ""})` });
+  const out = (command: string, undoable = false): BareArgsMatch => ({ command, hint: `(I read that as: ${command}.${undoable ? ' Not what you meant? Send "undo".' : ""})` });
 
   // read-only lookups
   if ((m = /^customer\s+(.+)$/i.exec(t))) {
@@ -125,11 +125,11 @@ export async function matchBareCommandWithArgs(text: string, lookups: BareArgsLo
   if ((m = new RegExp(`^debt\\s+(.+?)\\s+(${AMOUNT})(\\s+due\\s+\\d{4}-\\d{2}-\\d{2})?$`, "i").exec(t))) {
     const name = m[1]!;
     if (SENTENCE_WORDS.test(name) || name.split(" ").length > 5) return null;
-    return out(`/debt ${name} ${amountOf(m[2]!)}${m[3] ?? ""}`, `/customer ${name}`);
+    return out(`/debt ${name} ${amountOf(m[2]!)}${m[3] ?? ""}`, true);
   }
   if ((m = new RegExp(`^paid\\s+(.+?)\\s+(${AMOUNT})$`, "i").exec(t))) {
     const name = m[1]!;
-    return (await lookups.customerHasOpenDebt(name)) ? out(`/paid ${name} ${amountOf(m[2]!)}`, `/customer ${name}`) : null;
+    return (await lookups.customerHasOpenDebt(name)) ? out(`/paid ${name} ${amountOf(m[2]!)}`, true) : null;
   }
   // staff (the command itself still checks that the sender is the owner)
   if ((m = new RegExp(`^add\\s*staff\\s+(${PHONE})$`, "i").exec(t))) return out(`/addstaff ${m[1]}`);
