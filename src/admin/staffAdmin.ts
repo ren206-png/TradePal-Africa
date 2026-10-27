@@ -273,6 +273,8 @@ const acceptBody = z.object({ token: z.string().min(20).max(200), name: z.string
 const eventsQuery = z.object({
   adminUserId: z.string().uuid().optional(), type: z.string().regex(/^[A-Z_]{3,60}$/).optional(), result: z.enum(["SUCCESS", "FAILURE", "DENIED"]).optional(),
   from: z.string().datetime().optional(), to: z.string().datetime().optional(), correlationId: z.string().max(64).optional(),
+  // the paging keys (take, skip) are read separately by parsePaginationParams; every other unknown key is rejected
+  take: z.string().optional(), skip: z.string().optional(),
 }).strict();
 
 export interface StaffRouterOptions {

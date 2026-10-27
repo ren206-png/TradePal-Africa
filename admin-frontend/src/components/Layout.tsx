@@ -30,10 +30,11 @@ export function Layout({ children }: { children: ReactNode }) {
   const { admin, logout } = useAuth();
   // Hide what this person cannot use (the server enforces it either way). While the list loads, or if it cannot be read, nothing is hidden.
   const [permissions, setPermissions] = useState<string[] | null>(null);
+  const [environment, setEnvironment] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    apiFetch<{ permissions: string[] }>("/admin/me/permissions")
-      .then((r) => { if (!cancelled) setPermissions(r.permissions); })
+    apiFetch<{ permissions: string[]; environment?: string }>("/admin/me/permissions")
+      .then((r) => { if (!cancelled) { setPermissions(r.permissions); setEnvironment(r.environment ?? null); } })
       .catch(() => undefined);
     return () => { cancelled = true; };
   }, [admin?.id]);
@@ -47,6 +48,7 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="app-shell">
       <header className="app-header">
         <span className="app-title">TradePal Admin</span>
+        {environment ? <span className={`env-badge ${environment === "production" ? "env-production" : "env-other"}`} aria-label="Environment">{environment === "production" ? "PRODUCTION" : environment.toUpperCase()}</span> : null}
         <nav>
           {visible.map((item) => (
             <NavLink

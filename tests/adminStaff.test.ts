@@ -189,6 +189,9 @@ describe("roles and accounts", () => {
     const events = await h.http().get("/admin/security-events?result=FAILURE").set(h.auth(a.token));
     expect(events.status).toBe(200);
     expect(events.body.events.every((e: { result: string }) => e.result === "FAILURE")).toBe(true);
+    // paging works, and an unknown filter key is refused rather than silently ignored
+    expect((await h.http().get("/admin/security-events?take=5&skip=0").set(h.auth(a.token))).status).toBe(200);
+    expect((await h.http().get("/admin/security-events?surprise=1").set(h.auth(a.token))).status).toBe(400);
     const sup = await h.signedIn("support@t.test");
     expect((await h.http().get("/admin/staff").set(h.auth(sup.token))).status).toBe(403);
     expect((await h.http().get("/admin/security-events").set(h.auth(sup.token))).status).toBe(403);

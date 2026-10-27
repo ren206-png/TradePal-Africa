@@ -112,4 +112,18 @@ describe("AuthContext", () => {
 
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("logged-out"));
   });
+
+  it("signing out wipes the token, the profile and the authenticator state from the browser", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("tradepal_admin_token", "t");
+    localStorage.setItem("tradepal_admin_user", JSON.stringify({ id: "admin-1", email: "owner@example.com", name: "Owner", role: "SUPER_ADMIN" }));
+    localStorage.setItem("tradepal_admin_mfa", "VERIFIED");
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ message: "Logged out." }));
+    render(<AuthProvider><Consumer /></AuthProvider>);
+    await user.click(screen.getByText("Logout"));
+    expect(localStorage.getItem("tradepal_admin_token")).toBeNull();
+    expect(localStorage.getItem("tradepal_admin_user")).toBeNull();
+    expect(localStorage.getItem("tradepal_admin_mfa")).toBeNull();
+    expect(screen.getByTestId("status")).toHaveTextContent("logged-out");
+  });
 });

@@ -58,13 +58,15 @@ Existing permissions keep their names: for example `admin:manage_admins` covers 
 
 ## Field visibility
 
-| Data | Default | Shown unmasked when |
+What is enforced today, and what is only defined:
+
+| Data | Enforced today | Not built yet |
 |---|---|---|
-| Phone numbers, shopper names | masked (last 3 digits) | role holds `admin:unmask_pii`, a reason is given, step-up passes; each reveal is an audit row |
-| WhatsApp message bodies | not shown | role holds `admin:read_whatsapp_conversation`, one conversation at a time, reason given; never across tenants in one view |
-| A merchant's books (sales, debts, stock values) | not shown | `admin:view_merchant_financials` and, while flag `adminSupportAccessRequired` is on, an open support-access window with a recorded reason |
-| Staff password hashes, second-factor secrets, recovery codes, token hashes | never | never (no API returns them; they are not selected by any admin query) |
-| Secrets and keys | presence only ("configured / not configured"), never the value | never |
+| Phone numbers, shopper names | The messaging panel already masks numbers (its own design). The other admin screens show them as they always did | A platform-wide mask-by-default with an audited, reasoned unmask. The permission `admin:unmask_pii` exists and is held by the roles listed above, but **no route uses it yet** |
+| WhatsApp message bodies | Never returned by any admin route | A "read one conversation" route. The permission `admin:read_whatsapp_conversation` exists; **no route uses it yet** |
+| A merchant's books (sales, debts, stock values) | `admin:view_merchant_financials` and, while flag `adminSupportAccessRequired` is on, an open support-access window with a recorded reason (each read is an audit row) | the flag defaults off in the database: turn it on at release if you want reasons enforced |
+| Staff password hashes, second-factor secrets, recovery codes, token hashes | Never returned: no admin query selects them (checked by `tests/adminStaff.test.ts` on the staff list) | |
+| Secrets and keys | Presence only ("configured / not configured"), never a value or part of one (checked by `tests/adminHealthAudit.test.ts`) | |
 
 ## Boundaries that no permission can cross
 

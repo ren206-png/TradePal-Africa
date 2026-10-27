@@ -1,6 +1,6 @@
 # Admin console: progress
 
-Branch: `feat/admin-console`. Last updated: 2026-10-27 (end of Phase 3). Status words: **done** = built and tested locally; **not started**; **stub** = a truthful "not available" state. Nothing here is deployed or run in production.
+Branch: `feat/admin-console`. Last updated: 2026-10-27 (end of Phase 5). Status words: **done** = built and tested locally; **not started**; **stub** = a truthful "not available" state. Nothing here is deployed or run in production.
 
 Design decisions taken (defaults, confirmed by "go ahead" on 2026-10-27; revisit at any point): extend the existing admin system, do not rebuild; keep `AdminUser` as the staff identity; add `FINANCE_ADMIN` and `MODERATOR` to the existing four roles and use the brief's names as labels; keep the single `admin:` permission vocabulary.
 
@@ -69,20 +69,63 @@ The Phase 0 audit found most modules already existed, so Phase 3 closed gaps in 
 
 Other Phase 3 changes: per-module switches (`ADMIN_MODULE_*`, all off by default; the module of every route is decided in one place, `src/admin/moduleGate.ts`, and a route with no rule is closed by default); the console hides navigation a person cannot use (the four original roles keep the items they always had); `tests/adminModules.test.ts` pins exactly which routes the moderator and finance roles can reach.
 
-## Checks run at the end of Phase 1 (2026-10-27)
+## Phases 4 and 5: hardening, tests, handoff
+
+| Item | Result |
+|---|---|
+| Atomic change + audit record | Done for staff, invitation, ownership and refund steps (same transaction). Refund execution is the one two-step case (provider call, then mark), documented in `security.md` |
+| Input validation | `zod` on the new routes, unknown keys rejected |
+| UX | Console: authenticator, recovery, invitation, staff access and refund screens; navigation hides what a person cannot use; environment badge; stale-session and re-confirmation prompts. Not built: a persistent "selected organization / currency / scope" header (the console has no global organization selector) |
+| Adversarial self-check | 14 scenarios, each with a test or an existing test cited: `security.md` |
+| Site headers | Added in `admin-frontend/vercel.json`; no Content-Security-Policy (follow-up) |
+
+### The 16 verification items
+
+| # | Item | Test evidence |
+|---|---|---|
+| 1 | Anonymous, consumer and merchant cannot reach admin pages, APIs, exports, storage or privileged database operations | `securityAdminRoutes` (every route rejects every way of not being signed in, read from the router itself), `adminHardening` 2, `adminSignIn` (audience, no session), `dbProtection` and `adminFoundation` (database refusals, row-level isolation) |
+| 2 | Forged roles, profile edits, tenant ids and direct URLs cannot escalate | `adminHardening` 1, `securityAdminRoutes` (role lowered, account removed) |
+| 3 | MFA, recovery, invitation expiry and reuse, safe redirect, session lifetime, re-auth windows, rate limits | `adminSignIn`, `adminStaff`, `LoginPage.test.tsx` |
+| 4 | Revoked or demoted staff lose permissions on the next request; queued actions are re-validated | `adminStaff`, `adminRefunds`, `adminHardening` 3 |
+| 5 | Every role's allowed actions succeed and denied ones fail | `permissions`, `adminModules` (pinned inventory for the two new roles), the existing per-panel admin tests for the original four. **Field-level masking and exports by role: not built** (see permission-matrix.md) |
+| 6 | Merchant A cannot reach merchant B's private records through any path this task introduced | No new route takes a merchant identity; the new admin routes are platform-level. Existing tenant isolation tests unchanged and passing |
+| 7 | Last-owner protection under concurrent demotion | `adminFoundation` and `adminHardening` 4 (real Postgres; skipped in the in-process run) |
+| 8 | Duplicate callbacks, retries, approvals and refund requests cannot duplicate effects or exceed refundable balances | `adminRefunds`, `paymentWebhook`, `adminPayments` |
+| 9 | pawaPay billing and merchant sales stay separate; no console action bypasses activation | `adminHardening` 9, `purposeBoundary`, `billingRenewal` |
+| 10 | Subscription expiry and provider-disable switches preserve servicing of existing transactions | Existing billing tests, unchanged and passing (`billingRenewal`, `billingEntitlements`) |
+| 11 | Suspended listings are blocked via public direct URLs as well as search | Existing marketplace and storefront tests, unchanged and passing; not re-examined separately by this task |
+| 12 | Sensitive actions emit protected audit events without credentials | `adminStaff`, `adminSignIn` (no secrets in any security row), `adminRefunds` |
+| 13 | Sign-out, shared device, cache headers, private downloads | `adminHardening` 10 and 11, `AuthContext.test.tsx` |
+| 14 | Existing merchant sign-in, storefronts, checkout, subscriptions and WhatsApp workflows pass regression | The whole backend suite (below) |
+| 15 | With `ADMIN_CONSOLE_ENABLED` unset every admin route and job is inert | `adminStaff` (master switch). No admin background job exists in this codebase, so there is none to silence |
+| 16 | Route inventory finds no unguarded route | `adminModules` (every route has a module or is self-service; the module of an unknown path is closed) and `securityAdminRoutes` (every route rejects an unauthenticated caller) |
+
+## Final checks (2026-10-27)
 
 | Command | Result |
 |---|---|
-| `tsc` type check (the stray ` 2` duplicate files excluded with a temporary config; see risk R1) | exit 0 |
-| `tsc` build to a temp folder (same exclusion) | exit 0 |
-| `npx vitest run` (in-process database) | 1362 passed, 2 failed, 8 skipped (126 files) |
-| `TEST_PG_ADMIN_URL=... npx vitest run --no-file-parallelism` (real Postgres 18.4, scratch server) | 1370 passed, 2 failed, 0 skipped, including the concurrent last-owner race |
-| `scripts/rehearseMigrations.sh` (non-superuser, empty database) | REHEARSAL OK |
-| Upgrade rehearsal in one transaction on a database with existing staff and audit rows | applied; rows unchanged |
-| Lint | not run: the repo has no lint script |
+| `tsc` type check (stray ` 2` duplicate files excluded with a temporary config) | exit 0 |
+| `npx vitest run` (in-process database) | 1432 passed, **2 failed (pre-existing)**, 9 skipped |
+| `TEST_PG_ADMIN_URL=... npx vitest run --no-file-parallelism` (real Postgres 18.4, scratch server) | 1441 passed, **2 failed (pre-existing)**, 0 skipped. This run includes the concurrent last-owner races |
+| `admin-frontend`: `npx vitest run`, `npx tsc -b`, `npx vite build` | 84 tests passed; type check and build pass |
+| `scripts/rehearseMigrations.sh` (non-superuser, full chain including the three admin migrations) | REHEARSAL OK |
+| Owner commands end to end against a scratch database | refused without the gate; refused on a mismatched confirm; promoted once; no-op the second time; MFA reset worked; audit rows and security events written with actor `system:bootstrap` |
+| Lint | not run: the repo has no lint script (the frontend has `oxlint` configured but it was not run) |
+| Production build to a temp folder | passed earlier (Phase 1); not re-run after Phases 2 to 4 beyond the type check |
 
-The two failures are the same pre-existing ones as in Phase 0 (a stray duplicate `transport 2.ts` file; the date-pinned `reorderTier1` test). With the plain `tsc -p tsconfig.json` the stray `src/auth/permissions 2.ts` duplicate now also fails to compile (it has the old four-role matrix), which is risk R1 in action: those untracked duplicates should be deleted.
+The two failing tests are the same ones found in Phase 0 and are unrelated: `tests/messaging.test.ts` (a stray duplicate `transport 2.ts`) and `tests/reorderTier1.test.ts` (a date-pinned fixture).
 
-## Remaining work
+## What shipped, by module
 
-Phase 2 (sign-in, MFA, recovery, bootstrap command, invitations, ownership transfer, session rules, security-event writers); Phase 3 (module gaps in the existing admin API; refunds under two-person approval; exports; flags); Phase 4 (hardening, adversarial checks); Phase 5 (tests, handoff docs). Owner-side items so far: none.
+Shipped: Staff access, Audit, System health, Refund requests (two-person). Partly: Merchants, Subscriptions, Payments, Config. Existing and unchanged apart from least-privilege guards: Moderation, Orders and support, WhatsApp. **Not built (truthful `GET /admin/modules` states):** verification evidence for merchants, complimentary access grants workflow, validated configuration settings, exports with expiring downloads, platform-wide PII masking with audited unmask, a read-one-conversation view, emailing of invitations.
+
+## Remaining owner actions
+
+1. Decide about the 236 stray duplicate `* 2.*` files in the working folder (they break one test and the plain `tsc`); they are untracked and were not touched.
+2. Set `ADMIN_MFA_ENCRYPTION_KEY` (generate it yourself), then the module switches you want, then `ADMIN_FRONTEND_PUBLIC_URL`, then `ADMIN_CONSOLE_ENABLED=true`, in that order (`release-runbook.md`). Until then the live admin API is switched off by design.
+3. Each existing owner signs in, sets up the authenticator and saves the recovery codes.
+4. Take a fresh backup, confirm the Postgres version is 12 or newer, and rehearse on a restored copy of that backup before release.
+5. Deploy the admin site (so `vercel.json` and the new screens go live).
+6. Decide whether to switch on `adminStepUp` and `adminSupportAccessRequired` (database flags, both off today).
+7. Do not set `ADMIN_REFUND_EXECUTION_ENABLED` until real refunds are meant to move money.
+8. Plan a human penetration test and add a Content-Security-Policy for the admin site.

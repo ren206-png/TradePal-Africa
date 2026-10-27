@@ -75,7 +75,8 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
       res.status(401).json({ error: "Not authenticated." });
       return;
     }
-    res.json({ role: admin.role, permissions: platformPermissionsFor(admin.role) });
+    // `environment` lets the console show which deployment the person is working in (a persistent badge).
+    res.json({ role: admin.role, permissions: platformPermissionsFor(admin.role), environment: process.env["NODE_ENV"] ?? "development" });
   });
 
   // Fresh password confirmation -> short-lived step-up token (header x-admin-step-up on sensitive calls).
