@@ -1,6 +1,6 @@
 import { MERCHANT_PERMISSIONS, PLATFORM_PERMISSIONS, PLATFORM_STEP_UP_PERMISSIONS, merchantPermissionsFor, platformPermissionsFor } from "../src/auth/permissions.js";
 const mroles = ["OWNER","MANAGER","SALES_CLERK","INVENTORY_OPERATOR","FINANCE_OPERATOR","RESTRICTED_SUPPORT"] as const;
-const proles = ["SUPER_ADMIN","OPERATOR","SUPPORT","ANALYST"] as const;
+const proles = ["SUPER_ADMIN","OPERATOR","SUPPORT","ANALYST","FINANCE_ADMIN","MODERATOR"] as const;
 const mark = (b: boolean) => (b ? "yes" : "-");
 let out = "# Permission matrix\n\nGenerated from `src/auth/permissions.ts` by `npx tsx scripts/genPermissionMatrix.ts > docs/expansion/permission-matrix.md`. The code is the source of truth; `tests/permissions.test.ts` pins it. Authorization asks `canMerchant(role, permission)` / `canPlatform(role, permission)`, never role names.\n\n";
 out += "Legacy WhatsApp roles map as: OWNER -> OWNER, STAFF -> SALES_CLERK (`membershipRoleForLegacyMerchantRole`).\n\n## Merchant roles (inside one business)\n\n";

@@ -11,7 +11,7 @@ import {
 } from "../src/auth/permissions.js";
 
 const MERCHANT_ROLES = ["OWNER", "MANAGER", "SALES_CLERK", "INVENTORY_OPERATOR", "FINANCE_OPERATOR", "RESTRICTED_SUPPORT"] as const;
-const PLATFORM_ROLES = ["SUPER_ADMIN", "OPERATOR", "SUPPORT", "ANALYST"] as const;
+const PLATFORM_ROLES = ["SUPER_ADMIN", "OPERATOR", "SUPPORT", "ANALYST", "FINANCE_ADMIN", "MODERATOR"] as const;
 
 describe("merchant permission matrix", () => {
   it("gives the owner everything and keeps owner-only powers owner-only", () => {
@@ -75,6 +75,27 @@ describe("platform-admin permission matrix", () => {
       if (readOnly.includes(permission)) expect(PLATFORM_STEP_UP_PERMISSIONS.has(permission), permission).toBe(false);
       else expect(PLATFORM_STEP_UP_PERMISSIONS.has(permission), permission).toBe(true);
     }
+  });
+
+  it("admin-console foundation: owner-only powers, the two-person refund split, and the least-privilege new roles", () => {
+    for (const ownerOnly of ["admin:manage_config", "admin:transfer_ownership"] as const) {
+      expect(PLATFORM_ROLES.filter((r) => canPlatform(r, ownerOnly)), ownerOnly).toEqual(["SUPER_ADMIN"]);
+    }
+    // refunds: requesting is wider than approving, approving and executing sit with finance and the owner, support never refunds
+    expect(PLATFORM_ROLES.filter((r) => canPlatform(r, "admin:request_refund"))).toEqual(["SUPER_ADMIN", "OPERATOR", "FINANCE_ADMIN"]);
+    expect(PLATFORM_ROLES.filter((r) => canPlatform(r, "admin:approve_refund"))).toEqual(["SUPER_ADMIN", "FINANCE_ADMIN"]);
+    expect(PLATFORM_ROLES.filter((r) => canPlatform(r, "admin:execute_refund"))).toEqual(["SUPER_ADMIN", "FINANCE_ADMIN"]);
+    expect(canPlatform("SUPPORT", "admin:request_refund")).toBe(false);
+    // finance: no staff powers, no flags, no moderation, no messaging
+    for (const p of ["admin:manage_admins", "admin:manage_flags", "admin:moderate_listings", "admin:manage_messaging", "admin:view_staff"] as const) expect(canPlatform("FINANCE_ADMIN", p), p).toBe(false);
+    // moderator: no financial, support, messaging, staff or export access at all
+    expect([...platformPermissionsFor("MODERATOR")].sort()).toEqual(["admin:moderate_listings", "admin:view_moderation", "admin:view_orgs", "admin:view_overview"]);
+    // the auditor (ANALYST) sees staff and security events but cannot change or export anything
+    expect(canPlatform("ANALYST", "admin:view_security_events")).toBe(true);
+    expect(canPlatform("ANALYST", "admin:create_export")).toBe(false);
+    // support can read a conversation or unmask a number (audited, step-up), nobody else except the owner
+    expect(PLATFORM_ROLES.filter((r) => canPlatform(r, "admin:read_whatsapp_conversation"))).toEqual(["SUPER_ADMIN", "SUPPORT"]);
+    expect(PLATFORM_ROLES.filter((r) => canPlatform(r, "admin:unmask_pii"))).toEqual(["SUPER_ADMIN", "SUPPORT"]);
   });
 
   it("never gives a platform role a merchant permission (an admin is not a super-merchant)", () => {

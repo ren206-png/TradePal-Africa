@@ -40,37 +40,49 @@ Legacy WhatsApp roles map as: OWNER -> OWNER, STAFF -> SALES_CLERK (`membershipR
 
 ## Platform admin roles (TradePal staff; no merchant permission by default)
 
-| Permission | SUPER_ADMIN | OPERATOR | SUPPORT | ANALYST | Step-up (flag `adminStepUp`) |
-|---|---|---|---|---|---|
-| `admin:view_overview` | yes | yes | yes | yes | - |
-| `admin:view_system_health` | yes | yes | - | yes | - |
-| `admin:view_orgs` | yes | yes | yes | yes | - |
-| `admin:view_audit_log` | yes | yes | yes | yes | - |
-| `admin:view_merchant_financials` | yes | yes | yes | - | yes |
-| `admin:manage_flags` | yes | yes | - | - | yes |
-| `admin:manage_global_flags` | yes | - | - | - | yes |
-| `admin:suspend_org` | yes | - | - | - | yes |
-| `admin:revoke_staff` | yes | - | yes | - | yes |
-| `admin:reverse_transaction` | yes | yes | - | - | yes |
-| `admin:resolve_exception` | yes | yes | - | - | yes |
-| `admin:replay_dead_letter` | yes | yes | - | - | yes |
-| `admin:pause_job_class` | yes | yes | - | - | yes |
-| `admin:manage_subscriptions` | yes | - | - | - | yes |
-| `admin:moderate_listings` | yes | yes | - | - | yes |
-| `admin:resolve_support_case` | yes | yes | yes | - | yes |
-| `admin:delete_synthetic_org` | yes | - | - | - | yes |
-| `admin:flip_forecast_gate` | yes | - | - | - | yes |
-| `admin:set_forecast_thresholds` | yes | - | - | - | yes |
-| `admin:view_reorder` | yes | yes | - | - | - |
-| `admin:view_support_cases` | yes | yes | yes | - | - |
-| `admin:view_payments` | yes | yes | - | - | - |
-| `admin:view_moderation` | yes | yes | yes | - | - |
-| `admin:view_subscriptions` | yes | yes | yes | - | - |
-| `admin:view_messaging` | yes | yes | yes | - | - |
-| `admin:manage_messaging` | yes | yes | - | - | yes |
-| `admin:approve_templates` | yes | - | - | - | yes |
-| `admin:manage_payment_connections` | yes | - | - | - | yes |
-| `admin:manage_admins` | yes | - | - | - | yes |
+| Permission | SUPER_ADMIN | OPERATOR | SUPPORT | ANALYST | FINANCE_ADMIN | MODERATOR | Step-up (flag `adminStepUp`) |
+|---|---|---|---|---|---|---|---|
+| `admin:view_overview` | yes | yes | yes | yes | yes | yes | - |
+| `admin:view_system_health` | yes | yes | - | yes | - | - | - |
+| `admin:view_orgs` | yes | yes | yes | yes | yes | yes | - |
+| `admin:view_audit_log` | yes | yes | yes | yes | - | - | - |
+| `admin:view_merchant_financials` | yes | yes | yes | - | yes | - | yes |
+| `admin:manage_flags` | yes | yes | - | - | - | - | yes |
+| `admin:manage_global_flags` | yes | - | - | - | - | - | yes |
+| `admin:suspend_org` | yes | - | - | - | - | - | yes |
+| `admin:revoke_staff` | yes | - | yes | - | - | - | yes |
+| `admin:reverse_transaction` | yes | yes | - | - | - | - | yes |
+| `admin:resolve_exception` | yes | yes | - | - | yes | - | yes |
+| `admin:replay_dead_letter` | yes | yes | - | - | - | - | yes |
+| `admin:pause_job_class` | yes | yes | - | - | - | - | yes |
+| `admin:manage_subscriptions` | yes | - | - | - | yes | - | yes |
+| `admin:moderate_listings` | yes | yes | - | - | - | yes | yes |
+| `admin:resolve_support_case` | yes | yes | yes | - | - | - | yes |
+| `admin:delete_synthetic_org` | yes | - | - | - | - | - | yes |
+| `admin:flip_forecast_gate` | yes | - | - | - | - | - | yes |
+| `admin:set_forecast_thresholds` | yes | - | - | - | - | - | yes |
+| `admin:view_reorder` | yes | yes | - | - | - | - | - |
+| `admin:view_support_cases` | yes | yes | yes | - | - | - | - |
+| `admin:view_payments` | yes | yes | - | - | yes | - | - |
+| `admin:view_moderation` | yes | yes | yes | - | - | yes | - |
+| `admin:view_subscriptions` | yes | yes | yes | - | yes | - | - |
+| `admin:view_messaging` | yes | yes | yes | - | - | - | - |
+| `admin:manage_messaging` | yes | yes | - | - | - | - | yes |
+| `admin:approve_templates` | yes | - | - | - | - | - | yes |
+| `admin:manage_payment_connections` | yes | - | - | - | - | - | yes |
+| `admin:manage_admins` | yes | - | - | - | - | - | yes |
+| `admin:view_staff` | yes | - | - | yes | - | - | - |
+| `admin:view_security_events` | yes | - | - | yes | - | - | - |
+| `admin:view_reports` | yes | yes | - | yes | yes | - | - |
+| `admin:create_export` | yes | yes | - | - | yes | - | yes |
+| `admin:read_whatsapp_conversation` | yes | - | yes | - | - | - | yes |
+| `admin:unmask_pii` | yes | - | yes | - | - | - | yes |
+| `admin:request_refund` | yes | yes | - | - | yes | - | yes |
+| `admin:approve_refund` | yes | - | - | - | yes | - | yes |
+| `admin:execute_refund` | yes | - | - | - | yes | - | yes |
+| `admin:grant_entitlement` | yes | - | - | - | yes | - | yes |
+| `admin:manage_config` | yes | - | - | - | - | - | yes |
+| `admin:transfer_ownership` | yes | - | - | - | - | - | yes |
 
 Notes: viewing a merchant's financial data additionally needs a recorded support-access reason when flag `adminSupportAccessRequired` is on. The existing admin routes keep their original role checks (SUPER_ADMIN / SUPPORT); the platform permission is layered on top for the new panels. Regenerate with the command above if the matrix changes.
 

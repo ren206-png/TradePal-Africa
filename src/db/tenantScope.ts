@@ -106,6 +106,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   "OfflineDraft",
   // Product photos belong to one business.
   "ProductImage",
+  // Admin console foundation: a complimentary-access grant belongs to one business.
+  "EntitlementGrant",
   // Couriers: delivery jobs for store orders belong to one business.
   "DeliveryShipment",
   "DeliveryShipmentEvent",

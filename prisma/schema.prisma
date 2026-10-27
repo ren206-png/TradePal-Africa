@@ -197,6 +197,7 @@ model Business {
   billingAllocations   BillingAllocation[]
   billingRefunds       BillingRefund[]
   entitlementEvents    EntitlementEvent[]
+  entitlementGrants    EntitlementGrant[]
   contactConsents      ContactConsent[]
   contactConsentEvents ContactConsentEvent[]
   pendingActions       PendingAction[]
@@ -332,6 +333,10 @@ enum AdminRole {
   SUPPORT
   /// Platform operator (expansion Phase 1): runs day-to-day operations (replays, exception queues, flags) without owner-only powers.
   OPERATOR
+  /// Admin-console foundation: subscription billing, reconciliation, refunds under two-person approval. No staff privilege grants.
+  FINANCE_ADMIN
+  /// Admin-console foundation: listings, reports, moderation decisions and appeals. No private financial access.
+  MODERATOR
 }
 
 /// Internal TradePal staff — never tenant-scoped, backs the Phase 2 admin dashboard (read-only first, RBAC before any write).
@@ -345,6 +350,206 @@ model AdminUser {
   createdAt       DateTime        @default(now()) @db.Timestamptz()
   /// Phase 8: a disabled admin cannot log in and any token they already hold stops working on its next request. Never deleted (audit rows point at them).
   disabledAt      DateTime?       @db.Timestamptz()
+  /// Admin-console foundation. Bumped on every role change so a queued job can tell the actor's role changed since it was queued.
+  roleVersion     Int             @default(1)
+  /// Once set, this person must enrol and pass MFA to reach anything but the enrolment and sign-out routes.
+  mfaRequiredAt   DateTime?       @db.Timestamptz()
+  lastSignInAt    DateTime?       @db.Timestamptz()
+  /// Who created or invited this account (null for accounts created by the provisioning script before this column existed).
+  createdById     String?
+
+  sessions      AdminSession[]
+  mfaFactors    AdminMfaFactor[]
+  recoveryCodes AdminRecoveryCode[]
+}
+
+/// Admin-console foundation: a server-side record of one admin sign-in. The access token's `jti` is this row's id, so idle timeout,
+/// the absolute lifetime, "revoke every session of this admin" and the re-authentication window can all be decided on the server.
+/// Distinct from consumer and merchant sessions: `audience` is always "admin".
+model AdminSession {
+  id                String    @id @default(uuid())
+  adminUserId       String
+  audience          String    @default("admin")
+  createdAt         DateTime  @default(now()) @db.Timestamptz()
+  lastSeenAt        DateTime  @default(now()) @db.Timestamptz()
+  absoluteExpiresAt DateTime  @db.Timestamptz()
+  /// Set when the second factor was passed in this session. Before it is set only enrolment, challenge and sign-out are reachable.
+  mfaVerifiedAt     DateTime? @db.Timestamptz()
+  /// Last fresh password + second-factor confirmation, for the "recent re-authentication" rule on sensitive actions.
+  reauthAt          DateTime? @db.Timestamptz()
+  revokedAt         DateTime? @db.Timestamptz()
+  revokedReason     String?
+  /// Keyed hashes only; the raw address and user agent are never stored.
+  ipHash            String?
+  userAgentHash     String?
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@index([adminUserId, revokedAt])
+  @@index([absoluteExpiresAt])
+}
+
+/// A TOTP second factor. The secret is stored encrypted (never in the clear); `lastUsedCounter` is the time step of the last accepted
+/// code, so a code cannot be used twice. At most one live factor per admin (partial unique index in the migration).
+model AdminMfaFactor {
+  id               String    @id @default(uuid())
+  adminUserId      String
+  secretCiphertext String
+  algorithm        String    @default("TOTP-SHA1")
+  digits           Int       @default(6)
+  periodSeconds    Int       @default(30)
+  createdAt        DateTime  @default(now()) @db.Timestamptz()
+  /// Null until the person proves the authenticator works by entering a first code.
+  confirmedAt      DateTime? @db.Timestamptz()
+  lastUsedCounter  BigInt?
+  disabledAt       DateTime? @db.Timestamptz()
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@index([adminUserId])
+}
+
+/// One single-use recovery code (only its hash is stored). A batch is replaced as a whole when the person asks for new codes.
+model AdminRecoveryCode {
+  id          String    @id @default(uuid())
+  adminUserId String
+  batchId     String
+  codeHash    String
+  createdAt   DateTime  @default(now()) @db.Timestamptz()
+  usedAt      DateTime? @db.Timestamptz()
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@index([adminUserId, usedAt])
+  @@index([batchId])
+}
+
+/// An email-bound, single-use, expiring invitation to join the platform staff. Only the hash of the token is stored.
+model StaffInvitation {
+  id           String    @id @default(uuid())
+  email        String
+  role         AdminRole
+  tokenHash    String    @unique
+  invitedById  String
+  createdAt    DateTime  @default(now()) @db.Timestamptz()
+  expiresAt    DateTime  @db.Timestamptz()
+  acceptedAt   DateTime? @db.Timestamptz()
+  acceptedById String?
+  revokedAt    DateTime? @db.Timestamptz()
+
+  @@index([email])
+  @@index([expiresAt])
+}
+
+enum OwnershipTransferStatus {
+  INITIATED
+  ACCEPTED
+  CANCELLED
+  EXPIRED
+}
+
+/// Two-step ownership transfer: the current owner initiates, the named person accepts; both need a recent re-authentication.
+model OwnershipTransfer {
+  id          String                  @id @default(uuid())
+  fromAdminId String
+  toAdminId   String
+  status      OwnershipTransferStatus @default(INITIATED)
+  initiatedAt DateTime                @default(now()) @db.Timestamptz()
+  expiresAt   DateTime                @db.Timestamptz()
+  decidedAt   DateTime?               @db.Timestamptz()
+
+  @@index([fromAdminId, status])
+  @@index([toAdminId, status])
+}
+
+/// Append-only history of every staff role assignment (replaces "who granted this and when" without a second source of truth: the
+/// current role stays on AdminUser).
+model StaffRoleChange {
+  id          String     @id @default(uuid())
+  adminUserId String
+  fromRole    AdminRole?
+  toRole      AdminRole
+  changedById String?
+  reason      String
+  createdAt   DateTime   @default(now()) @db.Timestamptz()
+
+  @@index([adminUserId, createdAt])
+}
+
+/// Sign-in, second-factor, session and denied-access events. Append-only. Never holds a token, a secret or a raw address.
+model SecurityEvent {
+  id            String   @id @default(uuid())
+  adminUserId   String?
+  /// Keyed hash of the email that was tried, so repeated failures against one address can be counted without storing it.
+  subjectHash   String?
+  eventType     String
+  result        String
+  ipHash        String?
+  userAgentHash String?
+  correlationId String?
+  metadata      Json?
+  createdAt     DateTime @default(now()) @db.Timestamptz()
+
+  @@index([adminUserId, createdAt])
+  @@index([subjectHash, createdAt])
+  @@index([eventType, createdAt])
+  @@index([correlationId])
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXECUTED
+  EXPIRED
+  CANCELLED
+}
+
+/// A two-person workflow. The action and its parameters are frozen at request time (`payload`, `payloadHash`); the approver approves
+/// exactly that hash, and any change needs a new request. The requester can never approve their own request (CHECK in the migration).
+/// Deliberately has no `businessId` column: it is a platform record, not tenant data (`subjectBusinessId` is a plain reference).
+model ApprovalRequest {
+  id                String         @id @default(uuid())
+  actionType        String
+  targetType        String
+  targetId          String
+  subjectBusinessId String?
+  reason            String
+  payload           Json
+  payloadHash       String
+  status            ApprovalStatus @default(PENDING)
+  requestedById     String
+  approvedById      String?
+  rejectedById      String?
+  decidedAt         DateTime?      @db.Timestamptz()
+  executedAt        DateTime?      @db.Timestamptz()
+  expiresAt         DateTime       @db.Timestamptz()
+  createdAt         DateTime       @default(now()) @db.Timestamptz()
+
+  @@index([status, expiresAt])
+  @@index([actionType, status])
+  @@index([requestedById, createdAt])
+  @@index([subjectBusinessId, createdAt])
+}
+
+/// Complimentary access that was granted on purpose: a stated reason, a named grantor, and an end date. Never a fake paid invoice.
+model EntitlementGrant {
+  id                String    @id @default(uuid())
+  businessId        String
+  planCode          String
+  reason            String
+  grantedById       String
+  startsAt          DateTime  @db.Timestamptz()
+  expiresAt         DateTime  @db.Timestamptz()
+  revokedAt         DateTime? @db.Timestamptz()
+  revokedById       String?
+  approvalRequestId String?
+  createdAt         DateTime  @default(now()) @db.Timestamptz()
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, expiresAt])
+  @@index([expiresAt])
 }
 
 /// Revocation list for admin JWTs (see src/admin/tokenRevocation.ts). A stateless JWT can't be
@@ -988,19 +1193,27 @@ enum ActorType {
 
 /// One row per state-changing action, per Non-Negotiable Standard #8.
 model AuditLog {
-  id         String    @id @default(uuid())
-  businessId String?
-  actorType  ActorType
-  actorId    String? // merchant message id, admin user id, or job name
-  action     String
-  entityType String
-  entityId   String?
-  metadata   Json?
-  createdAt  DateTime  @default(now()) @db.Timestamptz()
+  id            String    @id @default(uuid())
+  businessId    String?
+  actorType     ActorType
+  actorId       String? // merchant message id, admin user id, or job name
+  action        String
+  entityType    String
+  entityId      String?
+  metadata      Json?
+  createdAt     DateTime  @default(now()) @db.Timestamptz()
+  /// Admin-console foundation (additive): why, how it ended, which request it belongs to, and a keyed hash of the caller's address.
+  reason        String?
+  result        String    @default("SUCCESS")
+  correlationId String?
+  ipHash        String?
 
   business Business? @relation(fields: [businessId], references: [id])
 
   @@index([businessId, createdAt])
+  @@index([correlationId])
+  @@index([actorType, actorId, createdAt])
+  @@index([action, createdAt])
 }
 
 model FeatureFlag {
