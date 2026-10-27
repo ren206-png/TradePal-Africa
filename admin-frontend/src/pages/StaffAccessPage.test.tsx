@@ -115,4 +115,32 @@ describe("navigation", () => {
     expect(await screen.findByRole("link", { name: "Staff access" })).toBeInTheDocument();
     for (const name of ["Payments", "Audit logs", "Feature flags", "Moderation"]) expect(screen.getByRole("link", { name })).toBeInTheDocument();
   });
+
+  it("groups the sidebar by task and drops a group the person has nothing in", async () => {
+    signedIn("MODERATOR");
+    vi.mocked(apiFetch).mockResolvedValue({ permissions: ["admin:view_overview", "admin:view_orgs", "admin:view_moderation"] });
+    render(<AuthProvider><MemoryRouter><Layout><p>x</p></Layout></MemoryRouter></AuthProvider>);
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    await waitFor(() => expect(within(nav).queryByRole("link", { name: "Payments" })).not.toBeInTheDocument());
+    expect(within(nav).getByText("Businesses", { selector: "p" })).toBeInTheDocument();
+    expect(within(nav).getByText("Conversations", { selector: "p" })).toBeInTheDocument();
+    expect(within(nav).queryByText("Money", { selector: "p" })).not.toBeInTheDocument();
+  });
+
+  it("marks the page you are on and opens and closes the menu on a phone", async () => {
+    signedIn("SUPER_ADMIN");
+    vi.mocked(apiFetch).mockResolvedValue({ permissions: [] });
+    render(<AuthProvider><MemoryRouter initialEntries={["/payments"]}><Layout><p>x</p></Layout></MemoryRouter></AuthProvider>);
+    expect(screen.getByRole("link", { name: "Payments" })).toHaveClass("active");
+    expect(screen.getByRole("link", { name: "Plans" })).not.toHaveClass("active");
+    const sidebar = document.getElementById("app-sidebar") as HTMLElement;
+    expect(sidebar).not.toHaveClass("open");
+    await userEvent.click(screen.getByRole("button", { name: "Open the menu" }));
+    expect(sidebar).toHaveClass("open");
+    await userEvent.click(screen.getByTestId("sidebar-scrim"));
+    expect(sidebar).not.toHaveClass("open");
+    await userEvent.click(screen.getByRole("button", { name: "Open the menu" }));
+    await userEvent.click(screen.getByRole("link", { name: "Plans" }));
+    expect(sidebar).not.toHaveClass("open");
+  });
 });
