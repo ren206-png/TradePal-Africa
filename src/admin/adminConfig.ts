@@ -39,6 +39,19 @@ export function adminBootstrapAllowed(env: NodeJS.ProcessEnv = process.env): boo
   return env["ADMIN_BOOTSTRAP_ALLOWED"] === "true";
 }
 
+/**
+ * WhatsApp sign-in codes (the alternative to an authenticator app). Available only when the switch is exactly "true" AND the Meta
+ * AUTHENTICATION template name is set; the template language defaults to "en". The WhatsApp send credentials are the platform's
+ * existing ones (WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID); without them nothing can be sent either.
+ */
+export interface AdminWhatsappCodeConfig { templateName: string; languageCode: string }
+export function adminWhatsappCodesConfig(env: NodeJS.ProcessEnv = process.env): AdminWhatsappCodeConfig | undefined {
+  if (env["ADMIN_WHATSAPP_CODES_ENABLED"] !== "true") return undefined;
+  const templateName = (env["WHATSAPP_ADMIN_CODE_TEMPLATE_NAME"] ?? "").trim();
+  if (!templateName) return undefined;
+  return { templateName, languageCode: (env["WHATSAPP_ADMIN_CODE_TEMPLATE_LANGUAGE"] ?? "").trim() || "en" };
+}
+
 export interface AdminSessionPolicy {
   /** Longest a session can live, whatever the activity. */
   absoluteMs: number;

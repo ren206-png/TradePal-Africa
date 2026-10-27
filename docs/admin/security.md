@@ -76,3 +76,12 @@ Sensitive staff changes write their audit row in the **same transaction** as the
 ## Known limits (consolidated)
 
 In-memory limiters reset on restart and are per process unless Redis is on; denied-access events are unthrottled; no Content-Security-Policy on the admin site; the audit trigger is not tamper-proof against a database superuser; no human penetration test or dependency audit; `admin:unmask_pii` and `admin:read_whatsapp_conversation` are defined but have no route; invitation links are copied by the owner, not emailed.
+
+
+## WhatsApp codes (second factor option)
+
+- A WhatsApp code is weaker than an authenticator app: it depends on the phone number (a SIM swap or a hijacked WhatsApp account defeats it) and on Meta delivering the message. It is offered because some staff will not use an app; the Account security page and the setup screen say the app is the stronger choice only where the owner wants to say so. Owners who want to hold staff to the app can leave `ADMIN_WHATSAPP_CODES_ENABLED` off.
+- Storage: the number is encrypted with `ADMIN_MFA_ENCRYPTION_KEY` (readable back only as its last four digits); a code is stored only as a keyed hash. Security events hold at most the last four digits, never a code or a full number.
+- The first code to a new number proves control of it; until then it is not a factor. Adding a second method to an account that already has one needs a fully signed-in session and a fresh password-plus-code confirmation, so a stolen password alone cannot add the attacker's own phone. (Like the authenticator app, a person with no factor yet can set up the first one with only the password: an attacker who knows a new account's password before its owner has enrolled could enrol first. Invited staff enrol straight after accepting.)
+- Codes are bound to the sign-in session, single use, 5-minute expiry, 5 tries; send limits are per account and per new number; a number on the STOP list is never messaged.
+- Registered as message class `STAFF_SIGNIN_CODE` (docs/expansion/message-template-register.md); sent through the WhatsApp transport, outside the consumer-consent pipeline because the recipient is staff who gave their own number.

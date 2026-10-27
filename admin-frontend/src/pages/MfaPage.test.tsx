@@ -107,4 +107,65 @@ describe("authenticator step", () => {
     await waitFor(() => expect(screen.getByText("the console")).toBeInTheDocument());
     expect(apiFetch).toHaveBeenNthCalledWith(2, "/admin/mfa/enroll/confirm", { method: "POST", body: { code: "654321" } });
   });
+
+  it("offers WhatsApp codes at first-time setup only when the server does, without starting the authenticator setup", async () => {
+    signedIn("ENROLMENT_REQUIRED");
+    setMethods({ totp: false, whatsapp: { available: true, enrolled: false, last4: null } });
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce({ secret: "JBSWY3DPEHPK3PXP", otpauthUri: "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP" })
+      .mockResolvedValueOnce({ sent: true, last4: "0100", expiresInSeconds: 300 })
+      .mockResolvedValueOnce({ enrolled: true, recoveryCodes: ["AAAAA-BBBBB"] });
+    const user = userEvent.setup();
+    renderAt("/mfa");
+    await user.click(await screen.findByRole("button", { name: "Get codes by WhatsApp instead" }));
+    await user.type(screen.getByLabelText("WhatsApp number"), "+1 403 555 0100");
+    await user.click(screen.getByRole("button", { name: "Send me a code" }));
+    expect(await screen.findByText(/ending 0100/)).toBeInTheDocument();
+    expect(apiFetch).toHaveBeenCalledWith("/admin/mfa/whatsapp/enroll/start", { method: "POST", body: { phone: "+1 403 555 0100" } });
+    await user.type(screen.getByLabelText("6-digit code"), "482913");
+    await user.click(screen.getByRole("button", { name: "Confirm and finish" }));
+    expect(await screen.findByRole("list", { name: "Recovery codes" })).toHaveTextContent("AAAAA-BBBBB");
+    expect(apiFetch).toHaveBeenCalledWith("/admin/mfa/whatsapp/enroll/confirm", { method: "POST", body: { code: "482913" } });
+  });
+
+  it("does not offer WhatsApp when the server does not", async () => {
+    signedIn("ENROLMENT_REQUIRED");
+    setMethods({ totp: false, whatsapp: { available: false, enrolled: false, last4: null } });
+    vi.mocked(apiFetch).mockResolvedValueOnce({ secret: "S", otpauthUri: "otpauth://totp/x?secret=S" });
+    renderAt("/mfa");
+    await screen.findByLabelText("Setup key");
+    expect(screen.queryByRole("button", { name: /WhatsApp/ })).not.toBeInTheDocument();
+  });
+
+  it("signs in with a WhatsApp code: asks to send it, then verifies it", async () => {
+    signedIn("CHALLENGE_REQUIRED");
+    setMethods({ totp: false, whatsapp: { available: true, enrolled: true, last4: "0100" } });
+    vi.mocked(apiFetch).mockResolvedValueOnce({ sent: true, last4: "0100", expiresInSeconds: 300 }).mockResolvedValueOnce({ verified: true });
+    const user = userEvent.setup();
+    renderAt("/mfa");
+    expect(screen.getByText(/ending 0100/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Send me a code" }));
+    await user.type(await screen.findByLabelText("6-digit code"), "482913");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(screen.getByText("the console")).toBeInTheDocument());
+    expect(apiFetch).toHaveBeenNthCalledWith(1, "/admin/mfa/whatsapp/send", { method: "POST", body: {} });
+    expect(apiFetch).toHaveBeenNthCalledWith(2, "/admin/mfa/whatsapp/verify", { method: "POST", body: { code: "482913" } });
+  });
+
+  it("lets someone with both choose either way, and still offers a recovery code", async () => {
+    signedIn("CHALLENGE_REQUIRED");
+    setMethods({ totp: true, whatsapp: { available: true, enrolled: true, last4: "0100" } });
+    const user = userEvent.setup();
+    renderAt("/mfa");
+    expect(screen.getByText("Enter the 6-digit code from your authenticator app.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Send a code to my WhatsApp instead" }));
+    expect(screen.getByRole("button", { name: "Send me a code" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Use my authenticator app instead" }));
+    expect(screen.getByLabelText("6-digit code")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /lost my phone/ })).toBeInTheDocument();
+  });
 });
+
+function setMethods(m: object) {
+  localStorage.setItem("tradepal_admin_mfa_methods", JSON.stringify(m));
+}

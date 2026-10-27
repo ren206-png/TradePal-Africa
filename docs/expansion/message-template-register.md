@@ -29,6 +29,7 @@ Pipeline column: **ENFORCED** = sent only through `sendMessage` (class, consent,
 | `MERCHANT_PAYMENT_CONFIRMED` | MERCHANT | UTILITY | LEGACY | A collection is confirmed. | MERCHANT_RELATIONSHIP | TEMPLATE_OUTSIDE_WINDOW | provider template from `WHATSAPP_PAYMENT_CONFIRMED_TEMPLATE_NAME` | - | legacy: outside this register's control |
 | `MERCHANT_STAFF_ADDED` | MERCHANT | UTILITY | LEGACY | An owner adds a staff member. | MERCHANT_RELATIONSHIP | TEMPLATE_OUTSIDE_WINDOW | provider template from `WHATSAPP_STAFF_ADDED_TEMPLATE_NAME` | - | legacy: outside this register's control |
 | `MERCHANT_DELETION_RESOLUTION` | MERCHANT | UTILITY | LEGACY | A data-deletion request is resolved. | MERCHANT_RELATIONSHIP | TEMPLATE_OUTSIDE_WINDOW | provider template from `WHATSAPP_DELETION_RESOLUTION_TEMPLATE_NAME` | - | legacy: outside this register's control |
+| `STAFF_SIGNIN_CODE` | STAFF | AUTHENTICATION | LEGACY | A signed-in-with-password TradePal staff member asks for a WhatsApp code (to add the number, to finish signing in, or to confirm a sensitive action). | STAFF_ENROLMENT | TEMPLATE_REQUIRED | provider template from `WHATSAPP_ADMIN_CODE_TEMPLATE_NAME` | - | legacy: outside this register's control |
 | `UNSUPPORTED_COUNTRY_NOTICE` | CONSUMER | SERVICE | LEGACY | Someone outside the launch countries messages TradePal first. | ONE_OFF_REPLY | SESSION_ONLY | free text | - | legacy: outside this register's control |
 
 ## Notes per class
@@ -52,4 +53,5 @@ Pipeline column: **ENFORCED** = sent only through `sendMessage` (class, consent,
 - `MERCHANT_PAYMENT_CONFIRMED`: To the merchant, never to the payer.
 - `MERCHANT_STAFF_ADDED`: Goes to the new staff member's number, which is registered as a merchant row when it is added.
 - `MERCHANT_DELETION_RESOLUTION`: Answer to the merchant's own request.
+- `STAFF_SIGNIN_CODE`: A one-time six-digit code, valid 5 minutes, usable once, bound to the sign-in session that asked for it. Sent by `src/admin/whatsappCodes.ts` through the WhatsApp transport, only while `ADMIN_WHATSAPP_CODES_ENABLED=true`. The first code to a new number proves the staff member controls it. Limited per account and per number; never sent to a number on the block list. Needs a Meta AUTHENTICATION template with a copy-code button.
 - `UNSUPPORTED_COUNTRY_NOTICE`: One fixed reply to a person who wrote first. Nothing stored about the sender.

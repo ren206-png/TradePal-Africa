@@ -16,13 +16,14 @@ import type { CatalogKey } from "../i18n/index.js";
  *                             complete; the new checks are NOT applied to it (stated in self-check-phase-7.md). All legacy
  *                             classes go only to registered merchants.
  */
-export type Audience = "MERCHANT" | "CONSUMER" | "PARTNER";
+export type Audience = "MERCHANT" | "CONSUMER" | "PARTNER" | "STAFF";
 export type TemplateCategoryName = "UTILITY" | "MARKETING" | "AUTHENTICATION" | "SERVICE";
 export type ConsentBasis =
   | "MERCHANT_RELATIONSHIP" // the merchant is a TradePal customer who messaged first / signed up
   | "ORDER_UPDATES_OPT_IN" // the shopper ticked the order-update box at checkout
   | "ONE_OFF_REPLY" // answering the person who just wrote to us
-  | "PARTNER_AGREEMENT";
+  | "PARTNER_AGREEMENT"
+  | "STAFF_ENROLMENT"; // a TradePal staff member gave this number to receive their own sign-in codes and proved they control it
 export type WindowRule = "SESSION_ONLY" | "TEMPLATE_REQUIRED" | "TEMPLATE_OUTSIDE_WINDOW";
 
 export interface MessageClassDef {
@@ -161,6 +162,12 @@ export const MESSAGE_CLASSES: readonly MessageClassDef[] = [
     trigger: "A data-deletion request is resolved.", consentBasis: "MERCHANT_RELATIONSHIP",
     windowRule: "TEMPLATE_OUTSIDE_WINDOW", paramCount: 0, legacyTemplateEnv: "WHATSAPP_DELETION_RESOLUTION_TEMPLATE_NAME",
     notes: "Answer to the merchant's own request.",
+  },
+  {
+    id: "STAFF_SIGNIN_CODE", audience: "STAFF", category: "AUTHENTICATION", pipeline: "LEGACY",
+    trigger: "A signed-in-with-password TradePal staff member asks for a WhatsApp code (to add the number, to finish signing in, or to confirm a sensitive action).", consentBasis: "STAFF_ENROLMENT",
+    windowRule: "TEMPLATE_REQUIRED", paramCount: 1, legacyTemplateEnv: "WHATSAPP_ADMIN_CODE_TEMPLATE_NAME",
+    notes: "A one-time six-digit code, valid 5 minutes, usable once, bound to the sign-in session that asked for it. Sent by `src/admin/whatsappCodes.ts` through the WhatsApp transport, only while `ADMIN_WHATSAPP_CODES_ENABLED=true`. The first code to a new number proves the staff member controls it. Limited per account and per number; never sent to a number on the block list. Needs a Meta AUTHENTICATION template with a copy-code button.",
   },
   {
     id: "UNSUPPORTED_COUNTRY_NOTICE", audience: "CONSUMER", category: "SERVICE", pipeline: "LEGACY",

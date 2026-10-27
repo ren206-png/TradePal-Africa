@@ -252,13 +252,14 @@ export async function listStaff(prisma: PrismaClient) {
     select: {
       id: true, email: true, name: true, role: true, roleVersion: true, createdAt: true, disabledAt: true, mfaRequiredAt: true, lastSignInAt: true,
       mfaFactors: { where: { disabledAt: null, confirmedAt: { not: null } }, select: { id: true } },
+      whatsappFactor: { select: { confirmedAt: true, disabledAt: true } },
       sessions: { where: { revokedAt: null, absoluteExpiresAt: { gt: new Date() } }, select: { id: true } },
     },
   });
   return rows.map((r) => ({
     id: r.id, email: r.email, name: r.name, role: r.role, roleVersion: r.roleVersion, createdAt: r.createdAt,
     status: r.disabledAt ? "DISABLED" : "ACTIVE", lastSignInAt: r.lastSignInAt,
-    mfa: r.mfaFactors.length > 0 ? "ENROLLED" : r.mfaRequiredAt ? "REQUIRED" : "NOT_ENROLLED",
+    mfa: r.mfaFactors.length > 0 || (r.whatsappFactor?.confirmedAt != null && r.whatsappFactor.disabledAt === null) ? "ENROLLED" : r.mfaRequiredAt ? "REQUIRED" : "NOT_ENROLLED",
     liveSessions: r.sessions.length,
   }));
 }

@@ -24,6 +24,7 @@ import { AcceptInvitePage } from "./pages/AcceptInvitePage";
 import { StaffAccessPage } from "./pages/StaffAccessPage";
 import { RefundRequestsPage } from "./pages/RefundRequestsPage";
 import { PlansPage } from "./pages/PlansPage";
+import { AccountSecurityPage } from "./pages/AccountSecurityPage";
 
 function App() {
   return (
@@ -120,6 +121,16 @@ function App() {
               <ProtectedRoute>
                 <Layout>
                   <RefundRequestsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/account-security"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <AccountSecurityPage />
                 </Layout>
               </ProtectedRoute>
             }

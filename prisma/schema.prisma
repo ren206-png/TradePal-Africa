@@ -358,9 +358,10 @@ model AdminUser {
   /// Who created or invited this account (null for accounts created by the provisioning script before this column existed).
   createdById     String?
 
-  sessions      AdminSession[]
-  mfaFactors    AdminMfaFactor[]
-  recoveryCodes AdminRecoveryCode[]
+  sessions       AdminSession[]
+  mfaFactors     AdminMfaFactor[]
+  recoveryCodes  AdminRecoveryCode[]
+  whatsappFactor AdminWhatsappFactor?
 }
 
 /// Admin-console foundation: a server-side record of one admin sign-in. The access token's `jti` is this row's id, so idle timeout,
@@ -407,6 +408,44 @@ model AdminMfaFactor {
   adminUser AdminUser @relation(fields: [adminUserId], references: [id])
 
   @@index([adminUserId])
+}
+
+/// A WhatsApp number a staff member can receive sign-in codes on (the alternative to an authenticator app). The number is stored
+/// encrypted with the same key as authenticator secrets; only a keyed hash (for abuse limits) and the last four digits are readable.
+model AdminWhatsappFactor {
+  id              String    @id @default(uuid())
+  adminUserId     String    @unique
+  phoneCiphertext String
+  phoneHash       String
+  phoneLast4      String
+  createdAt       DateTime  @default(now()) @db.Timestamptz()
+  /// Null until the person proves they receive messages on this number by entering the code sent to it.
+  confirmedAt     DateTime? @db.Timestamptz()
+  lastUsedAt      DateTime? @db.Timestamptz()
+  disabledAt      DateTime? @db.Timestamptz()
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@index([phoneHash])
+}
+
+/// One code sent over WhatsApp: short-lived, single-use, bound to the sign-in session that asked for it, and limited in guesses.
+/// Only a keyed hash of the code is stored.
+model AdminWhatsappChallenge {
+  id          String    @id @default(uuid())
+  adminUserId String
+  sessionId   String
+  /// ENROL (proves the number), SIGNIN (second factor after the password) or REAUTH (confirms a sensitive action).
+  purpose     String
+  codeHash    String
+  phoneHash   String
+  attempts    Int       @default(0)
+  expiresAt   DateTime  @db.Timestamptz()
+  consumedAt  DateTime? @db.Timestamptz()
+  createdAt   DateTime  @default(now()) @db.Timestamptz()
+
+  @@index([adminUserId, createdAt])
+  @@index([phoneHash, createdAt])
 }
 
 /// One single-use recovery code (only its hash is stored). A batch is replaced as a whole when the person asks for new codes.
@@ -3744,7 +3783,7 @@ enum CourierJobStatus {
 /// One delivery job for a store order. "manual" is the seller's own rider or any outside courier the seller tracks by hand; any other
 /// courier id is an adapter registered in src/couriers. The courier's fee is the SELLER's cost: it is never added to the shopper's total.
 model DeliveryShipment {
-  id             String         @id @default(uuid())
+  id             String           @id @default(uuid())
   businessId     String
   orderId        String
   courier        String // adapter id, or "manual"
@@ -3759,10 +3798,10 @@ model DeliveryShipment {
   currencyCode   String?
   failureReason  String?
   idempotencyKey String
-  lastEventAt    DateTime?      @db.Timestamptz()
+  lastEventAt    DateTime?        @db.Timestamptz()
   createdBy      String?
-  createdAt      DateTime       @default(now()) @db.Timestamptz()
-  updatedAt      DateTime       @updatedAt @db.Timestamptz()
+  createdAt      DateTime         @default(now()) @db.Timestamptz()
+  updatedAt      DateTime         @updatedAt @db.Timestamptz()
 
   business Business                @relation(fields: [businessId], references: [id])
   order    StoreOrder              @relation(fields: [orderId], references: [id])
@@ -3776,15 +3815,15 @@ model DeliveryShipment {
 
 /// Append-only history of a shipment: who said what, when. A courier's own event id makes a repeated callback a no-op.
 model DeliveryShipmentEvent {
-  id              String         @id @default(uuid())
+  id              String           @id @default(uuid())
   businessId      String
   shipmentId      String
   status          CourierJobStatus
   source          String // SELLER | COURIER | SYSTEM
   externalEventId String?
   detail          String?
-  occurredAt      DateTime       @db.Timestamptz()
-  createdAt       DateTime       @default(now()) @db.Timestamptz()
+  occurredAt      DateTime         @db.Timestamptz()
+  createdAt       DateTime         @default(now()) @db.Timestamptz()
 
   business Business         @relation(fields: [businessId], references: [id])
   shipment DeliveryShipment @relation(fields: [shipmentId], references: [id])
