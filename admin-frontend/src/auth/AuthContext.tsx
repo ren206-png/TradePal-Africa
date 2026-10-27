@@ -1,19 +1,28 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { apiFetch, clearStoredToken, getStoredToken, setUnauthorizedHandler, storeToken } from "../lib/apiClient";
-import type { AdminUser } from "../lib/types";
+import { apiFetch, clearStoredToken, getStoredToken, setMfaRequiredHandler, setUnauthorizedHandler, storeToken } from "../lib/apiClient";
+import type { AdminUser, MfaState } from "../lib/types";
 
 const ADMIN_STORAGE_KEY = "tradepal_admin_user";
+const MFA_STORAGE_KEY = "tradepal_admin_mfa";
 
 interface LoginResponse {
   token: string;
   admin: AdminUser;
+  /** Absent from an older server: treated as "no second factor". */
+  mfa?: { state: MfaState };
 }
 
 interface AuthContextValue {
   admin: AdminUser | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** Resolves with where the sign-in stands, so the caller can go to the authenticator screen when one is needed. */
+  login: (email: string, password: string) => Promise<MfaState>;
   logout: () => void;
+  /** NOT_REQUIRED / VERIFIED means fully signed in; the other two mean the authenticator step is still to do. */
+  mfaState: MfaState;
+  mfaPending: boolean;
+  /** Called by the authenticator screen once the second factor has been passed. */
+  completeMfa: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -28,8 +37,14 @@ function readStoredAdmin(): AdminUser | null {
   }
 }
 
+function readStoredMfa(): MfaState {
+  const raw = localStorage.getItem(MFA_STORAGE_KEY);
+  return raw === "ENROLMENT_REQUIRED" || raw === "CHALLENGE_REQUIRED" || raw === "VERIFIED" ? raw : "NOT_REQUIRED";
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [admin, setAdmin] = useState<AdminUser | null>(() => (getStoredToken() ? readStoredAdmin() : null));
+  const [mfaState, setMfaState] = useState<MfaState>(() => (getStoredToken() ? readStoredMfa() : "NOT_REQUIRED"));
 
   const login = useCallback(async (email: string, password: string) => {
     const result = await apiFetch<LoginResponse>("/admin/login", {
@@ -37,9 +52,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: { email, password },
       authenticated: false,
     });
+    const state = result.mfa?.state ?? "NOT_REQUIRED";
     storeToken(result.token);
     localStorage.setItem(ADMIN_STORAGE_KEY, JSON.stringify(result.admin));
+    localStorage.setItem(MFA_STORAGE_KEY, state);
+    setMfaState(state);
     setAdmin(result.admin);
+    return state;
+  }, []);
+
+  const completeMfa = useCallback(() => {
+    localStorage.setItem(MFA_STORAGE_KEY, "VERIFIED");
+    setMfaState("VERIFIED");
   }, []);
 
   // Shared by an explicit logout and an auto-logout triggered by a 401 —
@@ -47,6 +71,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearLocalSession = useCallback(() => {
     clearStoredToken();
     localStorage.removeItem(ADMIN_STORAGE_KEY);
+    localStorage.removeItem(MFA_STORAGE_KEY);
+    setMfaState("NOT_REQUIRED");
     setAdmin(null);
   }, []);
 
@@ -72,9 +98,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setUnauthorizedHandler(null);
   }, [clearLocalSession]);
 
+  // The server tells us when a sign-in still owes its second factor (403 MFA_*): move to the authenticator screen.
+  useEffect(() => {
+    setMfaRequiredHandler((state) => {
+      localStorage.setItem(MFA_STORAGE_KEY, state);
+      setMfaState(state);
+    });
+    return () => setMfaRequiredHandler(null);
+  }, []);
+
+  const mfaPending = mfaState === "ENROLMENT_REQUIRED" || mfaState === "CHALLENGE_REQUIRED";
   const value = useMemo<AuthContextValue>(
-    () => ({ admin, isAuthenticated: admin !== null, login, logout }),
-    [admin, login, logout],
+    () => ({ admin, isAuthenticated: admin !== null, login, logout, mfaState, mfaPending, completeMfa }),
+    [admin, login, logout, mfaState, mfaPending, completeMfa],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

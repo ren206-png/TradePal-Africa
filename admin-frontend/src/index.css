@@ -525,3 +525,8 @@ label {
 .tab { border: 1px solid #d0d5dd; background: #fff; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
 .tab.active { background: #101828; color: #fff; border-color: #101828; }
 .link-button { background: none; border: none; padding: 0; color: #175cd3; text-decoration: underline; cursor: pointer; font: inherit; }
+
+/* Which deployment this person is working in (admin-console Phase 4). Production is loud on purpose. */
+.env-badge { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em; margin-right: 8px; }
+.env-production { background: #b42318; color: #fff; }
+.env-other { background: #fef0c7; color: #7a2e0e; }

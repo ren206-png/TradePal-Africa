@@ -105,6 +105,19 @@ export const PLATFORM_PERMISSIONS = [
   "admin:approve_templates", //          record that a provider template is APPROVED (owner only: it is what allows a class of message to go out)
   "admin:manage_payment_connections", // connect a merchant to a payment provider (owner only; never a secret)
   "admin:manage_admins", //              create/disable platform admins
+  // Admin-console foundation. Same `admin:` vocabulary; docs/admin/permission-matrix.md maps each to the brief's dotted name.
+  "admin:view_staff", //                 staff list, roles, sessions (read-only)
+  "admin:view_security_events", //       sign-in, second-factor and denied-access events (read-only)
+  "admin:view_reports", //               report views (never merchant books)
+  "admin:create_export", //              create an expiring, redacted export
+  "admin:read_whatsapp_conversation", // open one conversation's messages (audited, needs a reason)
+  "admin:unmask_pii", //                 reveal one masked phone number or name (audited, needs a reason)
+  "admin:request_refund", //             open a refund request (two-person workflow: step 1)
+  "admin:approve_refund", //             approve exactly the frozen request (step 2; never your own)
+  "admin:execute_refund", //             run an approved refund (step 3; also needs ADMIN_REFUND_EXECUTION_ENABLED)
+  "admin:grant_entitlement", //          complimentary access with a reason and an end date
+  "admin:manage_config", //              validated country, currency and timezone settings (owner only)
+  "admin:transfer_ownership", //         hand the platform-owner role to someone else (owner only)
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 
@@ -116,13 +129,26 @@ const PLATFORM_MATRIX: Readonly<Record<AdminRole, ReadonlySet<PlatformPermission
     "admin:pause_job_class", "admin:reverse_transaction", "admin:resolve_support_case", "admin:view_reorder", "admin:view_support_cases",
     "admin:view_payments", "admin:view_moderation", "admin:moderate_listings", "admin:view_subscriptions",
     "admin:view_messaging", "admin:manage_messaging",
+    "admin:view_reports", "admin:create_export", "admin:request_refund",
   ]),
   SUPPORT: new Set<PlatformPermission>([
     "admin:view_overview", "admin:view_orgs", "admin:view_audit_log", "admin:view_merchant_financials",
     "admin:revoke_staff", "admin:resolve_support_case", "admin:view_support_cases", "admin:view_moderation", "admin:view_subscriptions", "admin:view_messaging",
+    "admin:read_whatsapp_conversation", "admin:unmask_pii",
   ]),
-  // Read-only analyst (legacy role): metadata and audit only, never merchant financials.
-  ANALYST: new Set<PlatformPermission>(["admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log"]),
+  // Read-only analyst (legacy role; the "auditor"): metadata, audit, staff and security views only, never merchant financials.
+  ANALYST: new Set<PlatformPermission>([
+    "admin:view_overview", "admin:view_system_health", "admin:view_orgs", "admin:view_audit_log",
+    "admin:view_staff", "admin:view_security_events", "admin:view_reports",
+  ]),
+  // Subscription billing, reconciliation, refunds under the two-person rule. No staff privilege grants, no flags, no moderation.
+  FINANCE_ADMIN: new Set<PlatformPermission>([
+    "admin:view_overview", "admin:view_orgs", "admin:view_merchant_financials", "admin:view_payments", "admin:resolve_exception",
+    "admin:view_subscriptions", "admin:manage_subscriptions", "admin:view_reports", "admin:create_export",
+    "admin:request_refund", "admin:approve_refund", "admin:execute_refund", "admin:grant_entitlement",
+  ]),
+  // Listings, reports, moderation decisions and appeals. No private financial access and no support or messaging data.
+  MODERATOR: new Set<PlatformPermission>(["admin:view_overview", "admin:view_orgs", "admin:view_moderation", "admin:moderate_listings"]),
 };
 
 export function canPlatform(role: AdminRole, permission: PlatformPermission): boolean {
@@ -154,6 +180,15 @@ export const PLATFORM_STEP_UP_PERMISSIONS: ReadonlySet<PlatformPermission> = new
   "admin:set_forecast_thresholds",
   "admin:manage_payment_connections",
   "admin:manage_admins",
+  "admin:create_export",
+  "admin:read_whatsapp_conversation",
+  "admin:unmask_pii",
+  "admin:request_refund",
+  "admin:approve_refund",
+  "admin:execute_refund",
+  "admin:grant_entitlement",
+  "admin:manage_config",
+  "admin:transfer_ownership",
 ]);
 
 /** Legacy bridge: the two-value MerchantRole used by the WhatsApp flows maps onto membership roles. */

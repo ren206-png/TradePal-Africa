@@ -39,10 +39,14 @@ export interface AdminJwtPayload extends AdminJwtIssuePayload {
  * a fresh `jti` (via the `jwtid` option) so a single token — not the whole
  * account — can be revoked on logout; see src/admin/tokenRevocation.ts.
  */
-export function issueAdminJwt(payload: AdminJwtIssuePayload, secret: string): string {
+export const ADMIN_JWT_AUDIENCE = "tradepal-admin";
+
+export function issueAdminJwt(payload: AdminJwtIssuePayload, secret: string, options: { jwtid?: string; expiresInSeconds?: number } = {}): string {
   return jwt.sign(payload as unknown as Record<string, unknown>, secret, {
-    expiresIn: "12h",
-    jwtid: randomUUID(),
+    expiresIn: options.expiresInSeconds ?? 12 * 60 * 60,
+    jwtid: options.jwtid ?? randomUUID(),
+    // Admin-console Phase 2: every token names its audience, so a token minted for anything else can never pass as an admin one.
+    audience: ADMIN_JWT_AUDIENCE,
   });
 }
 
@@ -52,6 +56,9 @@ export function verifyAdminJwt(token: string, secret: string): AdminJwtPayload |
   try {
     const decoded = jwt.verify(token, secret);
     if (typeof decoded !== "object" || decoded === null) return null;
+    // Tokens issued before the audience claim existed have none and stay valid until they expire; a token with a DIFFERENT audience never is.
+    const aud = (decoded as Record<string, unknown>)["aud"];
+    if (aud !== undefined && aud !== ADMIN_JWT_AUDIENCE) return null;
     const { adminUserId, email, role, jti, exp } = decoded as Record<string, unknown>;
     if (
       typeof adminUserId !== "string" ||

@@ -6,6 +6,7 @@ import {
   clearStoredToken,
   getStoredToken,
   setGuardHandlers,
+  setMfaRequiredHandler,
   setUnauthorizedHandler,
   storeStepUpToken,
   storeToken,
@@ -118,6 +119,40 @@ describe("apiFetch", () => {
       expect(fetch).toHaveBeenCalledTimes(2);
       const retryHeaders = vi.mocked(fetch).mock.calls[1]![1]?.headers as Record<string, string>;
       expect(retryHeaders["x-admin-step-up"]).toBe("su-token");
+    });
+
+    it("on REAUTH_REQUIRED asks for a fresh confirmation, then retries once", async () => {
+      storeToken("t");
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse({ error: "confirm", code: "REAUTH_REQUIRED" }, 403))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+      const requestReauth = vi.fn().mockResolvedValue(true);
+      setGuardHandlers({ requestStepUp: async () => false, requestSupportAccess: async () => false, requestReauth });
+
+      await expect(apiFetch("/admin/staff/invitations", { method: "POST", body: {} })).resolves.toEqual({ ok: true });
+      expect(requestReauth).toHaveBeenCalledTimes(1);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not retry when the re-confirmation is cancelled, and keeps the code", async () => {
+      storeToken("t");
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ error: "confirm", code: "REAUTH_REQUIRED" }, 403));
+      setGuardHandlers({ requestStepUp: async () => false, requestSupportAccess: async () => false, requestReauth: async () => false });
+      await expect(apiFetch("/admin/staff/invitations", { method: "POST", body: {} })).rejects.toMatchObject({ status: 403, code: "REAUTH_REQUIRED" });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("tells the app when the sign-in still owes its authenticator step", async () => {
+      storeToken("t");
+      const seen = vi.fn();
+      setMfaRequiredHandler(seen);
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse({ error: "set up", code: "MFA_ENROLMENT_REQUIRED" }, 403))
+        .mockResolvedValueOnce(jsonResponse({ error: "enter code", code: "MFA_REQUIRED" }, 403));
+      await expect(apiFetch("/admin/businesses")).rejects.toMatchObject({ status: 403 });
+      await expect(apiFetch("/admin/businesses")).rejects.toMatchObject({ status: 403 });
+      expect(seen.mock.calls).toEqual([["ENROLMENT_REQUIRED"], ["CHALLENGE_REQUIRED"]]);
+      setMfaRequiredHandler(null);
     });
 
     it("surfaces the original 403 (with its code) when the admin cancels the prompt", async () => {

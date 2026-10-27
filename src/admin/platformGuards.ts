@@ -42,6 +42,24 @@ export function requirePlatformPermission(permission: PlatformPermission): Reque
   };
 }
 
+/**
+ * For the read routes that predate the platform matrix and had no permission check (any signed-in admin could read them). The four original
+ * roles keep exactly the access they had; a role added later (FINANCE_ADMIN, MODERATOR, and any future one) reaches such a route only if its
+ * own permission set allows it. Without this, a new least-privilege role would silently inherit every old open read.
+ */
+const ORIGINAL_ADMIN_ROLES: ReadonlySet<string> = new Set(["SUPER_ADMIN", "OPERATOR", "SUPPORT", "ANALYST"]);
+
+export function requireLegacyAccess(permission: PlatformPermission): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const role = (req as AuthenticatedAdminRequest).adminUser?.role;
+    if (role && (ORIGINAL_ADMIN_ROLES.has(role) || canPlatform(role, permission))) {
+      next();
+      return;
+    }
+    res.status(403).json({ error: "You do not have permission to perform this action.", code: "FORBIDDEN" });
+  };
+}
+
 // ------------------------------------------------------------------------------------------- step-up
 
 /**
@@ -184,7 +202,7 @@ export function requireSupportAccess(prisma: PrismaClient, entity: string): Requ
 /** Platform-level audit row (no business). Used for admin-only actions such as step-up confirmation. */
 export async function recordPlatformAudit(
   prisma: PrismaClient,
-  input: { adminUserId: string; action: string; entityType: string; entityId?: string; businessId?: string; correlationId?: string; metadata?: Prisma.InputJsonValue },
+  input: { adminUserId: string; action: string; entityType: string; entityId?: string; businessId?: string; correlationId?: string; reason?: string; metadata?: Prisma.InputJsonValue },
 ): Promise<void> {
   await prisma.auditLog.create({
     data: {
@@ -194,6 +212,8 @@ export async function recordPlatformAudit(
       action: input.action,
       entityType: input.entityType,
       entityId: input.entityId ?? null,
+      reason: input.reason ?? null,
+      correlationId: input.correlationId ?? null,
       metadata:
         input.correlationId && (input.metadata === undefined || (typeof input.metadata === "object" && input.metadata !== null && !Array.isArray(input.metadata)))
           ? ({ ...((input.metadata as Prisma.JsonObject | undefined) ?? {}), correlationId: input.correlationId } as Prisma.InputJsonValue)

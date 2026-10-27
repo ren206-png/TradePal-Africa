@@ -70,12 +70,15 @@ const send = (r: RouteDef, token?: string, path = fill(r.path)) => {
   if (token !== undefined) req = req.set("Authorization", `Bearer ${token}`);
   return r.method === "get" || r.method === "delete" ? req : req.send({});
 };
-const isLogin = (r: RouteDef) => r.path === "/login";
+/** The public routes: sign-in, and redeeming an invitation link (its token is the credential). Every other route needs a signed-in staff member. */
+const PUBLIC_PATHS = new Set(["/login", "/invitations/accept"]);
+const isLogin = (r: RouteDef) => PUBLIC_PATHS.has(r.path);
 
 describe("the route table", () => {
   it("is read from the router and is large enough to mean something", () => {
     expect(routes.length).toBeGreaterThan(100);
-    expect(routes.filter(isLogin)).toHaveLength(1); // exactly one public route
+    // exactly two public routes, both POST: sign-in and invitation redemption. A new public route must be added here on purpose.
+    expect(routes.filter(isLogin).map((r) => `${r.method} ${r.path}`).sort()).toEqual(["post /invitations/accept", "post /login"]);
   });
 });
 
@@ -156,7 +159,10 @@ describe("every admin route rejects every way of not being a signed-in platform 
 describe("roles", () => {
   it("the read-only analyst can never change anything: every write is refused with 403", async () => {
     const failures: string[] = [];
-    const allowedForAll = new Set(["/logout", "/step-up", "/support-access"]);
+    // Self-service routes every signed-in person may call about their own session (sign-out, step-up, second factor, re-authentication).
+    const allowedForAll = new Set(["/logout", "/step-up", "/support-access", "/mfa/enroll/start", "/mfa/enroll/confirm", "/mfa/challenge", "/mfa/recovery", "/mfa/recovery-codes/regenerate", "/session/reauth", "/modules",
+      // authorised by identity, not by role: only the two people named in an ownership transfer can act on it (anyone else gets 403/404)
+      "/staff/ownership-transfers/:id/accept", "/staff/ownership-transfers/:id/cancel"]);
     for (const r of routes.filter((x) => x.method !== "get" && !isLogin(x) && !allowedForAll.has(x.path))) {
       const res = await send(r, tokens["analyst"]);
       if (res.status !== 403) failures.push(`${r.method.toUpperCase()} ${r.path} -> ${res.status}`);

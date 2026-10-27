@@ -3,7 +3,10 @@
 // OpenAPI/schema export yet — if the backend shape changes, these need a
 // matching manual update.
 
-export type AdminRole = "SUPER_ADMIN" | "OPERATOR" | "SUPPORT" | "ANALYST";
+export type AdminRole = "SUPER_ADMIN" | "OPERATOR" | "SUPPORT" | "ANALYST" | "FINANCE_ADMIN" | "MODERATOR";
+
+/** Where a sign-in stands with the second factor (admin-console Phase 2). */
+export type MfaState = "NOT_REQUIRED" | "ENROLMENT_REQUIRED" | "CHALLENGE_REQUIRED" | "VERIFIED";
 
 export interface AdminUser {
   id: string;

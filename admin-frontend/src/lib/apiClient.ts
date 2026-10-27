@@ -51,6 +51,17 @@ export interface GuardHandlers {
   requestStepUp: () => Promise<boolean>;
   /** Prompt for a reason and open the support-access session for `businessId`; resolve false if cancelled. */
   requestSupportAccess: (businessId: string) => Promise<boolean>;
+  /** Admin-console Phase 2: prompt for password + authenticator code (a recent confirmation); resolve false if cancelled. */
+  requestReauth?: () => Promise<boolean>;
+}
+
+/**
+ * Registered by AuthContext: called when the server says this sign-in has not finished its second factor (403 MFA_REQUIRED or
+ * MFA_ENROLMENT_REQUIRED), so the app can move to the authenticator screen instead of showing a raw error on whatever page asked.
+ */
+let onMfaRequired: ((state: "ENROLMENT_REQUIRED" | "CHALLENGE_REQUIRED") => void) | null = null;
+export function setMfaRequiredHandler(handler: typeof onMfaRequired): void {
+  onMfaRequired = handler;
 }
 
 let guardHandlers: GuardHandlers | null = null;
@@ -115,11 +126,19 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     let proceed = false;
     if (code === "STEP_UP_REQUIRED") {
       proceed = await guardHandlers.requestStepUp();
+    } else if (code === "REAUTH_REQUIRED") {
+      proceed = (await guardHandlers.requestReauth?.()) ?? false;
     } else if (code === "SUPPORT_ACCESS_REQUIRED") {
       const businessId = /^\/admin\/businesses\/([^/?]+)/.exec(path)?.[1];
       proceed = businessId ? await guardHandlers.requestSupportAccess(businessId) : false;
     }
     if (proceed) ({ response, data } = await attempt());
+  }
+
+  if (response.status === 403 && authenticated) {
+    const code = codeOf(data);
+    if (code === "MFA_REQUIRED") onMfaRequired?.("CHALLENGE_REQUIRED");
+    else if (code === "MFA_ENROLMENT_REQUIRED") onMfaRequired?.("ENROLMENT_REQUIRED");
   }
 
   if (!response.ok) {

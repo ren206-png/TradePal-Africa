@@ -19,6 +19,10 @@ import { SystemHealthPage } from "./pages/SystemHealthPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 import { GuardPrompts } from "./components/GuardPrompts";
 import { MobileMoneyAlertsPage } from "./pages/MobileMoneyAlertsPage";
+import { MfaPage } from "./pages/MfaPage";
+import { AcceptInvitePage } from "./pages/AcceptInvitePage";
+import { StaffAccessPage } from "./pages/StaffAccessPage";
+import { RefundRequestsPage } from "./pages/RefundRequestsPage";
 import { PlansPage } from "./pages/PlansPage";
 
 function App() {
@@ -28,6 +32,8 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/mfa" element={<MfaPage />} />
+          <Route path="/accept-invite" element={<AcceptInvitePage />} />
           <Route
             path="/businesses"
             element={
@@ -104,6 +110,26 @@ function App() {
               <ProtectedRoute>
                 <Layout>
                   <FeatureFlagsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/refund-requests"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <RefundRequestsPage />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/staff"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <StaffAccessPage />
                 </Layout>
               </ProtectedRoute>
             }
