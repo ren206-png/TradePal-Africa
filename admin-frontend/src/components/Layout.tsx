@@ -110,6 +110,7 @@ export function Layout({ children }: { children: ReactNode }) {
             <>
               <span className="sidebar-user-name">{admin.name}</span>
               <span className="role-badge">{admin.role}</span>
+              <NavLink to="/account-security" onClick={() => setOpen(false)} className={({ isActive }) => (isActive ? "sidebar-link active" : "sidebar-link")}>Account security</NavLink>
               <button type="button" onClick={logout}>Log out</button>
             </>
           ) : null}

@@ -16,7 +16,7 @@ export function consumerMessagingSwitchOn(): boolean {
 /** The transport. Production wires this to the WhatsApp gateway's unchecked senders; tests use a recorder. */
 export interface MessageTransport {
   sendText(toPhone: string, body: string): Promise<{ providerMessageId?: string }>;
-  sendTemplate(toPhone: string, templateName: string, languageCode: string, bodyParams: string[]): Promise<{ providerMessageId?: string }>;
+  sendTemplate(toPhone: string, templateName: string, languageCode: string, bodyParams: string[], options?: { otpButtonCode?: string }): Promise<{ providerMessageId?: string }>;
 }
 
 export interface SendRequest {

@@ -57,15 +57,23 @@ export function normaliseCode(input: string): string {
 
 // ------------------------------------------------------------------------------------------------- enrolment
 
-export async function hasConfirmedFactor(prisma: PrismaClient, adminUserId: string): Promise<boolean> {
+/** An authenticator app is set up and confirmed. */
+export async function hasConfirmedTotp(prisma: PrismaClient, adminUserId: string): Promise<boolean> {
   const f = await prisma.adminMfaFactor.findFirst({ where: { adminUserId, disabledAt: null, confirmedAt: { not: null } }, select: { id: true } });
   return f !== null;
+}
+
+/** Any second factor is set up and confirmed: an authenticator app, or a WhatsApp number (see whatsappCodes.ts). */
+export async function hasConfirmedFactor(prisma: PrismaClient, adminUserId: string): Promise<boolean> {
+  if (await hasConfirmedTotp(prisma, adminUserId)) return true;
+  const w = await prisma.adminWhatsappFactor.findFirst({ where: { adminUserId, disabledAt: null, confirmedAt: { not: null } }, select: { id: true } });
+  return w !== null;
 }
 
 /** Starts (or restarts) enrolment: an unconfirmed factor with a fresh secret. Refuses when a confirmed factor already exists. */
 export async function startEnrolment(prisma: PrismaClient, key: Buffer | undefined, admin: { id: string; email: string }): Promise<{ secret: string; otpauthUri: string }> {
   if (!key) throw new MfaError("NO_KEY", "Second-factor enrolment is not configured on this server.");
-  if (await hasConfirmedFactor(prisma, admin.id)) throw new MfaError("ALREADY_ENROLLED", "A second factor is already set up for this account.");
+  if (await hasConfirmedTotp(prisma, admin.id)) throw new MfaError("ALREADY_ENROLLED", "A second factor is already set up for this account.");
   const secret = generateSecret();
   await prisma.$transaction(async (tx) => {
     await tx.adminMfaFactor.updateMany({ where: { adminUserId: admin.id, disabledAt: null, confirmedAt: null }, data: { disabledAt: new Date() } });
@@ -162,6 +170,8 @@ export async function regenerateRecoveryCodes(prisma: PrismaClient, adminUserId:
 export async function resetMfaFor(prisma: PrismaClient, adminUserId: string, now: Date = new Date()): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await tx.adminMfaFactor.updateMany({ where: { adminUserId, disabledAt: null }, data: { disabledAt: now } });
+    await tx.adminWhatsappChallenge.deleteMany({ where: { adminUserId } });
+    await tx.adminWhatsappFactor.deleteMany({ where: { adminUserId } });
     await tx.adminRecoveryCode.deleteMany({ where: { adminUserId } });
     await tx.adminUser.update({ where: { id: adminUserId }, data: { mfaRequiredAt: now } });
   });

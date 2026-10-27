@@ -5,7 +5,7 @@ import type { MessageTransport } from "./send.js";
 export function whatsappTransport(deps: OutboundGatewayDeps): MessageTransport {
   return {
     sendText: (toPhone, body) => sendTextUnchecked(deps, { toPhoneNumber: toPhone, body }),
-    sendTemplate: (toPhone, templateName, languageCode, bodyParams) =>
-      sendTemplateUnchecked(deps, { toPhoneNumber: toPhone, templateName, templateLanguageCode: languageCode, bodyParams }),
+    sendTemplate: (toPhone, templateName, languageCode, bodyParams, options) =>
+      sendTemplateUnchecked(deps, { toPhoneNumber: toPhone, templateName, templateLanguageCode: languageCode, bodyParams, ...(options?.otpButtonCode ? { otpButtonCode: options.otpButtonCode } : {}) }),
   };
 }

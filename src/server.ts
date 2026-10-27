@@ -5,6 +5,9 @@ import helmet from "helmet";
 import { Redis } from "ioredis";
 import { mountAdminConsole } from "./admin/mount.js";
 import { authOptionsFromEnv } from "./admin/adminAuthRoutes.js";
+import { adminWhatsappCodesConfig } from "./admin/adminConfig.js";
+import { createWhatsappCodeSender } from "./admin/whatsappCodes.js";
+import { whatsappTransport } from "./messaging/transport.js";
 import { adminModuleEnabled } from "./admin/adminConfig.js";
 import { createOfflineRouter } from "./offline/routes.js";
 import { installAlertDeliveryRecorder } from "./monitoring/alertRecorder.js";
@@ -223,6 +226,13 @@ const adminFrontendOrigins = (process.env["ADMIN_FRONTEND_ORIGINS"] ?? "")
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0);
 
+// WhatsApp sign-in codes for staff: offered only with the switch on, an approved authentication template named, and the WhatsApp credentials present.
+const adminWhatsappCodeConfig = adminWhatsappCodesConfig(process.env);
+const adminWhatsappCodeSender = outboundGateway && adminWhatsappCodeConfig ? createWhatsappCodeSender(whatsappTransport({ prisma, ...outboundGateway }), adminWhatsappCodeConfig) : undefined;
+if (process.env["ADMIN_WHATSAPP_CODES_ENABLED"] === "true" && !adminWhatsappCodeSender) {
+  console.warn("ADMIN_WHATSAPP_CODES_ENABLED is true but WhatsApp codes are NOT offered: set WHATSAPP_ADMIN_CODE_TEMPLATE_NAME and the WhatsApp credentials.");
+}
+
 // Admin-console Phase 2: mounted only while ADMIN_CONSOLE_ENABLED=true (see src/admin/mount.ts). Off means every /admin path is an ordinary 404.
 // Sessions are required here (a bare token with no live server-side session is refused) and the second factor is enforced unless ADMIN_MFA_ENFORCE=false.
 mountAdminConsole(app, {
@@ -244,6 +254,7 @@ mountAdminConsole(app, {
     modules: (module) => adminModuleEnabled(module, process.env),
     auth: {
       ...authOptionsFromEnv(),
+      ...(adminWhatsappCodeSender ? { whatsappCodeSender: adminWhatsappCodeSender } : {}),
       requireSession: true,
       // 30 sign-in attempts per caller address per 15 minutes, whether or not Redis shares the count across instances.
       loginIpRateLimiter: rateLimitRedisClient ? new RedisLoginRateLimiter(rateLimitRedisClient, 30, 15 * 60_000) : new InMemoryLoginRateLimiter(30, 15 * 60_000),

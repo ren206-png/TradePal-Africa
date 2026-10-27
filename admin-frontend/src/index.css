@@ -128,6 +128,8 @@ label {
 }
 .sidebar-user-name { font-weight: 600; }
 .sidebar-user button { margin-left: auto; }
+.sidebar-link { flex-basis: 100%; color: #cfcfe6; font-size: 0.8rem; text-decoration: underline; }
+.sidebar-link:hover, .sidebar-link.active { color: #fff; }
 
 .role-badge {
   background: #4a4a7a;

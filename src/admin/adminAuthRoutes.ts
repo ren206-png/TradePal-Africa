@@ -16,8 +16,12 @@ import {
   createAdminSession, markSessionMfaVerified, markSessionReauth, reauthIsFresh, revokeAdminSession,
 } from "./adminSessions.js";
 import {
-  MfaError, confirmEnrolment, hasConfirmedFactor, regenerateRecoveryCodes, startEnrolment, useRecoveryCode, verifyTotp,
+  MfaError, confirmEnrolment, hasConfirmedFactor, hasConfirmedTotp, regenerateRecoveryCodes, startEnrolment, useRecoveryCode, verifyTotp,
 } from "./mfa.js";
+import {
+  WhatsappCodeError, confirmWhatsappEnrolment, hasConfirmedWhatsapp, hasLiveWhatsappCode, removeWhatsappFactor, sendWhatsappCode,
+  startWhatsappEnrolment, verifyWhatsappCode, whatsappMethodInfo, type WhatsappCodeDeps, type WhatsappCodeSender, type WhatsappMethodInfo,
+} from "./whatsappCodes.js";
 import { callerHashes, recordSecurityEvent, type SecurityEventInput } from "./securityEvents.js";
 
 /**
@@ -33,6 +37,8 @@ export interface AdminAuthContext {
   policy: AdminSessionPolicy;
   enforceMfa: boolean;
   mfaKey: Buffer | undefined;
+  /** Delivers WhatsApp sign-in codes; absent means that second-factor option is not offered. */
+  whatsappSender: WhatsappCodeSender | undefined;
   now: () => Date;
   limiters: { loginEmail: LoginRateLimiter; loginIp: LoginRateLimiter; mfa: LoginRateLimiter; reauth: LoginRateLimiter };
 }
@@ -41,6 +47,7 @@ export interface AdminAuthRouteOptions {
   policy?: AdminSessionPolicy;
   enforceMfa?: boolean;
   mfaEncryptionKey?: Buffer;
+  whatsappCodeSender?: WhatsappCodeSender;
   now?: () => Date;
   loginRateLimiter?: LoginRateLimiter;
   loginIpRateLimiter?: LoginRateLimiter;
@@ -56,6 +63,7 @@ export function buildAuthContext(prisma: PrismaClient, jwtSecret: string, option
     policy: options.policy ?? DEFAULT_SESSION_POLICY,
     enforceMfa: options.enforceMfa ?? false,
     mfaKey: options.mfaEncryptionKey,
+    whatsappSender: options.whatsappCodeSender,
     now: options.now ?? (() => new Date()),
     limiters: {
       loginEmail: options.loginRateLimiter ?? new InMemoryLoginRateLimiter(),
@@ -89,6 +97,36 @@ async function mfaStateFor(ctx: AdminAuthContext, adminUserId: string, applies: 
 function tooMany(res: Response, retryAfterSeconds: number): void {
   res.status(429).set("Retry-After", String(retryAfterSeconds)).json({ error: "Too many attempts. Try again later." });
 }
+
+function whatsappDeps(ctx: AdminAuthContext): WhatsappCodeDeps {
+  return { prisma: ctx.prisma, jwtSecret: ctx.jwtSecret, key: ctx.mfaKey, sender: ctx.whatsappSender, now: ctx.now };
+}
+
+/** The second-factor options this person has and is offered: the sign-in screens read it to show the right choices. */
+async function methodsFor(ctx: AdminAuthContext, adminUserId: string): Promise<{ totp: boolean; whatsapp: WhatsappMethodInfo }> {
+  return { totp: await hasConfirmedTotp(ctx.prisma, adminUserId), whatsapp: await whatsappMethodInfo(whatsappDeps(ctx), adminUserId) };
+}
+
+/**
+ * Adding a second way to sign in when one already exists is a sensitive change: it needs a session that passed the factor AND a fresh
+ * confirmation. (With no factor yet, a half-open session may set up the first one.) Answers 403 and returns true when blocked.
+ */
+async function blockedFromAddingMethod(ctx: AdminAuthContext, req: AuthenticatedAdminRequest, res: Response, adminUserId: string): Promise<boolean> {
+  if (!(await hasConfirmedFactor(ctx.prisma, adminUserId))) return false;
+  if (!req.adminSession?.mfaVerifiedAt) {
+    res.status(403).json({ error: "Finish signing in first.", code: "MFA_REQUIRED" });
+    return true;
+  }
+  if (!reauthIsFresh(req.adminSession, ctx.policy, ctx.now())) {
+    res.status(403).json({ error: "Please confirm your password and code to continue.", code: "REAUTH_REQUIRED" });
+    return true;
+  }
+  return false;
+}
+
+const whatsappErrorStatus: Record<WhatsappCodeError["code"], number> = {
+  NOT_AVAILABLE: 503, BAD_NUMBER: 400, BLOCKED_NUMBER: 400, TOO_MANY: 429, SEND_FAILED: 502, NO_FACTOR: 409, ALREADY_ENROLLED: 409, BAD_CODE: 401,
+};
 
 function event(ctx: AdminAuthContext, req: Parameters<typeof recordSecurityEvent>[2], res: Response, input: SecurityEventInput): Promise<void> {
   return recordSecurityEvent(ctx.prisma, ctx.jwtSecret, req, { ...input, correlationId: correlationIdOf(res) || undefined });
@@ -143,7 +181,7 @@ export function createLoginHandler(ctx: AdminAuthContext): RequestHandler {
     res.json({
       token,
       admin: { id: admin.id, email: admin.email, name: admin.name, role: admin.role },
-      mfa: { state: mfa, completeWithinSeconds: mfa === "NOT_REQUIRED" ? null : Math.floor(ctx.policy.preMfaMs / 1000) },
+      mfa: { state: mfa, completeWithinSeconds: mfa === "NOT_REQUIRED" ? null : Math.floor(ctx.policy.preMfaMs / 1000), methods: await methodsFor(ctx, admin.id) },
       session: { absoluteExpiresAt: session.absoluteExpiresAt.toISOString(), idleTimeoutSeconds: Math.floor(ctx.policy.idleMs / 1000) },
     });
   });
@@ -154,10 +192,12 @@ export function createLoginHandler(ctx: AdminAuthContext): RequestHandler {
 export function createSessionRouter(ctx: AdminAuthContext): Router {
   const router = Router();
 
-  function who(req: AuthenticatedAdminRequest): { id: string; email: string; role: string } | null {
+  function who(req: AuthenticatedAdminRequest): { id: string; email: string; role: string; jti: string } | null {
     const a = req.adminUser;
-    return a ? { id: a.adminUserId, email: a.email, role: a.role } : null;
+    return a ? { id: a.adminUserId, email: a.email, role: a.role, jti: a.jti } : null;
   }
+  /** The server-side session a WhatsApp code is bound to (its id is the token's `jti`). */
+  const sessionIdOf = (req: AuthenticatedAdminRequest, admin: { jti: string }): string => req.adminSession?.id ?? admin.jti;
 
   router.get(
     "/session",
@@ -168,7 +208,7 @@ export function createSessionRouter(ctx: AdminAuthContext): Router {
       const mfa = await mfaStateFor(ctx, admin.id, req.adminMfaApplies ?? false, s?.mfaVerifiedAt != null);
       res.json({
         admin: { id: admin.id, email: admin.email, role: admin.role },
-        mfa: { state: mfa },
+        mfa: { state: mfa, methods: await methodsFor(ctx, admin.id) },
         reauthFresh: s ? reauthIsFresh(s, ctx.policy, ctx.now()) : true,
         session: s ? { absoluteExpiresAt: s.absoluteExpiresAt.toISOString(), idleTimeoutSeconds: Math.floor(ctx.policy.idleMs / 1000) } : null,
         permissions: mfa === "ENROLMENT_REQUIRED" || mfa === "CHALLENGE_REQUIRED" ? [] : platformPermissionsFor(admin.role as never),
@@ -183,6 +223,8 @@ export function createSessionRouter(ctx: AdminAuthContext): Router {
       if (!admin) return void res.status(401).json({ error: "Not authenticated." });
       const limit = await ctx.limiters.mfa.consume(`mfa:${admin.id}`);
       if (!limit.allowed) return tooMany(res, limit.retryAfterSeconds);
+      // Already has an authenticator: the 409 below answers. Has only a WhatsApp number: adding the app is a sensitive change.
+      if (!(await hasConfirmedTotp(ctx.prisma, admin.id)) && (await blockedFromAddingMethod(ctx, req, res, admin.id))) return;
       try {
         const out = await startEnrolment(ctx.prisma, ctx.mfaKey, { id: admin.id, email: admin.email });
         await event(ctx, req, res, { type: "MFA_ENROL_STARTED", result: "SUCCESS", adminUserId: admin.id });
@@ -209,6 +251,7 @@ export function createSessionRouter(ctx: AdminAuthContext): Router {
         await event(ctx, req, res, { type: "MFA_RATE_LIMITED", result: "DENIED", adminUserId: admin.id });
         return tooMany(res, limit.retryAfterSeconds);
       }
+      if ((await hasConfirmedFactor(ctx.prisma, admin.id)) && !req.adminSession?.mfaVerifiedAt) return void res.status(403).json({ error: "Finish signing in first.", code: "MFA_REQUIRED" });
       try {
         const out = await confirmEnrolment(ctx.prisma, ctx.mfaKey, admin.id, parsed.data.code, ctx.now());
         if (req.adminSession) await markSessionMfaVerified(ctx.prisma, req.adminSession.id, ctx.now());
@@ -282,6 +325,121 @@ export function createSessionRouter(ctx: AdminAuthContext): Router {
     }),
   );
 
+  // ------------------------------------------------------------------------------- WhatsApp codes (second factor)
+
+  const phoneBody = z.object({ phone: z.string().min(5).max(40) }).strict();
+  const failWhatsapp = (res: Response, error: WhatsappCodeError) => res.status(whatsappErrorStatus[error.code]).json({ error: error.message, code: error.code });
+
+  router.post(
+    "/mfa/whatsapp/enroll/start",
+    asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
+      const admin = who(req);
+      const parsed = phoneBody.safeParse(req.body);
+      if (!admin) return void res.status(401).json({ error: "Not authenticated." });
+      if (!parsed.success) return void res.status(400).json({ error: "Invalid request body." });
+      if (await hasConfirmedWhatsapp(ctx.prisma, admin.id)) return void res.status(409).json({ error: "A WhatsApp number is already set up. Remove it first to use a different one.", code: "ALREADY_ENROLLED" });
+      if (await blockedFromAddingMethod(ctx, req, res, admin.id)) return;
+      try {
+        const out = await startWhatsappEnrolment(whatsappDeps(ctx), { id: admin.id }, sessionIdOf(req, admin), parsed.data.phone);
+        await event(ctx, req, res, { type: "WHATSAPP_ENROLL_STARTED", result: "SUCCESS", adminUserId: admin.id, metadata: { last4: out.last4 } });
+        res.json({ sent: true, last4: out.last4, expiresInSeconds: out.expiresInSeconds });
+      } catch (error) {
+        if (!(error instanceof WhatsappCodeError)) throw error;
+        await event(ctx, req, res, { type: "WHATSAPP_CODE_FAILED", result: "FAILURE", adminUserId: admin.id, metadata: { stage: "enrol-start", reason: error.code } });
+        failWhatsapp(res, error);
+      }
+    }),
+  );
+
+  router.post(
+    "/mfa/whatsapp/enroll/confirm",
+    asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
+      const admin = who(req);
+      const parsed = codeBody.safeParse(req.body);
+      if (!admin) return void res.status(401).json({ error: "Not authenticated." });
+      if (!parsed.success) return void res.status(400).json({ error: "Invalid request body." });
+      const limit = await ctx.limiters.mfa.consume(`mfa:${admin.id}`);
+      if (!limit.allowed) {
+        await event(ctx, req, res, { type: "MFA_RATE_LIMITED", result: "DENIED", adminUserId: admin.id });
+        return tooMany(res, limit.retryAfterSeconds);
+      }
+      try {
+        const out = await confirmWhatsappEnrolment(whatsappDeps(ctx), admin.id, sessionIdOf(req, admin), parsed.data.code);
+        if (req.adminSession && !req.adminSession.mfaVerifiedAt) await markSessionMfaVerified(ctx.prisma, req.adminSession.id, ctx.now());
+        await ctx.limiters.mfa.reset(`mfa:${admin.id}`);
+        await event(ctx, req, res, { type: "WHATSAPP_ENROLLED", result: "SUCCESS", adminUserId: admin.id });
+        res.json({
+          enrolled: true,
+          ...(out.recoveryCodes ? { recoveryCodes: out.recoveryCodes, message: "Save these recovery codes now. They are shown only once and each works once." } : {}),
+        });
+      } catch (error) {
+        if (!(error instanceof WhatsappCodeError)) throw error;
+        await event(ctx, req, res, { type: "MFA_FAILED", result: "FAILURE", adminUserId: admin.id, metadata: { stage: "whatsapp-enrol" } });
+        failWhatsapp(res, error);
+      }
+    }),
+  );
+
+  // Sends a sign-in code (half-open session) or a re-authentication code (signed-in session) to the confirmed number.
+  router.post(
+    "/mfa/whatsapp/send",
+    asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
+      const admin = who(req);
+      if (!admin) return void res.status(401).json({ error: "Not authenticated." });
+      const purpose = req.adminSession?.mfaVerifiedAt ? "REAUTH" : "SIGNIN";
+      try {
+        const out = await sendWhatsappCode(whatsappDeps(ctx), { id: admin.id }, sessionIdOf(req, admin), purpose);
+        await event(ctx, req, res, { type: "WHATSAPP_CODE_SENT", result: "SUCCESS", adminUserId: admin.id, metadata: { purpose, last4: out.last4 } });
+        res.json({ sent: true, last4: out.last4, expiresInSeconds: out.expiresInSeconds });
+      } catch (error) {
+        if (!(error instanceof WhatsappCodeError)) throw error;
+        await event(ctx, req, res, { type: "WHATSAPP_CODE_FAILED", result: "FAILURE", adminUserId: admin.id, metadata: { stage: "send", reason: error.code } });
+        failWhatsapp(res, error);
+      }
+    }),
+  );
+
+  router.post(
+    "/mfa/whatsapp/verify",
+    asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
+      const admin = who(req);
+      const parsed = codeBody.safeParse(req.body);
+      if (!admin) return void res.status(401).json({ error: "Not authenticated." });
+      if (!parsed.success) return void res.status(400).json({ error: "Invalid request body." });
+      const limit = await ctx.limiters.mfa.consume(`mfa:${admin.id}`);
+      if (!limit.allowed) {
+        await event(ctx, req, res, { type: "MFA_RATE_LIMITED", result: "DENIED", adminUserId: admin.id });
+        return tooMany(res, limit.retryAfterSeconds);
+      }
+      try {
+        await verifyWhatsappCode(whatsappDeps(ctx), admin.id, sessionIdOf(req, admin), ["SIGNIN"], parsed.data.code);
+      } catch (error) {
+        if (!(error instanceof WhatsappCodeError)) throw error;
+        await event(ctx, req, res, { type: "MFA_FAILED", result: "FAILURE", adminUserId: admin.id, metadata: { stage: "challenge", method: "whatsapp" } });
+        return void res.status(401).json({ error: error.code === "NO_FACTOR" ? error.message : "That code is not right.", code: error.code === "NO_FACTOR" ? "NO_FACTOR" : "BAD_CODE" });
+      }
+      if (req.adminSession) await markSessionMfaVerified(ctx.prisma, req.adminSession.id, ctx.now());
+      await ctx.limiters.mfa.reset(`mfa:${admin.id}`);
+      await event(ctx, req, res, { type: "MFA_CHALLENGE_PASSED", result: "SUCCESS", adminUserId: admin.id, metadata: { method: "whatsapp" } });
+      res.json({ verified: true });
+    }),
+  );
+
+  // Removing the number needs a signed-in session with a fresh confirmation, and an authenticator app to fall back on (else the person would be locked out).
+  router.post(
+    "/mfa/whatsapp/remove",
+    asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
+      const admin = who(req);
+      if (!admin) return void res.status(401).json({ error: "Not authenticated." });
+      if (!req.adminSession?.mfaVerifiedAt) return void res.status(403).json({ error: "Finish signing in first.", code: "MFA_REQUIRED" });
+      if (!reauthIsFresh(req.adminSession, ctx.policy, ctx.now())) return void res.status(403).json({ error: "Please confirm your password and code to continue.", code: "REAUTH_REQUIRED" });
+      if (!(await hasConfirmedTotp(ctx.prisma, admin.id))) return void res.status(409).json({ error: "Set up an authenticator app first, so you are not locked out.", code: "LAST_METHOD" });
+      await removeWhatsappFactor(ctx.prisma, admin.id);
+      await event(ctx, req, res, { type: "WHATSAPP_REMOVED", result: "SUCCESS", adminUserId: admin.id });
+      res.json({ removed: true });
+    }),
+  );
+
   // A fresh confirmation (password, and the authenticator code when a second factor applies) for sensitive actions.
   router.post(
     "/session/reauth",
@@ -300,6 +458,12 @@ export function createSessionRouter(ctx: AdminAuthContext): Router {
         codeOk = false;
         if (parsed.data.code) {
           try { await verifyTotp(ctx.prisma, ctx.mfaKey, admin.id, parsed.data.code, ctx.now()); codeOk = true; } catch (error) { if (!(error instanceof MfaError)) throw error; }
+          // Not an authenticator code: it may be the WhatsApp code this session asked for.
+          const wa = whatsappDeps(ctx);
+          const sessionId = req.adminSession?.id ?? admin.jti;
+          if (!codeOk && (await hasLiveWhatsappCode(wa, admin.id, sessionId))) {
+            try { await verifyWhatsappCode(wa, admin.id, sessionId, ["REAUTH"], parsed.data.code); codeOk = true; } catch (error) { if (!(error instanceof WhatsappCodeError)) throw error; }
+          }
         }
       }
       if (!passwordOk || !codeOk) {

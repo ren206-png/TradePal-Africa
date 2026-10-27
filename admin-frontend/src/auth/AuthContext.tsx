@@ -1,15 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { apiFetch, clearStoredToken, getStoredToken, setMfaRequiredHandler, setUnauthorizedHandler, storeToken } from "../lib/apiClient";
-import type { AdminUser, MfaState } from "../lib/types";
+import type { AdminUser, MfaMethods, MfaState } from "../lib/types";
 
 const ADMIN_STORAGE_KEY = "tradepal_admin_user";
 const MFA_STORAGE_KEY = "tradepal_admin_mfa";
+const MFA_METHODS_STORAGE_KEY = "tradepal_admin_mfa_methods";
 
 interface LoginResponse {
   token: string;
   admin: AdminUser;
   /** Absent from an older server: treated as "no second factor". */
-  mfa?: { state: MfaState };
+  mfa?: { state: MfaState; methods?: MfaMethods };
 }
 
 interface AuthContextValue {
@@ -21,6 +22,8 @@ interface AuthContextValue {
   /** NOT_REQUIRED / VERIFIED means fully signed in; the other two mean the authenticator step is still to do. */
   mfaState: MfaState;
   mfaPending: boolean;
+  /** The second-factor options reported at sign-in (null when the server did not say: treat as an authenticator app only). */
+  mfaMethods: MfaMethods | null;
   /** Called by the authenticator screen once the second factor has been passed. */
   completeMfa: () => void;
 }
@@ -42,9 +45,22 @@ function readStoredMfa(): MfaState {
   return raw === "ENROLMENT_REQUIRED" || raw === "CHALLENGE_REQUIRED" || raw === "VERIFIED" ? raw : "NOT_REQUIRED";
 }
 
+function readStoredMethods(): MfaMethods | null {
+  const raw = localStorage.getItem(MFA_METHODS_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as MfaMethods;
+    return parsed && typeof parsed.totp === "boolean" && parsed.whatsapp ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [admin, setAdmin] = useState<AdminUser | null>(() => (getStoredToken() ? readStoredAdmin() : null));
   const [mfaState, setMfaState] = useState<MfaState>(() => (getStoredToken() ? readStoredMfa() : "NOT_REQUIRED"));
+
+  const [mfaMethods, setMfaMethods] = useState<MfaMethods | null>(() => (getStoredToken() ? readStoredMethods() : null));
 
   const login = useCallback(async (email: string, password: string) => {
     const result = await apiFetch<LoginResponse>("/admin/login", {
@@ -56,6 +72,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     storeToken(result.token);
     localStorage.setItem(ADMIN_STORAGE_KEY, JSON.stringify(result.admin));
     localStorage.setItem(MFA_STORAGE_KEY, state);
+    const methods = result.mfa?.methods ?? null;
+    if (methods) localStorage.setItem(MFA_METHODS_STORAGE_KEY, JSON.stringify(methods));
+    else localStorage.removeItem(MFA_METHODS_STORAGE_KEY);
+    setMfaMethods(methods);
     setMfaState(state);
     setAdmin(result.admin);
     return state;
@@ -72,6 +92,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearStoredToken();
     localStorage.removeItem(ADMIN_STORAGE_KEY);
     localStorage.removeItem(MFA_STORAGE_KEY);
+    localStorage.removeItem(MFA_METHODS_STORAGE_KEY);
+    setMfaMethods(null);
     setMfaState("NOT_REQUIRED");
     setAdmin(null);
   }, []);
@@ -109,8 +131,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const mfaPending = mfaState === "ENROLMENT_REQUIRED" || mfaState === "CHALLENGE_REQUIRED";
   const value = useMemo<AuthContextValue>(
-    () => ({ admin, isAuthenticated: admin !== null, login, logout, mfaState, mfaPending, completeMfa }),
-    [admin, login, logout, mfaState, mfaPending, completeMfa],
+    () => ({ admin, isAuthenticated: admin !== null, login, logout, mfaState, mfaPending, mfaMethods, completeMfa }),
+    [admin, login, logout, mfaState, mfaPending, mfaMethods, completeMfa],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

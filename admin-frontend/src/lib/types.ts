@@ -8,6 +8,12 @@ export type AdminRole = "SUPER_ADMIN" | "OPERATOR" | "SUPPORT" | "ANALYST" | "FI
 /** Where a sign-in stands with the second factor (admin-console Phase 2). */
 export type MfaState = "NOT_REQUIRED" | "ENROLMENT_REQUIRED" | "CHALLENGE_REQUIRED" | "VERIFIED";
 
+/** Which second-factor options a person has, and whether this server offers WhatsApp codes at all. */
+export interface MfaMethods {
+  totp: boolean;
+  whatsapp: { available: boolean; enrolled: boolean; last4: string | null };
+}
+
 export interface AdminUser {
   id: string;
   email: string;

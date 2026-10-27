@@ -90,6 +90,11 @@ export interface OutboundTemplateMessage {
   templateName: string;
   templateLanguageCode: string;
   bodyParams?: string[];
+  /**
+   * For a Meta AUTHENTICATION template (a one-time code with a copy-code button): the code, repeated into the button as Meta requires.
+   * Unused by every other template.
+   */
+  otpButtonCode?: string;
 }
 
 async function assertRegisteredMerchant(deps: OutboundGatewayDeps, phoneNumber: string): Promise<void> {
@@ -161,10 +166,11 @@ export async function sendWhatsAppTemplateMessage(
 ): Promise<void> {
   await assertRegisteredMerchant(deps, message.toPhoneNumber);
 
-  const components =
+  const components: Record<string, unknown>[] =
     message.bodyParams && message.bodyParams.length > 0
       ? [{ type: "body", parameters: message.bodyParams.map((text) => ({ type: "text", text })) }]
       : [];
+  if (message.otpButtonCode) components.push({ type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: message.otpButtonCode }] });
 
   await postToGraphApi(deps, {
     messaging_product: "whatsapp",

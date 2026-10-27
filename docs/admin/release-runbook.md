@@ -102,3 +102,8 @@ No migration. New behaviour to plan for at release:
 2. Refund execution is a second, separate switch: `ADMIN_REFUND_EXECUTION_ENABLED=true`. Do not set it until the refund policy owner is ready for real money to move; approvals work without it.
 3. Roles added after the original four can no longer read the old open routes (businesses, plans, audit, mobile-money alerts, invoices and similar) unless their permissions include them. The original four roles keep exactly the access they had.
 4. Smoke check after enabling: as an owner open Staff access, Audit logs (try a filter), System health (the AI providers block), Refund requests; as a test moderator confirm the console shows only Overview, Businesses, Moderation, Feature flags.
+
+
+## WhatsApp second-factor option
+
+Migration `20261104000000_admin_whatsapp_codes` (additive: two new tables, one index each, one foreign key). Nothing changes for anyone on deploy: the option is off until `ADMIN_WHATSAPP_CODES_ENABLED=true` and `WHATSAPP_ADMIN_CODE_TEMPLATE_NAME` are set. Release order: (1) create and get the Meta Authentication template approved (not done by this repo), (2) deploy (the migration runs in the pre-deploy command), (3) set the two variables, (4) sign in as an owner, add your own number in Account security, sign out and back in with a WhatsApp code, (5) only then tell staff. Rollback: unset `ADMIN_WHATSAPP_CODES_ENABLED`; people who enrolled only a WhatsApp number can still use a recovery code, and `scripts/resetAdminMfa.ts` lets them start over. Not rehearsed: a real WhatsApp delivery (no template exists yet) and a restored copy of the production backup.
