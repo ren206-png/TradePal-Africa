@@ -49,7 +49,9 @@ import { getTenantScopedClient } from "../db/tenantScope.js";
 import { findAdminUserByEmail } from "./adminUsers.js";
 import { asyncHandler } from "./asyncHandler.js";
 import { issueAdminJwt, verifyAdminPassword } from "./auth.js";
-import { requireAdminAuth, requireAdminRole, type AuthenticatedAdminRequest } from "./authMiddleware.js";
+import { requireAdminAuth, requireAdminRole, requireMfaComplete, type AuthenticatedAdminRequest } from "./authMiddleware.js";
+import { createStaffRouter, invitationAcceptHandler } from "./staffAdmin.js";
+import { buildAuthContext, createLoginHandler, createSessionRouter, denialRecorder, type AdminAuthRouteOptions } from "./adminAuthRoutes.js";
 import { parsePaginationParams, paginate } from "./pagination.js";
 import { InMemoryLoginRateLimiter, type LoginRateLimiter } from "./rateLimiter.js";
 import { revokeAdminToken } from "./tokenRevocation.js";
@@ -167,6 +169,13 @@ export interface CreateAdminRouterOptions {
   deletionResolutionOutboundGateway?: Omit<DeletionResolutionOutboundGateway, "prisma">;
   /** Expansion Phase 1: step-up limiter / clock seams for the platform admin core router. */
   platform?: PlatformAdminOptions;
+  /**
+   * Admin-console Phase 2: session rules, second-factor enforcement and its key. Left out (tests, local tools) means the sign-in keeps
+   * working as before: no enforcement, legacy tokens accepted. server.ts passes the real values from the environment.
+   */
+  auth?: AdminAuthRouteOptions & { requireSession?: boolean };
+  /** Admin-console Phase 2: where invitation links point, and the limiter for the public accept route. */
+  staff?: { publicBaseUrl?: string; inviteRateLimiter?: LoginRateLimiter };
 }
 
 export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, options: CreateAdminRouterOptions = {}): Router {
@@ -174,63 +183,24 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.use(rejectNulBytes);
   const loginRateLimiter = options.loginRateLimiter ?? new InMemoryLoginRateLimiter();
 
-  router.post(
-    "/login",
-    asyncHandler(async (req, res) => {
-      const parsed = loginBodySchema.safeParse(req.body);
-      if (!parsed.success) return sendZodError(res, parsed.error);
-
-      // Rate-limit keyed by the attempted email (case-insensitive) — closes the
-      // "unlimited password guesses against a known admin email" gap. Every
-      // attempt (valid or not) is counted so this can't be bypassed by mixing
-      // in occasional correct-looking requests.
-      const rateLimitKey = parsed.data.email.toLowerCase();
-      const rateLimit = await loginRateLimiter.consume(rateLimitKey);
-      if (!rateLimit.allowed) {
-        res
-          .status(429)
-          .set("Retry-After", String(rateLimit.retryAfterSeconds))
-          .json({ error: "Too many login attempts. Try again later." });
-        return;
-      }
-
-      const admin = await findAdminUserByEmail(prisma, parsed.data.email);
-      const passwordValid = admin ? await verifyAdminPassword(parsed.data.password, admin.passwordHash) : false;
-
-      // Deliberately identical response whether the email doesn't exist or the password is wrong,
-      // so this endpoint can't be used to enumerate valid admin email addresses.
-      if (!admin || !passwordValid || admin.disabledAt) {
-        res.status(401).json({ error: "Invalid email or password." });
-        return;
-      }
-
-      // Successful login clears the rate-limit counter so a few earlier typos don't lock the admin out.
-      await loginRateLimiter.reset(rateLimitKey);
-
-      const token = issueAdminJwt({ adminUserId: admin.id, email: admin.email, role: admin.role }, jwtSecret);
-      res.json({ token, admin: { id: admin.id, email: admin.email, name: admin.name, role: admin.role } });
-    }),
-  );
-
-  router.use(requireAdminAuth(prisma, jwtSecret));
+  const authCtx = buildAuthContext(prisma, jwtSecret, { ...options.auth, ...(options.loginRateLimiter ? { loginRateLimiter: options.loginRateLimiter } : {}) });
   router.use(correlationMiddleware());
+  router.use(denialRecorder(authCtx));
+  router.post("/login", createLoginHandler(authCtx));
+  router.post("/invitations/accept", invitationAcceptHandler(prisma, { jwtSecret, ...(options.staff?.inviteRateLimiter ? { limiter: options.staff.inviteRateLimiter } : {}), now: authCtx.now }));
+
+  router.use(requireAdminAuth(prisma, jwtSecret, { policy: authCtx.policy, enforceMfa: authCtx.enforceMfa, requireSession: options.auth?.requireSession ?? false, now: authCtx.now }));
+  // Sign-in state, second-factor and sign-out routes: reachable by a half-open session. Everything after the gate needs the factor done.
+  router.use(createSessionRouter(authCtx));
+  router.use(requireMfaComplete(prisma));
   router.use(auditAdminWrites(prisma, options.platform?.alertDeps));
+  router.use(createStaffRouter(prisma, { jwtSecret, policy: authCtx.policy, now: authCtx.now, ...(options.staff?.publicBaseUrl ? { publicBaseUrl: options.staff.publicBaseUrl } : {}) }));
 
   // Expansion Phase 1: admin console core (overview, system health, step-up, support access, admin list).
   router.use(createPlatformAdminRouter(prisma, jwtSecret, options.platform));
 
   // Step-up (flag adminStepUp, default off) is layered on top of each write route's existing role check.
   const stepUp = (permission: PlatformPermission) => requireStepUp(prisma, jwtSecret, permission);
-
-  router.post(
-    "/logout",
-    asyncHandler(async (req: AuthenticatedAdminRequest, res) => {
-      if (req.adminUser) {
-        await revokeAdminToken(prisma, req.adminUser.jti, req.adminUser.exp);
-      }
-      res.json({ message: "Logged out." });
-    }),
-  );
 
   router.get(
     "/businesses",

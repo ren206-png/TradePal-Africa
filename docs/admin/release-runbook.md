@@ -71,4 +71,24 @@ Do not run this once `SecurityEvent` or `StaffRoleChange` rows exist: they are a
 
 ### Environment variables
 
-None are added by Phase 1. Names that later phases add (values are never recorded here): `ADMIN_CONSOLE_ENABLED`, `ADMIN_MODULE_*`, `ADMIN_BOOTSTRAP_ALLOWED`, `ADMIN_REFUND_EXECUTION_ENABLED`.
+None are added by Phase 1. Phase 2 adds the names listed in `setup.md` section 1 (all optional; the master switch defaults to off). Names that later phases add (values are never recorded here): `ADMIN_CONSOLE_ENABLED`, `ADMIN_MODULE_*`, `ADMIN_BOOTSTRAP_ALLOWED`, `ADMIN_REFUND_EXECUTION_ENABLED`.
+
+
+## Phase 2: sign-in, second factor, staff access
+
+### Migrations
+- `20261103000000_admin_session_cascade` (one foreign key made `ON DELETE CASCADE`: a session goes away with its account). Rehearsed with the full chain on the scratch Postgres (see the Phase 2 rehearsal below).
+
+### Release order (nothing is switched on by deploying)
+1. Take a fresh Railway Postgres backup. Confirm the Postgres version is 12 or newer.
+2. Set `ADMIN_MFA_ENCRYPTION_KEY` (generate it yourself, 64 hex characters) **before** switching the console on. Without it the console starts but nobody can finish signing in (the server logs a clear error at start).
+3. Deploy. The pre-deploy command applies the migrations. **With `ADMIN_CONSOLE_ENABLED` unset the admin API is off: the live console will show errors until you set it.** This is deliberate (the master switch defaults to off).
+4. Set `ADMIN_FRONTEND_PUBLIC_URL` (invitation links) and then `ADMIN_CONSOLE_ENABLED=true`.
+5. Each existing owner signs in, sets up the authenticator, saves the recovery codes.
+6. Smoke checks: wrong password gives 401 and a `LOGIN_FAILED` security event; a correct password then the code opens Businesses; `GET /admin/security-events` as an owner shows the sign-ins; an invitation to a test address produces a link that works once; sign-out ends the session.
+
+### Rollback
+Set `ADMIN_CONSOLE_ENABLED` back to anything other than `true`: the admin API disappears (WhatsApp and the rest of the API are unaffected). The migrations are additive and stay in place. Do not unset `ADMIN_MFA_ENCRYPTION_KEY` while people are enrolled: their secrets cannot be read without it.
+
+### Rehearsals run (2026-10-27)
+Full-suite tests against a real Postgres 18.4 scratch server (parallel connections, non-superuser migration owner): see `progress.md` for the counts. Not rehearsed: a restored copy of the production backup; the live Vercel site; email delivery of invitations (not built).

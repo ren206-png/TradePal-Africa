@@ -1,6 +1,6 @@
 # Admin console: progress
 
-Branch: `feat/admin-console`. Last updated: 2026-10-27 (end of Phase 1). Status words: **done** = built and tested locally; **not started**; **stub** = a truthful "not available" state. Nothing here is deployed or run in production.
+Branch: `feat/admin-console`. Last updated: 2026-10-27 (end of Phase 2). Status words: **done** = built and tested locally; **not started**; **stub** = a truthful "not available" state. Nothing here is deployed or run in production.
 
 Design decisions taken (defaults, confirmed by "go ahead" on 2026-10-27; revisit at any point): extend the existing admin system, do not rebuild; keep `AdminUser` as the staff identity; add `FINANCE_ADMIN` and `MODERATOR` to the existing four roles and use the brief's names as labels; keep the single `admin:` permission vocabulary.
 
@@ -29,6 +29,26 @@ Design decisions taken (defaults, confirmed by "go ahead" on 2026-10-27; revisit
 | Server-side sessions for idle/absolute/reauth | `AdminSession` (admin audience only) | `tests/adminFoundation.test.ts` | done (table); use in Phase 2 |
 | Second factor storage (encrypted secret, replay counter, one live factor) | `AdminMfaFactor`, `AdminRecoveryCode` | `tests/adminFoundation.test.ts` | done (tables); code in Phase 2 |
 | Migration additive, rehearsed, with rollback and runbook | `prisma/migrations/20261102000000_admin_console_foundation/` ; `docs/admin/release-runbook.md` | scratch Postgres 18.4: full-chain rehearsal, upgrade rehearsal in one transaction, drift test, protection test | done locally; production rehearsal on a restored backup **not run** |
+
+## Phase 2: owner bootstrap, staff sign-in, MFA, recovery
+
+| Requirement | Implementation | Test | Status |
+|---|---|---|---|
+| Admin sign-in with an active staff account + completed second factor, checked on every privileged request | `src/admin/adminAuthRoutes.ts`, `authMiddleware.ts` (`requireAdminAuth`, `requireMfaComplete`) | `tests/adminSignIn.test.ts` | done |
+| Distinct admin session type, absolute 12 h / idle 30 min / half-open 15 min, revocation | `AdminSession`, `src/admin/adminSessions.ts`, audience claim `tradepal-admin` | `tests/adminSignIn.test.ts` (idle, absolute, half-open, sign-out, wrong audience, no session) | done (bearer token, not a cookie: see `security.md`) |
+| Re-authentication window (10 min) for sensitive actions | `requireRecentReauth`, `POST /admin/session/reauth` | `tests/adminSignIn.test.ts` | done; applied to staff and ownership changes |
+| TOTP MFA, encrypted secret, replay guard, 8 hashed single-use recovery codes | `src/admin/mfa.ts` (otplib v13, AES-256-GCM) | `tests/adminSignIn.test.ts` | done |
+| Rate limits on sign-in, second factor, re-auth, invitation redemption (shared store when Redis is on) | `adminAuthRoutes.ts`, `staffAdmin.ts`, `server.ts` | `tests/adminSignIn.test.ts` (per email, per address, per admin) | done; in-memory unless `RATE_LIMIT_BACKEND=redis` |
+| Generic errors, no enumeration | identical 401; identical invitation failures | `tests/adminSignIn.test.ts`, `tests/adminStaff.test.ts` | done |
+| Recovery without a public bypass | recovery codes; `scripts/resetAdminMfa.ts` (audited, gated, identity typed twice) | `tests/adminStaff.test.ts` | done |
+| First-owner bootstrap command | `scripts/bootstrapOwner.ts` + `src/admin/ownerBootstrap.ts` | `tests/adminStaff.test.ts` | done (domain functions tested; the thin script wrapper was run only for its usage message) |
+| Invitations (hashed, expiring, single-use, email-bound) and ownership transfer (two-step, one open) | `src/admin/staffAdmin.ts` | `tests/adminStaff.test.ts` | done; the link is shown once, no email is sent |
+| Last-owner protection | DB trigger (Phase 1) + API error mapping | `tests/adminFoundation.test.ts`, `tests/adminStaff.test.ts` | done |
+| Security events (sign-in, MFA, denied access, staff changes) without secrets | `src/admin/securityEvents.ts` | `tests/adminSignIn.test.ts` | done |
+| Master switch, `no-store` | `src/admin/mount.ts` | `tests/adminStaff.test.ts` | done; **off by default: the live console needs `ADMIN_CONSOLE_ENABLED=true` at release** |
+| Queued admin actions re-check the actor | `src/admin/actorRevalidation.ts` | `tests/adminStaff.test.ts` | done (no queued admin job exists yet; first user will be refunds in Phase 3) |
+| Sign-in screens: login, authenticator setup and challenge, recovery code, invitation page, re-confirmation prompt | `admin-frontend/src/pages/MfaPage.tsx`, `AcceptInvitePage.tsx`, `GuardPrompts.tsx` | 13 new tests in `admin-frontend` | done |
+| Direct links (such as `/login`) no longer 404 on the admin site | `admin-frontend/vercel.json` | not tested here (needs a deploy) | done in code; **not deployed** |
 
 ## Checks run at the end of Phase 1 (2026-10-27)
 

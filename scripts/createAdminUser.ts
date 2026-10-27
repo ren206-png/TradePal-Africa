@@ -17,7 +17,9 @@ import { createAdminUser, findAdminUserByEmail } from "../src/admin/adminUsers.j
 const VALID_ROLES: readonly AdminRole[] = ["SUPER_ADMIN", "ANALYST", "SUPPORT"];
 
 async function main(): Promise<void> {
-  const [email, name, role, password] = process.argv.slice(2);
+  // The password can come from ADMIN_NEW_PASSWORD instead of the command line, so it does not end up in shell history or the process list.
+  const [email, name, role, passwordArg] = process.argv.slice(2);
+  const password = passwordArg ?? process.env["ADMIN_NEW_PASSWORD"];
 
   if (!email || !name || !role || !password) {
     console.error("Usage: npx tsx scripts/createAdminUser.ts <email> <name> <role> <password>");

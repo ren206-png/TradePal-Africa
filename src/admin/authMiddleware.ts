@@ -1,11 +1,27 @@
-import type { AdminRole, PrismaClient } from "@prisma/client";
+import type { AdminRole, AdminSession, PrismaClient } from "@prisma/client";
 import type { NextFunction, Request, Response } from "express";
 import { asyncHandler } from "./asyncHandler.js";
 import { verifyAdminJwt, type AdminJwtPayload } from "./auth.js";
 import { isAdminTokenRevoked } from "./tokenRevocation.js";
+import { DEFAULT_SESSION_POLICY, type AdminSessionPolicy } from "./adminConfig.js";
+import { loadSession, reauthIsFresh } from "./adminSessions.js";
+import { hasConfirmedFactor } from "./mfa.js";
 
 export interface AuthenticatedAdminRequest extends Request {
   adminUser?: AdminJwtPayload;
+  /** Admin-console Phase 2: the server-side session behind this token (absent only for a legacy token while sessions are not required). */
+  adminSession?: AdminSession;
+  /** True when this person must pass a second factor before anything but enrolment, challenge and sign-out. */
+  adminMfaApplies?: boolean;
+}
+
+export interface AdminAuthOptions {
+  policy?: AdminSessionPolicy;
+  /** When true a token without a live server-side session is refused. The server turns this on; tests that mint tokens directly leave it off. */
+  requireSession?: boolean;
+  /** Second-factor enforcement for everyone (a person with `mfaRequiredAt` set is always held to it). */
+  enforceMfa?: boolean;
+  now?: () => Date;
 }
 
 /**
@@ -23,7 +39,15 @@ export interface AuthenticatedAdminRequest extends Request {
  * dropped DB connection) must reach the centralized error handler and fail
  * only the one request, not crash the whole process.
  */
-export function requireAdminAuth(prisma: PrismaClient, jwtSecret: string) {
+export function requireAdminAuth(prisma: PrismaClient, jwtSecret: string, options: AdminAuthOptions = {}) {
+  const policy = options.policy ?? DEFAULT_SESSION_POLICY;
+  const SESSION_MESSAGES: Record<string, { code: string; error: string }> = {
+    NONE: { code: "SESSION_REQUIRED", error: "Please sign in again." },
+    REVOKED: { code: "SESSION_REVOKED", error: "This session has been ended. Please sign in again." },
+    EXPIRED: { code: "SESSION_EXPIRED", error: "This session has expired. Please sign in again." },
+    IDLE: { code: "SESSION_IDLE", error: "You were signed out after a period of inactivity. Please sign in again." },
+    MFA_TIMEOUT: { code: "SIGN_IN_EXPIRED", error: "The sign-in was not completed in time. Please sign in again." },
+  };
   return asyncHandler(async (req: AuthenticatedAdminRequest, res: Response, next: NextFunction): Promise<void> => {
     const header = req.headers.authorization;
     const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
@@ -46,14 +70,61 @@ export function requireAdminAuth(prisma: PrismaClient, jwtSecret: string) {
 
     // Re-read the account on every request (Phase 8): a signature-valid token for an admin who was disabled, removed or demoted since it
     // was issued must not keep its old power for the rest of its 12 hours. The role comes from the database, not from the token.
-    const account = await prisma.adminUser.findUnique({ where: { id: payload.adminUserId }, select: { role: true, disabledAt: true } });
+    const account = await prisma.adminUser.findUnique({ where: { id: payload.adminUserId }, select: { role: true, disabledAt: true, mfaRequiredAt: true } });
     if (!account || account.disabledAt) {
-      res.status(401).json({ error: "This account is no longer active." });
+      res.status(401).json({ error: "This account is no longer active.", code: "ACCOUNT_INACTIVE" });
       return;
     }
+    const mfaApplies = (options.enforceMfa ?? false) || account.mfaRequiredAt !== null;
+
+    const verdict = await loadSession(prisma, payload.jti, policy, mfaApplies, options.now?.() ?? new Date());
+    if (!verdict.ok) {
+      if (verdict.reason !== "NONE" || options.requireSession) {
+        const m = SESSION_MESSAGES[verdict.reason]!;
+        res.status(401).json({ error: m.error, code: m.code });
+        return;
+      }
+      // Legacy token (no session row) while sessions are not yet required: accepted exactly as before.
+    } else {
+      if (verdict.session.adminUserId !== payload.adminUserId) {
+        res.status(401).json({ error: "Invalid or expired token." });
+        return;
+      }
+      req.adminSession = verdict.session;
+    }
+    req.adminMfaApplies = mfaApplies;
     req.adminUser = { ...payload, role: account.role };
     next();
   });
+}
+
+/**
+ * Must run after `requireAdminAuth`. A person who must pass a second factor and has not yet, in THIS session, reaches only the routes
+ * mounted before this gate (enrolment, challenge, session info, sign-out). Everything else answers 403 with a code the screen can act on.
+ */
+export function requireMfaComplete(prisma: PrismaClient) {
+  return asyncHandler(async (req: AuthenticatedAdminRequest, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.adminMfaApplies || req.adminSession?.mfaVerifiedAt) {
+      next();
+      return;
+    }
+    const enrolled = req.adminUser ? await hasConfirmedFactor(prisma, req.adminUser.adminUserId) : false;
+    res.status(403).json({
+      error: enrolled ? "Enter your authenticator code to continue." : "Set up your authenticator app to continue.",
+      code: enrolled ? "MFA_REQUIRED" : "MFA_ENROLMENT_REQUIRED",
+    });
+  });
+}
+
+/** Sensitive actions need a password + second-factor confirmation no older than the policy window. */
+export function requireRecentReauth(policy: AdminSessionPolicy = DEFAULT_SESSION_POLICY, now: () => Date = () => new Date()) {
+  return (req: AuthenticatedAdminRequest, res: Response, next: NextFunction): void => {
+    if (!req.adminSession || reauthIsFresh(req.adminSession, policy, now())) {
+      next();
+      return;
+    }
+    res.status(403).json({ error: "Please confirm your password and authenticator code to continue.", code: "REAUTH_REQUIRED" });
+  };
 }
 
 /**

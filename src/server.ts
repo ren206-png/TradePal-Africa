@@ -3,7 +3,8 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { Redis } from "ioredis";
-import { createAdminRouter } from "./admin/adminRoutes.js";
+import { mountAdminConsole } from "./admin/mount.js";
+import { authOptionsFromEnv } from "./admin/adminAuthRoutes.js";
 import { createOfflineRouter } from "./offline/routes.js";
 import { installAlertDeliveryRecorder } from "./monitoring/alertRecorder.js";
 import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
@@ -15,7 +16,7 @@ import { createMerchantPaymentWebhookRouter } from "./payments/webhookRoute.js";
 import { createPawaPayBillingWebhookRouter } from "./pawapay/billingWebhook.js";
 import { createCourierWebhookRouter } from "./couriers/webhook.js";
 import { couriersEnabled, getCourierRegistry } from "./couriers/registry.js";
-import { RedisLoginRateLimiter } from "./admin/rateLimiter.js";
+import { InMemoryLoginRateLimiter, RedisLoginRateLimiter } from "./admin/rateLimiter.js";
 import {
   buildDeletionResolutionOutboundGatewayFromEnv,
   buildSubscriptionExpiryOutboundGatewayFromEnv,
@@ -221,13 +222,13 @@ const adminFrontendOrigins = (process.env["ADMIN_FRONTEND_ORIGINS"] ?? "")
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0);
 
-app.use(
-  "/admin",
-  cors({
-    origin: adminFrontendOrigins,
-    credentials: false, // the admin frontend sends the JWT via an Authorization header, not cookies
-  }),
-  createAdminRouter(prisma, adminJwtSecret, {
+// Admin-console Phase 2: mounted only while ADMIN_CONSOLE_ENABLED=true (see src/admin/mount.ts). Off means every /admin path is an ordinary 404.
+// Sessions are required here (a bare token with no live server-side session is refused) and the second factor is enforced unless ADMIN_MFA_ENFORCE=false.
+mountAdminConsole(app, {
+  prisma,
+  jwtSecret: adminJwtSecret,
+  allowedOrigins: adminFrontendOrigins,
+  routerOptions: {
     ...(outboundGateway ? { outboundGateway } : {}),
     // Phase 6: the admin "send reminder" action uses the same WhatsApp credentials as the other subscription notices, to the business's own owner.
     platform: {
@@ -238,8 +239,24 @@ app.use(
     },
     ...(deletionResolutionOutboundGateway ? { deletionResolutionOutboundGateway } : {}),
     ...(loginRateLimiter ? { loginRateLimiter } : {}),
-  }),
-);
+    auth: {
+      ...authOptionsFromEnv(),
+      requireSession: true,
+      // 30 sign-in attempts per caller address per 15 minutes, whether or not Redis shares the count across instances.
+      loginIpRateLimiter: rateLimitRedisClient ? new RedisLoginRateLimiter(rateLimitRedisClient, 30, 15 * 60_000) : new InMemoryLoginRateLimiter(30, 15 * 60_000),
+      ...(rateLimitRedisClient
+        ? {
+            mfaRateLimiter: new RedisLoginRateLimiter(rateLimitRedisClient, 5, 10 * 60_000),
+            reauthRateLimiter: new RedisLoginRateLimiter(rateLimitRedisClient, 5, 10 * 60_000),
+          }
+        : {}),
+    },
+    staff: {
+      ...(process.env["ADMIN_FRONTEND_PUBLIC_URL"] ? { publicBaseUrl: process.env["ADMIN_FRONTEND_PUBLIC_URL"] } : {}),
+      ...(rateLimitRedisClient ? { inviteRateLimiter: new RedisLoginRateLimiter(rateLimitRedisClient, 10, 60 * 60_000) } : {}),
+    },
+  },
+});
 
 // Merchant-payment provider callbacks (expansion Phase 5). Always mounted, but only providers in the adapter registry answer: in production
 // the registry is empty until a real adapter is added, so this is a 404 for everything.

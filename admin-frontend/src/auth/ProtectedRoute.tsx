@@ -3,7 +3,9 @@ import { Navigate } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, mfaPending } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+  // Signed in with the password but the authenticator step is still to do: nothing else is reachable until it is done.
+  if (mfaPending) return <Navigate to="/mfa" replace />;
   return <>{children}</>;
 }

@@ -184,7 +184,7 @@ export function requireSupportAccess(prisma: PrismaClient, entity: string): Requ
 /** Platform-level audit row (no business). Used for admin-only actions such as step-up confirmation. */
 export async function recordPlatformAudit(
   prisma: PrismaClient,
-  input: { adminUserId: string; action: string; entityType: string; entityId?: string; businessId?: string; correlationId?: string; metadata?: Prisma.InputJsonValue },
+  input: { adminUserId: string; action: string; entityType: string; entityId?: string; businessId?: string; correlationId?: string; reason?: string; metadata?: Prisma.InputJsonValue },
 ): Promise<void> {
   await prisma.auditLog.create({
     data: {
@@ -194,6 +194,8 @@ export async function recordPlatformAudit(
       action: input.action,
       entityType: input.entityType,
       entityId: input.entityId ?? null,
+      reason: input.reason ?? null,
+      correlationId: input.correlationId ?? null,
       metadata:
         input.correlationId && (input.metadata === undefined || (typeof input.metadata === "object" && input.metadata !== null && !Array.isArray(input.metadata)))
           ? ({ ...((input.metadata as Prisma.JsonObject | undefined) ?? {}), correlationId: input.correlationId } as Prisma.InputJsonValue)

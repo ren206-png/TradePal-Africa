@@ -383,7 +383,7 @@ model AdminSession {
   ipHash            String?
   userAgentHash     String?
 
-  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
 
   @@index([adminUserId, revokedAt])
   @@index([absoluteExpiresAt])

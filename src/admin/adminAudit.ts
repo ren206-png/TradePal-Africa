@@ -42,10 +42,15 @@ const ENTITY_BY_SEGMENT: Record<string, string> = {
   "payment-connections": "ProviderConnection",
   messaging: "Messaging",
   system: "System",
+  staff: "AdminUser",
+  "security-events": "SecurityEvent",
+  session: "AdminSession",
+  mfa: "AdminMfa",
+  invitations: "StaffInvitation",
 };
 
 // Routes with their own, richer audit trail or that are not data writes.
-const SKIP = new Set(["/logout", "/step-up"]);
+const SKIP = new Set(["/logout", "/step-up", "/session/reauth", "/mfa/enroll/start", "/mfa/enroll/confirm", "/mfa/challenge", "/mfa/recovery", "/mfa/recovery-codes/regenerate"]);
 
 /**
  * Guarantee (expansion scenario 28): every successful admin WRITE leaves an audit row with the acting admin, the
@@ -74,6 +79,7 @@ export function auditAdminWrites(prisma: PrismaClient, auditAlertDeps?: AlertEma
         ...(entityId ? { entityId } : {}),
         ...(segment === "businesses" && entityId ? { businessId: entityId } : {}),
         metadata: { correlationId: correlationIdOf(res), status: res.statusCode, ...(reason ? { reason } : {}) },
+        ...(reason ? { reason } : {}),
         correlationId: correlationIdOf(res),
       })
         .catch((error) => {

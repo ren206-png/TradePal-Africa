@@ -29,7 +29,7 @@ function LogoMark() {
 }
 
 export function LoginPage() {
-  const { isAuthenticated, login } = useAuth();
+  const { isAuthenticated, mfaPending, login } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,15 +37,15 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  if (isAuthenticated) return <Navigate to="/businesses" replace />;
+  if (isAuthenticated) return <Navigate to={mfaPending ? "/mfa" : "/businesses"} replace />;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await login(email, password);
-      navigate("/businesses", { replace: true });
+      const state = await login(email, password);
+      navigate(state === "ENROLMENT_REQUIRED" || state === "CHALLENGE_REQUIRED" ? "/mfa" : "/businesses", { replace: true });
     } catch (err) {
       // The backend deliberately returns the same message for "unknown email"
       // and "wrong password" (see adminRoutes.ts) so this can't be used to
