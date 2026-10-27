@@ -93,6 +93,10 @@ describe("authenticator step", () => {
     const user = userEvent.setup();
     renderAt("/mfa");
     expect(await screen.findByLabelText("Setup key")).toHaveTextContent("JBSWY3DPEHPK3PXP");
+    // the QR code is drawn in the browser from the setup address (an inline picture, never an outside image address)
+    const qr = await screen.findByRole("img", { name: "QR code to scan with your authenticator app" });
+    expect(qr.getAttribute("src")).toMatch(/^data:image\/svg\+xml;utf8,/);
+    expect(decodeURIComponent(qr.getAttribute("src")!)).toContain("<svg");
     await user.type(screen.getByLabelText(/6-digit code/), "654321");
     await user.click(screen.getByRole("button", { name: "Confirm and finish" }));
     expect(await screen.findByRole("list", { name: "Recovery codes" })).toHaveTextContent("AAAAA-BBBBB");

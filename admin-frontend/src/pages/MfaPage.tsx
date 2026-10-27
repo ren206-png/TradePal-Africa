@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AuthShell } from "../components/AuthShell";
+import { QrCode } from "../components/QrCode";
 import { ApiError, apiFetch } from "../lib/apiClient";
 
 interface EnrolStart { secret: string; otpauthUri: string }
@@ -91,11 +92,13 @@ export function MfaPage() {
 
         {enrolling ? (
           <>
-            <p className="login-lede">Open an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password), add an account with this setup key, then enter the 6-digit code it shows.</p>
+            <p className="login-lede">Open an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password) on your phone and scan this code, then enter the 6-digit code it shows.</p>
             {setup ? (
               <>
+                <QrCode value={setup.otpauthUri} label="QR code to scan with your authenticator app" />
+                <p className="login-lede">Cannot scan it? In the app choose &ldquo;Enter a setup key&rdquo; and type this key (account name TradePal Admin, time based):</p>
                 <p aria-label="Setup key" style={{ fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>{setup.secret}</p>
-                <p><a href={setup.otpauthUri}>Open in my authenticator app</a> (on this phone)</p>
+                <p><a href={setup.otpauthUri}>Open in my authenticator app</a> (only if you are on your phone)</p>
               </>
             ) : (
               <p>Preparing your setup key…</p>
