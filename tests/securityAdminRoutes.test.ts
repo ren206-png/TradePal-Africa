@@ -160,7 +160,7 @@ describe("roles", () => {
   it("the read-only analyst can never change anything: every write is refused with 403", async () => {
     const failures: string[] = [];
     // Self-service routes every signed-in person may call about their own session (sign-out, step-up, second factor, re-authentication).
-    const allowedForAll = new Set(["/logout", "/step-up", "/support-access", "/mfa/enroll/start", "/mfa/enroll/confirm", "/mfa/challenge", "/mfa/recovery", "/mfa/recovery-codes/regenerate", "/session/reauth",
+    const allowedForAll = new Set(["/logout", "/step-up", "/support-access", "/mfa/enroll/start", "/mfa/enroll/confirm", "/mfa/challenge", "/mfa/recovery", "/mfa/recovery-codes/regenerate", "/session/reauth", "/modules",
       // authorised by identity, not by role: only the two people named in an ownership transfer can act on it (anyone else gets 403/404)
       "/staff/ownership-transfers/:id/accept", "/staff/ownership-transfers/:id/cancel"]);
     for (const r of routes.filter((x) => x.method !== "get" && !isLogin(x) && !allowedForAll.has(x.path))) {

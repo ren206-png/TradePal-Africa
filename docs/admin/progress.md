@@ -1,6 +1,6 @@
 # Admin console: progress
 
-Branch: `feat/admin-console`. Last updated: 2026-10-27 (end of Phase 2). Status words: **done** = built and tested locally; **not started**; **stub** = a truthful "not available" state. Nothing here is deployed or run in production.
+Branch: `feat/admin-console`. Last updated: 2026-10-27 (end of Phase 3). Status words: **done** = built and tested locally; **not started**; **stub** = a truthful "not available" state. Nothing here is deployed or run in production.
 
 Design decisions taken (defaults, confirmed by "go ahead" on 2026-10-27; revisit at any point): extend the existing admin system, do not rebuild; keep `AdminUser` as the staff identity; add `FINANCE_ADMIN` and `MODERATOR` to the existing four roles and use the brief's names as labels; keep the single `admin:` permission vocabulary.
 
@@ -49,6 +49,25 @@ Design decisions taken (defaults, confirmed by "go ahead" on 2026-10-27; revisit
 | Queued admin actions re-check the actor | `src/admin/actorRevalidation.ts` | `tests/adminStaff.test.ts` | done (no queued admin job exists yet; first user will be refunds in Phase 3) |
 | Sign-in screens: login, authenticator setup and challenge, recovery code, invitation page, re-confirmation prompt | `admin-frontend/src/pages/MfaPage.tsx`, `AcceptInvitePage.tsx`, `GuardPrompts.tsx` | 13 new tests in `admin-frontend` | done |
 | Direct links (such as `/login`) no longer 404 on the admin site | `admin-frontend/vercel.json` | not tested here (needs a deploy) | done in code; **not deployed** |
+
+## Phase 3: modules
+
+The Phase 0 audit found most modules already existed, so Phase 3 closed gaps in them rather than rebuilding them. `GET /admin/modules` reports, for every module, whether it is switched on and how much is really built (so the console never shows a finished-looking module that is not).
+
+| Module (switch) | State | What Phase 3 added | Not built (truthful) |
+|---|---|---|---|
+| Staff access (`STAFF`) | **available** | Staff, invitations, roles, account status, session revocation, ownership transfer, security events: API (Phase 2) and the console page `Staff access` | none |
+| Audit (`AUDIT`) | **available** | Filters: actor, actor type, action (prefix or exact), target type and id, business, outcome, request id, date range; the new reason, result and request-id columns are returned | none |
+| System health (`HEALTH`) | **available** | Per provider: last success and the last 24 h of refusals, split into rejected key (401/403), missing balance (402) and other; configuration presence (yes/no, never a value) including the deployment-level pawaPay activation flag, shown read-only | Anthropic reports "no credit" as HTTP 400, which the ledger cannot separate from other bad requests (it is classified at call time into its own incident); whether an external monitor polls `/heartbeat` is not visible from here |
+| Merchants (`MERCHANTS`) | **partial** | The list and detail routes now need `admin:view_orgs` for roles added after the original four (R3 from Phase 0 closed) | Approve or reject with recorded verification evidence; the distinction between a security suspension and a subscription lapse is documented, not a new screen |
+| Subscriptions (`SUBSCRIPTIONS`) | **partial** | Least-privilege guard on the legacy reads | Complimentary access grants: the table and its database rules exist, but there is no workflow and entitlement checks do not read it |
+| Refunds (`REFUNDS`) | **available** | Two-person approval for subscription refunds: request, approve exactly the shown fingerprint, reject, cancel, run. Separate permissions; self-approval refused by the database; execution OFF by default (`ADMIN_REFUND_EXECUTION_ENABLED`) and re-checks the person, role and fingerprint at run time; the older single-person routes refuse while the module is on. Console page `Refund requests` | Merchant sales refunds are the merchant's own and intentionally not here |
+| Orders and support (`ORDERS`), Moderation, WhatsApp, Payments | existing, unchanged | Least-privilege guard on the legacy reads; pinned route inventory for the two newest roles | **Payments is partial**: no real sales-payment provider is connected, so monitoring only works against the simulator |
+| Config (`CONFIG`) | **partial** | none | Validated country, currency and timezone settings |
+| Reports (`REPORTS`) | **not built** | none | Exports with expiring download links; XLSX. (CSV exports with formula-safe cells already exist inside their own modules) |
+| Overview (part of `HEALTH`) | existing | none | Panels separating test data, merchant sales volume and billing receipts were not added; recognized revenue is not implemented and is deliberately not shown |
+
+Other Phase 3 changes: per-module switches (`ADMIN_MODULE_*`, all off by default; the module of every route is decided in one place, `src/admin/moduleGate.ts`, and a route with no rule is closed by default); the console hides navigation a person cannot use (the four original roles keep the items they always had); `tests/adminModules.test.ts` pins exactly which routes the moderator and finance roles can reach.
 
 ## Checks run at the end of Phase 1 (2026-10-27)
 

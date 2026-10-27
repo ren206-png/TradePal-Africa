@@ -92,3 +92,13 @@ Set `ADMIN_CONSOLE_ENABLED` back to anything other than `true`: the admin API di
 
 ### Rehearsals run (2026-10-27)
 Full-suite tests against a real Postgres 18.4 scratch server (parallel connections, non-superuser migration owner): see `progress.md` for the counts. Not rehearsed: a restored copy of the production backup; the live Vercel site; email delivery of invitations (not built).
+
+
+## Phase 3: modules
+
+No migration. New behaviour to plan for at release:
+
+1. **Module switches default to off.** With `ADMIN_CONSOLE_ENABLED=true` but no `ADMIN_MODULE_*` set, only sign-in, session and the caller's own permissions answer; every module path is a 404. To restore what people use today, set `ADMIN_MODULE_` to `true` for each of: `MERCHANTS`, `AUDIT`, `HEALTH`, `SUBSCRIPTIONS`, `MODERATION`, `ORDERS`, `WHATSAPP`, `PAYMENTS`, `CONFIG`, plus `STAFF` (new). Set `REFUNDS` only when you want the two-person workflow: **while it is on, the older single-person refund buttons refuse** and people must use Refund requests. Leave `REPORTS` off (not built). `GET /admin/modules` shows the result.
+2. Refund execution is a second, separate switch: `ADMIN_REFUND_EXECUTION_ENABLED=true`. Do not set it until the refund policy owner is ready for real money to move; approvals work without it.
+3. Roles added after the original four can no longer read the old open routes (businesses, plans, audit, mobile-money alerts, invoices and similar) unless their permissions include them. The original four roles keep exactly the access they had.
+4. Smoke check after enabling: as an owner open Staff access, Audit logs (try a filter), System health (the AI providers block), Refund requests; as a test moderator confirm the console shows only Overview, Businesses, Moderation, Feature flags.

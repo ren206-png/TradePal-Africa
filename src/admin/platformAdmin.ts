@@ -5,6 +5,7 @@ import { getInboxStats } from "../domain/callbackInbox.js";
 import { getOutboxStats } from "../domain/outbox.js";
 import { platformPermissionsFor } from "../auth/permissions.js";
 import { evaluateHeartbeats, heartbeatEnabled, requiredHeartbeatServices } from "../monitoring/heartbeat.js";
+import { aiProviderStatus, configurationPresence } from "./adminHealth.js";
 import { asyncHandler } from "./asyncHandler.js";
 import { createAdminTransactionsRouter } from "./adminTransactions.js";
 import { createAdminReorderRouter } from "./adminReorder.js";
@@ -213,6 +214,8 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
         outbox,
         inbox,
         ai: { lastSuccessfulCallAt: lastAi?.createdAt ?? null, lastSuccessfulProvider: lastAi?.provider ?? null },
+        // Admin-console Phase 3: per provider, the last success and the refusals of the last 24 hours (a rejected key and a missing balance are told apart).
+        aiProviders: await aiProviderStatus(prisma, now),
         // Phase 7: whether alerts can actually reach a person: the last proven delivery, the last failure, the last channel check.
         alertChannel: await alertChannelStatus(prisma, now),
         configured: {
@@ -220,6 +223,8 @@ export function createPlatformAdminRouter(prisma: PrismaClient, jwtSecret: strin
           deepseek: Boolean(env["DEEPSEEK_API_KEY"]),
           outboxSweep: env["OUTBOX_SWEEP_ENABLED"] === "true",
         },
+        // Presence of configuration in the environment this process runs in (yes/no, never a value).
+        configuration: configurationPresence(env),
         adminControls: Object.fromEntries(flags.map((f) => [f.key, f.enabledByDefault])),
         generatedAt: now,
       });

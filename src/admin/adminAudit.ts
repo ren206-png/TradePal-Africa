@@ -47,6 +47,7 @@ const ENTITY_BY_SEGMENT: Record<string, string> = {
   session: "AdminSession",
   mfa: "AdminMfa",
   invitations: "StaffInvitation",
+  "refund-requests": "ApprovalRequest",
 };
 
 // Routes with their own, richer audit trail or that are not data writes.

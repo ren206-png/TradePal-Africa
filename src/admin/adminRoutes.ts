@@ -1,5 +1,5 @@
 import { rejectNulBytes } from "../http/rejectNul.js";
-import type { Plan, PrismaClient } from "@prisma/client";
+import type { Plan, Prisma, PrismaClient } from "@prisma/client";
 import { Router, type Response } from "express";
 import { z } from "zod";
 import { getEffectivePlan, type EffectivePlan } from "../domain/billing.js";
@@ -51,12 +51,14 @@ import { asyncHandler } from "./asyncHandler.js";
 import { issueAdminJwt, verifyAdminPassword } from "./auth.js";
 import { requireAdminAuth, requireAdminRole, requireMfaComplete, type AuthenticatedAdminRequest } from "./authMiddleware.js";
 import { createStaffRouter, invitationAcceptHandler } from "./staffAdmin.js";
+import { moduleGate, moduleReport, type ModuleSwitch } from "./moduleGate.js";
+import { blockDirectRefunds, createRefundRouter, type RefundExecutors } from "./refundRequests.js";
 import { buildAuthContext, createLoginHandler, createSessionRouter, denialRecorder, type AdminAuthRouteOptions } from "./adminAuthRoutes.js";
 import { parsePaginationParams, paginate } from "./pagination.js";
 import { InMemoryLoginRateLimiter, type LoginRateLimiter } from "./rateLimiter.js";
 import { revokeAdminToken } from "./tokenRevocation.js";
 import { createPlatformAdminRouter, type PlatformAdminOptions } from "./platformAdmin.js";
-import { recordPlatformAudit, requireFinancialViewer, requireStepUp, requireSupportAccess } from "./platformGuards.js";
+import { recordPlatformAudit, requireFinancialViewer, requireLegacyAccess, requireStepUp, requireSupportAccess } from "./platformGuards.js";
 import { auditAdminWrites, correlationIdOf, correlationMiddleware } from "./adminAudit.js";
 import type { PlatformPermission } from "../auth/permissions.js";
 
@@ -131,6 +133,20 @@ const removeBusinessFeatureFlagOverrideBodySchema = z.object({
   reason: z.string().optional(),
 });
 
+const auditQuery = z.object({
+  businessId: z.string().max(64).optional(),
+  actorId: z.string().max(120).optional(),
+  actorType: z.enum(["MERCHANT", "ADMIN", "SYSTEM"]).optional(),
+  action: z.string().max(120).optional(),
+  actionMode: z.enum(["prefix", "exact"]).optional(),
+  entityType: z.string().max(80).optional(),
+  entityId: z.string().max(120).optional(),
+  correlationId: z.string().max(64).optional(),
+  result: z.enum(["SUCCESS", "FAILURE", "DENIED"]).optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+}).passthrough();
+
 function sendZodError(res: Response, error: z.ZodError): void {
   res.status(400).json({ error: "Invalid request body.", details: error.issues });
 }
@@ -174,6 +190,13 @@ export interface CreateAdminRouterOptions {
    * working as before: no enforcement, legacy tokens accepted. server.ts passes the real values from the environment.
    */
   auth?: AdminAuthRouteOptions & { requireSession?: boolean };
+  /**
+   * Admin-console Phase 3: which modules are on. server.ts passes the environment switches (all off by default); a router built without
+   * this (tests, local tools) has every module on, as before.
+   */
+  modules?: ModuleSwitch;
+  /** Admin-console Phase 3: refund execution seams (tests inject fakes so nothing reaches a payment provider) and the environment it reads. */
+  refunds?: { executors?: RefundExecutors; env?: () => NodeJS.ProcessEnv };
   /** Admin-console Phase 2: where invitation links point, and the limiter for the public accept route. */
   staff?: { publicBaseUrl?: string; inviteRateLimiter?: LoginRateLimiter };
 }
@@ -187,13 +210,23 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   router.use(correlationMiddleware());
   router.use(denialRecorder(authCtx));
   router.post("/login", createLoginHandler(authCtx));
-  router.post("/invitations/accept", invitationAcceptHandler(prisma, { jwtSecret, ...(options.staff?.inviteRateLimiter ? { limiter: options.staff.inviteRateLimiter } : {}), now: authCtx.now }));
+  {
+    const accept = invitationAcceptHandler(prisma, { jwtSecret, ...(options.staff?.inviteRateLimiter ? { limiter: options.staff.inviteRateLimiter } : {}), now: authCtx.now });
+    // redeeming an invitation belongs to the Staff module: with it off the route does not exist
+    router.post("/invitations/accept", (req, res, next) => (options.modules && !options.modules("STAFF") ? next("router") : accept(req, res, next)));
+  }
 
   router.use(requireAdminAuth(prisma, jwtSecret, { policy: authCtx.policy, enforceMfa: authCtx.enforceMfa, requireSession: options.auth?.requireSession ?? false, now: authCtx.now }));
   // Sign-in state, second-factor and sign-out routes: reachable by a half-open session. Everything after the gate needs the factor done.
   router.use(createSessionRouter(authCtx));
   router.use(requireMfaComplete(prisma));
+  // What is switched on and how much of each module is really built (any signed-in staff member may read it).
+  router.get("/modules", (_req, res) => { res.json({ modules: moduleReport(options.modules) }); });
+  router.use(moduleGate(options.modules));
+  // While the Refunds module is on, the older single-person refund routes refuse; the two-person workflow replaces them.
+  router.use(blockDirectRefunds(() => (options.modules ? options.modules("REFUNDS") : false)));
   router.use(auditAdminWrites(prisma, options.platform?.alertDeps));
+  router.use(createRefundRouter(prisma, { jwtSecret, policy: authCtx.policy, now: authCtx.now, ...(options.refunds?.env ? { env: options.refunds.env } : {}), ...(options.refunds?.executors ? { executors: options.refunds.executors } : {}) }));
   router.use(createStaffRouter(prisma, { jwtSecret, policy: authCtx.policy, now: authCtx.now, ...(options.staff?.publicBaseUrl ? { publicBaseUrl: options.staff.publicBaseUrl } : {}) }));
 
   // Expansion Phase 1: admin console core (overview, system health, step-up, support access, admin list).
@@ -204,6 +237,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
   router.get(
     "/businesses",
+    requireLegacyAccess("admin:view_orgs"),
     asyncHandler(async (req, res) => {
       const pagination = parsePaginationParams(req.query as Record<string, unknown>);
       const rows = await prisma.business.findMany({
@@ -220,6 +254,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   // Opening one business shows its people's phone numbers and its subscriptions: with the support-access control on it needs a recorded reason.
   router.get(
     "/businesses/:id",
+    requireLegacyAccess("admin:view_orgs"),
     requireSupportAccess(prisma, "Business"),
     asyncHandler(async (req, res) => {
       const businessId = req.params["id"] as string;
@@ -261,6 +296,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
   router.get(
     "/deletion-requests",
+    requireLegacyAccess("admin:view_support_cases"),
     asyncHandler(async (req, res) => {
       const statusParam = req.query["status"];
       const status =
@@ -351,15 +387,26 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
   router.get(
     "/audit-logs",
+    requireLegacyAccess("admin:view_audit_log"),
     asyncHandler(async (req, res) => {
-      const businessId = req.query["businessId"];
+      // Admin-console Phase 3: filter by actor, action, target, business, outcome, request id and date. Every filter is validated; unknown
+      // keys other than the paging keys are ignored (they never reach the query).
+      const q = auditQuery.safeParse(req.query);
+      if (!q.success) return void res.status(400).json({ error: "Invalid query.", details: q.error.issues });
+      const f = q.data;
       const pagination = parsePaginationParams(req.query as Record<string, unknown>);
-      const rows = await prisma.auditLog.findMany({
-        ...(typeof businessId === "string" ? { where: { businessId } } : {}),
-        orderBy: { createdAt: "desc" },
-        take: pagination.take + 1,
-        skip: pagination.skip,
-      });
+      const where: Prisma.AuditLogWhereInput = {
+        ...(f.businessId ? { businessId: f.businessId } : {}),
+        ...(f.actorId ? { actorId: f.actorId } : {}),
+        ...(f.actorType ? { actorType: f.actorType } : {}),
+        ...(f.action ? { action: f.actionMode === "exact" ? f.action : { startsWith: f.action } } : {}),
+        ...(f.entityType ? { entityType: f.entityType } : {}),
+        ...(f.entityId ? { entityId: f.entityId } : {}),
+        ...(f.correlationId ? { correlationId: f.correlationId } : {}),
+        ...(f.result ? { result: f.result } : {}),
+        ...(f.from || f.to ? { createdAt: { ...(f.from ? { gte: new Date(f.from) } : {}), ...(f.to ? { lte: new Date(f.to) } : {}) } } : {}),
+      };
+      const rows = await prisma.auditLog.findMany({ where, orderBy: { createdAt: "desc" }, take: pagination.take + 1, skip: pagination.skip });
       const { items, pagination: meta } = paginate(rows, pagination);
       res.json({ auditLogs: items, pagination: meta });
     }),
@@ -367,6 +414,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
   router.get(
     "/mobile-money-alerts",
+    requireLegacyAccess("admin:view_payments"),
     requireFinancialViewer(prisma),
     asyncHandler(async (req, res) => {
       const businessId = req.query["businessId"];
@@ -398,6 +446,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
   router.get(
     "/plans",
+    requireLegacyAccess("admin:view_subscriptions"),
     asyncHandler(async (_req, res) => {
       const plans = await listPlans(prisma);
       res.json({ plans: plans.map(serializePlan) });
@@ -452,6 +501,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
   router.get(
     "/feature-flags",
+    requireLegacyAccess("admin:view_orgs"),
     asyncHandler(async (_req, res) => {
       const flags = await listFeatureFlags(prisma);
       res.json({ featureFlags: flags });
@@ -627,6 +677,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
 
   router.get(
     "/businesses/:id/feature-flags",
+    requireLegacyAccess("admin:view_orgs"),
     asyncHandler(async (req, res) => {
       const businessId = req.params["id"] as string;
       if (!(await requireBusinessExists(businessId, res))) return;
@@ -649,6 +700,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   // desynchronize from what Flutterwave actually recorded.
   router.get(
     "/businesses/:id/invoices",
+    requireLegacyAccess("admin:view_subscriptions"),
     requireSupportAccess(prisma, "Invoice"),
     asyncHandler(async (req, res) => {
       const businessId = req.params["id"] as string;
@@ -683,6 +735,7 @@ export function createAdminRouter(prisma: PrismaClient, jwtSecret: string, optio
   // confirmPaymentRequestPayment reacting to a verified Flutterwave webhook.
   router.get(
     "/businesses/:id/payment-requests",
+    requireLegacyAccess("admin:view_payments"),
     requireSupportAccess(prisma, "PaymentRequest"),
     asyncHandler(async (req, res) => {
       const businessId = req.params["id"] as string;

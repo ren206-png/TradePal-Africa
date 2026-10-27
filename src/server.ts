@@ -5,6 +5,7 @@ import helmet from "helmet";
 import { Redis } from "ioredis";
 import { mountAdminConsole } from "./admin/mount.js";
 import { authOptionsFromEnv } from "./admin/adminAuthRoutes.js";
+import { adminModuleEnabled } from "./admin/adminConfig.js";
 import { createOfflineRouter } from "./offline/routes.js";
 import { installAlertDeliveryRecorder } from "./monitoring/alertRecorder.js";
 import { buildAlertEmailDepsFromEnv } from "./config/monitoringEnv.js";
@@ -239,6 +240,8 @@ mountAdminConsole(app, {
     },
     ...(deletionResolutionOutboundGateway ? { deletionResolutionOutboundGateway } : {}),
     ...(loginRateLimiter ? { loginRateLimiter } : {}),
+    // Per-module switches, read from the environment on every request (all off unless set to exactly "true"; the master switch is separate).
+    modules: (module) => adminModuleEnabled(module, process.env),
     auth: {
       ...authOptionsFromEnv(),
       requireSession: true,

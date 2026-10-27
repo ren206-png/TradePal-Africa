@@ -71,3 +71,18 @@ Existing permissions keep their names: for example `admin:manage_admins` covers 
 - pawaPay production activation is a deployment-level decision (`PAWAPAY_BILLING_PRODUCTION_ACTIVATED` and the activation runbook). No admin permission, flag or setting here changes it.
 - No role can edit financial history. Corrections are reversals or adjustments through the existing services, producing new ledger rows.
 - Merchant sales payments and TradePal subscription billing stay separate in routes, credentials and reports; no role merges them into one total.
+
+
+## Routes that predate the matrix (legacy reads)
+
+Several read routes were written before staff permissions existed and had no permission check (any signed-in admin could read them). Changing that for the four original roles would change what people already rely on, so `requireLegacyAccess(permission)` keeps those four roles exactly as they were and gives a role added later (`FINANCE_ADMIN`, `MODERATOR`, and any future one) access only when its own permissions include the one named for the route:
+
+| Route | Permission a newer role needs |
+|---|---|
+| `GET /businesses`, `GET /businesses/:id`, `GET /feature-flags`, `GET /businesses/:id/feature-flags` | `admin:view_orgs` |
+| `GET /deletion-requests` | `admin:view_support_cases` |
+| `GET /audit-logs` | `admin:view_audit_log` |
+| `GET /mobile-money-alerts`, `GET /businesses/:id/payment-requests` | `admin:view_payments` |
+| `GET /plans`, `GET /businesses/:id/invoices` | `admin:view_subscriptions` |
+
+`tests/adminModules.test.ts` pins the exact set of routes each newer role can reach, so a new route cannot open to them by accident.
