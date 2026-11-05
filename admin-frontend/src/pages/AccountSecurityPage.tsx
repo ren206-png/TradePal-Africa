@@ -87,7 +87,7 @@ export function AccountSecurityPage() {
               />
             ) : (
               <>
-                <p>Get your sign-in code in a WhatsApp message instead of using an app.</p>
+                <p>Get your sign-in code on WhatsApp instead of using an app.</p>
                 <button type="button" onClick={() => { setAdding(true); setNotice(null); }}>Add my WhatsApp number</button>
               </>
             )}

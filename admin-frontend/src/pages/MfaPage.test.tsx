@@ -166,6 +166,46 @@ describe("authenticator step", () => {
   });
 });
 
+describe("WhatsApp codes by writing first (no template)", () => {
+  const request = { sent: false, mode: "message", last4: "0100", expiresInSeconds: 600, message: { to: "18258239920", text: "ADMIN CODE", url: "https://wa.me/18258239920?text=ADMIN%20CODE" } };
+  beforeEach(() => { localStorage.clear(); vi.mocked(apiFetch).mockReset(); });
+
+  it("at setup: shows what to send and where, with a ready-made link, then takes the code that comes back", async () => {
+    signedIn("ENROLMENT_REQUIRED");
+    setMethods({ totp: false, whatsapp: { available: true, enrolled: false, last4: null, mode: "message" } });
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce({ secret: "S", otpauthUri: "otpauth://totp/x?secret=S" })
+      .mockResolvedValueOnce(request)
+      .mockResolvedValueOnce({ enrolled: true, recoveryCodes: ["AAAAA-BBBBB"] });
+    const user = userEvent.setup();
+    renderAt("/mfa");
+    await user.click(await screen.findByRole("button", { name: "Get codes by WhatsApp instead" }));
+    await user.type(screen.getByLabelText("WhatsApp number"), "+1 403 555 0100");
+    await user.click(screen.getByRole("button", { name: "Send me a code" }));
+    expect(await screen.findByText("ADMIN CODE")).toBeInTheDocument();
+    expect(screen.getByText("+1 825-823-9920")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open WhatsApp with the message ready/ })).toHaveAttribute("href", "https://wa.me/18258239920?text=ADMIN%20CODE");
+    await user.type(screen.getByLabelText("6-digit code"), "482913");
+    await user.click(screen.getByRole("button", { name: "Confirm and finish" }));
+    expect(await screen.findByRole("list", { name: "Recovery codes" })).toHaveTextContent("AAAAA-BBBBB");
+  });
+
+  it("at sign-in: explains the message first, shows it after asking, then verifies the code", async () => {
+    signedIn("CHALLENGE_REQUIRED");
+    setMethods({ totp: false, whatsapp: { available: true, enrolled: true, last4: "0100", mode: "message" } });
+    vi.mocked(apiFetch).mockResolvedValueOnce(request).mockResolvedValueOnce({ verified: true });
+    const user = userEvent.setup();
+    renderAt("/mfa");
+    expect(screen.getByText(/send a short message from your WhatsApp number ending 0100/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show me how to get my code" }));
+    expect(await screen.findByText("ADMIN CODE")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("6-digit code"), "482913");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(screen.getByText("the console")).toBeInTheDocument());
+    expect(apiFetch).toHaveBeenNthCalledWith(2, "/admin/mfa/whatsapp/verify", { method: "POST", body: { code: "482913" } });
+  });
+});
+
 function setMethods(m: object) {
   localStorage.setItem("tradepal_admin_mfa_methods", JSON.stringify(m));
 }

@@ -432,17 +432,20 @@ model AdminWhatsappFactor {
 /// One code sent over WhatsApp: short-lived, single-use, bound to the sign-in session that asked for it, and limited in guesses.
 /// Only a keyed hash of the code is stored.
 model AdminWhatsappChallenge {
-  id          String    @id @default(uuid())
-  adminUserId String
-  sessionId   String
+  id              String    @id @default(uuid())
+  adminUserId     String
+  sessionId       String
   /// ENROL (proves the number), SIGNIN (second factor after the password) or REAUTH (confirms a sensitive action).
-  purpose     String
-  codeHash    String
-  phoneHash   String
-  attempts    Int       @default(0)
-  expiresAt   DateTime  @db.Timestamptz()
-  consumedAt  DateTime? @db.Timestamptz()
-  createdAt   DateTime  @default(now()) @db.Timestamptz()
+  purpose         String
+  codeHash        String
+  phoneHash       String
+  attempts        Int       @default(0)
+  /// True while the person has been told to message TradePal's WhatsApp number first and has not yet: no code exists until they do (the
+  /// message-first way of getting a code, used when no authentication template is approved).
+  awaitingMessage Boolean   @default(false)
+  expiresAt       DateTime  @db.Timestamptz()
+  consumedAt      DateTime? @db.Timestamptz()
+  createdAt       DateTime  @default(now()) @db.Timestamptz()
 
   @@index([adminUserId, createdAt])
   @@index([phoneHash, createdAt])

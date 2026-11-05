@@ -170,6 +170,12 @@ export const MESSAGE_CLASSES: readonly MessageClassDef[] = [
     notes: "A one-time six-digit code, valid 5 minutes, usable once, bound to the sign-in session that asked for it. Sent by `src/admin/whatsappCodes.ts` through the WhatsApp transport, only while `ADMIN_WHATSAPP_CODES_ENABLED=true`. The first code to a new number proves the staff member controls it. Limited per account and per number; never sent to a number on the block list. Needs a Meta AUTHENTICATION template with a copy-code button.",
   },
   {
+    id: "STAFF_SIGNIN_CODE_REPLY", audience: "STAFF", category: "AUTHENTICATION", pipeline: "REPLY",
+    trigger: "A TradePal staff member sends \"ADMIN CODE\" to TradePal's WhatsApp number from the number they registered, after asking for a code in the admin console.", consentBasis: "ONE_OFF_REPLY",
+    windowRule: "SESSION_ONLY", paramCount: 0,
+    notes: "The no-template way of getting a sign-in code (used while `WHATSAPP_ADMIN_CODE_TEMPLATE_NAME` is unset). A free-text reply, sent only to the person who has just written, from `src/admin/whatsappCodes.ts` via the webhook. One-time six-digit code, valid 5 minutes, usable once, bound to the sign-in session that asked. The message is answered only when it comes from a number with a pending request made from a password-signed-in session; every other message flows on to the ordinary pipeline untouched. Never sent to a number that has not just written.",
+  },
+  {
     id: "UNSUPPORTED_COUNTRY_NOTICE", audience: "CONSUMER", category: "SERVICE", pipeline: "LEGACY",
     trigger: "Someone outside the launch countries messages TradePal first.", consentBasis: "ONE_OFF_REPLY",
     windowRule: "SESSION_ONLY", paramCount: 0,

@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { ApiError, apiFetch } from "../lib/apiClient";
+import type { WhatsappCodeRequest } from "../lib/types";
+import { WhatsappChatPrompt } from "./WhatsappChatPrompt";
 
-interface Sent { sent: boolean; last4: string; expiresInSeconds: number }
 interface Confirmed { enrolled: boolean; recoveryCodes?: string[] }
 
 /**
@@ -11,7 +12,7 @@ interface Confirmed { enrolled: boolean; recoveryCodes?: string[] }
  */
 export function WhatsappEnrol({ onEnrolled }: { onEnrolled: (recoveryCodes: string[] | undefined) => void }) {
   const [phone, setPhone] = useState("");
-  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [requested, setRequested] = useState<WhatsappCodeRequest | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -21,8 +22,8 @@ export function WhatsappEnrol({ onEnrolled }: { onEnrolled: (recoveryCodes: stri
     setError(null);
     setBusy(true);
     try {
-      const out = await apiFetch<Sent>("/admin/mfa/whatsapp/enroll/start", { method: "POST", body: { phone: phone.trim() } });
-      setSentTo(out.last4);
+      const out = await apiFetch<WhatsappCodeRequest>("/admin/mfa/whatsapp/enroll/start", { method: "POST", body: { phone: phone.trim() } });
+      setRequested(out);
       setCode("");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not send the code. Please try again.");
@@ -45,10 +46,10 @@ export function WhatsappEnrol({ onEnrolled }: { onEnrolled: (recoveryCodes: stri
     }
   }
 
-  if (sentTo === null) {
+  if (requested === null) {
     return (
       <form className="whatsapp-enrol" onSubmit={send}>
-        <p className="login-lede">Enter your WhatsApp number with its country code. We will send a 6-digit code to it.</p>
+        <p className="login-lede">Enter your WhatsApp number with its country code. You will get a 6-digit code on WhatsApp to prove it is yours.</p>
         <label>
           WhatsApp number
           <span className="login-field">
@@ -62,7 +63,7 @@ export function WhatsappEnrol({ onEnrolled }: { onEnrolled: (recoveryCodes: stri
   }
   return (
     <form className="whatsapp-enrol" onSubmit={confirm}>
-      <p className="login-lede">We sent a code to your WhatsApp number ending {sentTo}. It lasts 5 minutes.</p>
+      <WhatsappChatPrompt request={requested} />
       <label>
         6-digit code
         <span className="login-field">
@@ -72,9 +73,9 @@ export function WhatsappEnrol({ onEnrolled }: { onEnrolled: (recoveryCodes: stri
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       <button type="submit" className="login-submit" disabled={busy || code.trim().length < 6}>{busy ? "Checking…" : "Confirm and finish"}</button>
       <p className="login-foot">
-        <button type="button" className="link-button" disabled={busy} onClick={() => void send()}>Send a new code</button>
+        <button type="button" className="link-button" disabled={busy} onClick={() => void send()}>{requested.mode === "message" ? "Start again" : "Send a new code"}</button>
         {" · "}
-        <button type="button" className="link-button" onClick={() => { setSentTo(null); setError(null); }}>Use a different number</button>
+        <button type="button" className="link-button" onClick={() => { setRequested(null); setError(null); }}>Use a different number</button>
       </p>
     </form>
   );

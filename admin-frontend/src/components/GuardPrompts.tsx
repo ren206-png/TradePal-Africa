@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch, clearStepUpToken, setGuardHandlers, storeStepUpToken } from "../lib/apiClient";
-import type { MfaMethods } from "../lib/types";
+import type { MfaMethods, WhatsappCodeRequest } from "../lib/types";
+import { WhatsappChatPrompt } from "./WhatsappChatPrompt";
 
 type Prompt = { kind: "step-up" } | { kind: "support-access"; businessId: string } | { kind: "reauth" };
 
@@ -15,13 +16,13 @@ export function GuardPrompts() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [whatsappLast4, setWhatsappLast4] = useState<string | null>(null);
-  const [codeNote, setCodeNote] = useState<string | null>(null);
+  const [codeRequest, setCodeRequest] = useState<WhatsappCodeRequest | null>(null);
   const resolver = useRef<((ok: boolean) => void) | null>(null);
 
   const open = useCallback((next: Prompt) => {
     setValue("");
     setError(null);
-    setCodeNote(null);
+    setCodeRequest(null);
     setWhatsappLast4(null);
     setPrompt(next);
     // A person who gets their codes on WhatsApp can ask for one from this prompt.
@@ -57,8 +58,7 @@ export function GuardPrompts() {
     setError(null);
     setBusy(true);
     try {
-      const out = await apiFetch<{ last4: string }>("/admin/mfa/whatsapp/send", { method: "POST", body: {} });
-      setCodeNote(`We sent a code to your WhatsApp number ending ${out.last4}.`);
+      setCodeRequest(await apiFetch<WhatsappCodeRequest>("/admin/mfa/whatsapp/send", { method: "POST", body: {} }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send the code.");
     } finally {
@@ -118,9 +118,9 @@ export function GuardPrompts() {
         {isReauth && whatsappLast4 !== null ? (
           <p>
             <button type="button" className="link-button" onClick={() => void sendWhatsapp()} disabled={busy}>Send a code to my WhatsApp{whatsappLast4 ? ` (ending ${whatsappLast4})` : ""}</button>
-            {codeNote ? <span role="status"> {codeNote}</span> : null}
           </p>
         ) : null}
+        {isReauth && codeRequest ? <div role="status"><WhatsappChatPrompt request={codeRequest} /></div> : null}
         {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="modal-actions">
           <button type="button" onClick={() => close(false)} disabled={busy}>Cancel</button>

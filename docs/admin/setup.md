@@ -76,17 +76,17 @@ Two owners already exist in production (created 2026-07-23 and 2026-08-01); they
 
 ## 4b. WhatsApp codes (an alternative second step)
 
-Staff can get their sign-in code in a WhatsApp message instead of using an authenticator app. It is **off** until all of this is true:
+Staff can get their sign-in code on WhatsApp instead of using an authenticator app. It is **off** until `ADMIN_WHATSAPP_CODES_ENABLED=true`, the existing `WHATSAPP_ACCESS_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID` are present, and **one** of two delivery ways is set up:
 
-1. A Meta **Authentication** message template exists and is approved in WhatsApp Business Manager (nothing in this repo creates or submits it). Suggested: name `tradepal_admin_code`, language English, category Authentication, body "{{1}} is your verification code." with the **copy code** button, code expiry 5 minutes, security recommendation on. The code sends the one-time code into both the body and the button, as Meta requires.
-2. `WHATSAPP_ADMIN_CODE_TEMPLATE_NAME` (and `WHATSAPP_ADMIN_CODE_TEMPLATE_LANGUAGE` if it is not `en`) are set on the server, and the existing `WHATSAPP_ACCESS_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID` are present.
-3. `ADMIN_WHATSAPP_CODES_ENABLED=true`.
+**A. Message-first (no Meta template needed).** Set `ADMIN_WHATSAPP_CODES_CHAT_NUMBER` to TradePal's own WhatsApp number (digits with country code, for example `18258239920`). The person asks for a code in the console, then sends the words **ADMIN CODE** to that number from their own WhatsApp; TradePal replies with the six-digit code as an ordinary message (allowed because they wrote first, no template). The console shows what to send, with a link that opens WhatsApp with the message ready. They have 10 minutes to send it, then 5 minutes to use the code. TradePal never sends anything to a number that has not just written to it, so this cannot be used to message a stranger. The message must come from the number the person registered.
 
-If the switch is on but the template or credentials are missing, the server logs one warning at start and the option is simply not shown.
+**B. Template.** Create and get approved a Meta **Authentication** template (copy-code button, 5-minute expiry; nothing in this repo creates or submits it), then set `WHATSAPP_ADMIN_CODE_TEMPLATE_NAME` (and `WHATSAPP_ADMIN_CODE_TEMPLATE_LANGUAGE` if not `en`). TradePal then sends the code to the number when asked, with no message needed first. If both A and B are set, B is used.
 
-How it behaves: at first-time setup the person chooses an authenticator app or WhatsApp (type the number with its country code, receive a code, enter it). A person who already has an app can add WhatsApp from **Account security** (the console asks for password and a current code first). At sign-in they choose either way. A code is six digits, lasts 5 minutes, works once, only in the sign-in that asked for it, and allows 5 wrong tries. Recovery codes work for either kind of person. Turning WhatsApp off needs an authenticator app on the account, so nobody is locked out. A second-factor reset (`scripts/resetAdminMfa.ts`) removes the number too.
+If the switch is on but neither way is complete, the server logs one warning at start and the option is not shown.
 
-Limits on sending (so this cannot be used to message strangers): 3 codes per account per 10 minutes, 10 per account per day, 3 first-time proofs per number per hour, and never to a number on the STOP block list.
+How it behaves: at first-time setup the person chooses an authenticator app or WhatsApp (type the number with its country code, get a code, enter it). A person who already has an app can add WhatsApp from **Account security** (the console asks for password and a current code first). At sign-in they choose either way. A code works once, only in the sign-in that asked for it, and allows 5 wrong tries. Recovery codes work for either kind of person. Turning WhatsApp off needs an authenticator app on the account, so nobody is locked out. A second-factor reset (`scripts/resetAdminMfa.ts`) removes the number too.
+
+Limits on asking (so this cannot be used to message strangers): 3 requests per account per 10 minutes, 10 per account per day, 3 first-time proofs per number per hour, and never for a number on the STOP block list.
 
 ## 5. Staff: invitations, roles, accounts
 
