@@ -5,8 +5,8 @@ import helmet from "helmet";
 import { Redis } from "ioredis";
 import { mountAdminConsole } from "./admin/mount.js";
 import { authOptionsFromEnv } from "./admin/adminAuthRoutes.js";
-import { adminWhatsappCodesConfig } from "./admin/adminConfig.js";
-import { createWhatsappCodeSender } from "./admin/whatsappCodes.js";
+import { adminWhatsappCodesConfig, mfaEncryptionKeyFromEnv } from "./admin/adminConfig.js";
+import { createWhatsappCodeSender, handleAdminCodeMessage } from "./admin/whatsappCodes.js";
 import { whatsappTransport } from "./messaging/transport.js";
 import { adminModuleEnabled } from "./admin/adminConfig.js";
 import { createOfflineRouter } from "./offline/routes.js";
@@ -170,10 +170,21 @@ app.get("/webhooks/whatsapp", (req, res) => {
   verifyWebhookSubscription(req, res, verifyToken);
 });
 
+// WhatsApp sign-in codes for staff: offered only with the switch on, a way to deliver the code (an approved authentication template, or
+// the message-first way that needs only TradePal's own WhatsApp number), and the WhatsApp credentials.
+const adminWhatsappCodeConfig = adminWhatsappCodesConfig(process.env);
+const adminWhatsappCodeSender = outboundGateway && adminWhatsappCodeConfig ? createWhatsappCodeSender(whatsappTransport({ prisma, ...outboundGateway }), adminWhatsappCodeConfig) : undefined;
+if (process.env["ADMIN_WHATSAPP_CODES_ENABLED"] === "true" && !adminWhatsappCodeSender) {
+  console.warn("ADMIN_WHATSAPP_CODES_ENABLED is true but WhatsApp codes are NOT offered: set ADMIN_WHATSAPP_CODES_CHAT_NUMBER (or WHATSAPP_ADMIN_CODE_TEMPLATE_NAME) and the WhatsApp credentials.");
+}
+// In message-first mode the person's "ADMIN CODE" message arrives at the webhook below; this answers it before the ordinary pipeline sees it.
+const adminCodeMessageDeps = { prisma, jwtSecret: adminJwtSecret, key: mfaEncryptionKeyFromEnv(process.env), sender: adminWhatsappCodeSender, now: () => new Date() };
+const interceptInbound = adminWhatsappCodeSender?.mode === "message" ? (m: { from: string; text: string }) => handleAdminCodeMessage(adminCodeMessageDeps, m) : undefined;
+
 app.post(
   "/webhooks/whatsapp",
   createWebhookPostHandler(
-    { prisma, enqueueInboundMessage, ...(inboundMessageRateLimiter ? { rateLimiter: inboundMessageRateLimiter } : {}) },
+    { prisma, enqueueInboundMessage, ...(inboundMessageRateLimiter ? { rateLimiter: inboundMessageRateLimiter } : {}), ...(interceptInbound ? { interceptInbound } : {}) },
     appSecret,
   ),
 );
@@ -225,13 +236,6 @@ const adminFrontendOrigins = (process.env["ADMIN_FRONTEND_ORIGINS"] ?? "")
   .split(",")
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0);
-
-// WhatsApp sign-in codes for staff: offered only with the switch on, an approved authentication template named, and the WhatsApp credentials present.
-const adminWhatsappCodeConfig = adminWhatsappCodesConfig(process.env);
-const adminWhatsappCodeSender = outboundGateway && adminWhatsappCodeConfig ? createWhatsappCodeSender(whatsappTransport({ prisma, ...outboundGateway }), adminWhatsappCodeConfig) : undefined;
-if (process.env["ADMIN_WHATSAPP_CODES_ENABLED"] === "true" && !adminWhatsappCodeSender) {
-  console.warn("ADMIN_WHATSAPP_CODES_ENABLED is true but WhatsApp codes are NOT offered: set WHATSAPP_ADMIN_CODE_TEMPLATE_NAME and the WhatsApp credentials.");
-}
 
 // Admin-console Phase 2: mounted only while ADMIN_CONSOLE_ENABLED=true (see src/admin/mount.ts). Off means every /admin path is an ordinary 404.
 // Sessions are required here (a bare token with no live server-side session is refused) and the second factor is enforced unless ADMIN_MFA_ENFORCE=false.

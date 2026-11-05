@@ -3,12 +3,13 @@ import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AuthShell } from "../components/AuthShell";
 import { QrCode } from "../components/QrCode";
+import { WhatsappChatPrompt } from "../components/WhatsappChatPrompt";
 import { WhatsappEnrol } from "../components/WhatsappEnrol";
+import type { WhatsappCodeRequest } from "../lib/types";
 import { ApiError, apiFetch } from "../lib/apiClient";
 
 interface EnrolStart { secret: string; otpauthUri: string }
 interface EnrolConfirm { recoveryCodes: string[] }
-interface Sent { sent: boolean; last4: string }
 
 type EnrolMethod = "app" | "whatsapp";
 type ChallengeMode = "app" | "whatsapp" | "recovery";
@@ -32,7 +33,7 @@ export function MfaPage() {
   const hasApp = mfaMethods ? mfaMethods.totp : true; // an older server says nothing: it only had the app
   const [enrolMethod, setEnrolMethod] = useState<EnrolMethod>("app");
   const [mode, setMode] = useState<ChallengeMode>(!hasApp && whatsappEnrolled ? "whatsapp" : "app");
-  const [codeSent, setCodeSent] = useState<string | null>(null);
+  const [codeRequest, setCodeRequest] = useState<WhatsappCodeRequest | null>(null);
   const useRecovery = mode === "recovery";
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -76,8 +77,8 @@ export function MfaPage() {
     setError(null);
     setBusy(true);
     try {
-      const out = await apiFetch<Sent>("/admin/mfa/whatsapp/send", { method: "POST", body: {} });
-      setCodeSent(out.last4);
+      const out = await apiFetch<WhatsappCodeRequest>("/admin/mfa/whatsapp/send", { method: "POST", body: {} });
+      setCodeRequest(out);
       setCode("");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not send the code. Please try again.");
@@ -90,7 +91,7 @@ export function MfaPage() {
     setMode(next);
     setCode("");
     setError(null);
-    setCodeSent(null);
+    setCodeRequest(null);
   }
 
   function finish() {
@@ -139,7 +140,7 @@ export function MfaPage() {
   }
 
   const whatsappMode = !enrolling && mode === "whatsapp";
-  const needsSend = whatsappMode && codeSent === null;
+  const needsSend = whatsappMode && codeRequest === null;
   return (
     <AuthShell>
       <form className="login-form" onSubmit={needsSend ? (e) => { e.preventDefault(); void sendWhatsappCode(); } : submit}>
@@ -160,14 +161,16 @@ export function MfaPage() {
               <p>Preparing your setup key…</p>
             )}
           </>
+        ) : mode === "whatsapp" && codeRequest !== null ? (
+          <WhatsappChatPrompt request={codeRequest} />
         ) : (
           <p className="login-lede">
             {mode === "recovery"
               ? "Enter one of your recovery codes. Each works once."
               : mode === "whatsapp"
-                ? codeSent === null
-                  ? `We will send a 6-digit code to your WhatsApp number ending ${mfaMethods?.whatsapp.last4 ?? "····"}.`
-                  : `We sent a code to your WhatsApp number ending ${codeSent}. It lasts 5 minutes.`
+                ? mfaMethods?.whatsapp.mode === "message"
+                  ? `You will send a short message from your WhatsApp number ending ${mfaMethods?.whatsapp.last4 ?? "····"}, and we reply with a 6-digit code.`
+                  : `We will send a 6-digit code to your WhatsApp number ending ${mfaMethods?.whatsapp.last4 ?? "····"}.`
                 : "Enter the 6-digit code from your authenticator app."}
           </p>
         )}
@@ -192,7 +195,7 @@ export function MfaPage() {
         {error ? <p className="form-error" role="alert">{error}</p> : null}
 
         {needsSend ? (
-          <button type="submit" className="login-submit" disabled={busy}>{busy ? "Sending…" : "Send me a code"}</button>
+          <button type="submit" className="login-submit" disabled={busy}>{busy ? "Working…" : mfaMethods?.whatsapp.mode === "message" ? "Show me how to get my code" : "Send me a code"}</button>
         ) : (
           <button type="submit" className="login-submit" disabled={busy || (enrolling && !setup) || code.trim().length < 6}>
             {busy ? "Checking…" : enrolling ? "Confirm and finish" : "Continue"}
@@ -205,8 +208,8 @@ export function MfaPage() {
         ) : null}
         {!enrolling ? (
           <p className="login-foot">
-            {mode === "whatsapp" && codeSent !== null ? (
-              <><button type="button" className="link-button" disabled={busy} onClick={() => void sendWhatsappCode()}>Send a new code</button>{" · "}</>
+            {mode === "whatsapp" && codeRequest !== null ? (
+              <><button type="button" className="link-button" disabled={busy} onClick={() => void sendWhatsappCode()}>{codeRequest?.mode === "message" ? "Start again" : "Send a new code"}</button>{" · "}</>
             ) : null}
             {mode !== "app" && hasApp ? (
               <button type="button" className="link-button" onClick={() => switchMode("app")}>Use my authenticator app instead</button>

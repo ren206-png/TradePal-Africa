@@ -40,16 +40,29 @@ export function adminBootstrapAllowed(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 /**
- * WhatsApp sign-in codes (the alternative to an authenticator app). Available only when the switch is exactly "true" AND the Meta
- * AUTHENTICATION template name is set; the template language defaults to "en". The WhatsApp send credentials are the platform's
- * existing ones (WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID); without them nothing can be sent either.
+ * WhatsApp sign-in codes (the alternative to an authenticator app). Available only when the switch is exactly "true" AND one of two ways of
+ * delivering the code is set up. The WhatsApp send credentials are the platform's existing ones (WHATSAPP_ACCESS_TOKEN,
+ * WHATSAPP_PHONE_NUMBER_ID); without them nothing can be sent either.
+ *
+ *  - Template way: `WHATSAPP_ADMIN_CODE_TEMPLATE_NAME` names an approved Meta AUTHENTICATION template; TradePal sends the code to the person's
+ *    number when they ask. Language defaults to "en".
+ *  - Message-first way (no template needed): `ADMIN_WHATSAPP_CODES_CHAT_NUMBER` is TradePal's WhatsApp number. The person sends "ADMIN CODE" to it
+ *    from their own WhatsApp and TradePal replies with the code as an ordinary message (allowed because they wrote first). Nothing is ever sent
+ *    to a number that has not just written to TradePal.
+ * When both are set the template way is used.
  */
-export interface AdminWhatsappCodeConfig { templateName: string; languageCode: string }
+export interface AdminWhatsappCodeConfig { templateName?: string; languageCode: string; chatNumber?: string }
 export function adminWhatsappCodesConfig(env: NodeJS.ProcessEnv = process.env): AdminWhatsappCodeConfig | undefined {
   if (env["ADMIN_WHATSAPP_CODES_ENABLED"] !== "true") return undefined;
   const templateName = (env["WHATSAPP_ADMIN_CODE_TEMPLATE_NAME"] ?? "").trim();
-  if (!templateName) return undefined;
-  return { templateName, languageCode: (env["WHATSAPP_ADMIN_CODE_TEMPLATE_LANGUAGE"] ?? "").trim() || "en" };
+  const chatDigits = (env["ADMIN_WHATSAPP_CODES_CHAT_NUMBER"] ?? "").replace(/[\s().+-]/g, "");
+  const chatNumber = /^[1-9]\d{7,14}$/.test(chatDigits) ? chatDigits : "";
+  if (!templateName && !chatNumber) return undefined;
+  return {
+    languageCode: (env["WHATSAPP_ADMIN_CODE_TEMPLATE_LANGUAGE"] ?? "").trim() || "en",
+    ...(templateName ? { templateName } : {}),
+    ...(chatNumber ? { chatNumber } : {}),
+  };
 }
 
 export interface AdminSessionPolicy {

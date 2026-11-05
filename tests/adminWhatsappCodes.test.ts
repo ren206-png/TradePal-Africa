@@ -17,6 +17,7 @@ let h: Harness;
 const sent: Array<{ to: string; code: string }> = [];
 let failNext = false;
 const sender: WhatsappCodeSender = {
+  mode: "template",
   async send(to, code) {
     if (failNext) { failNext = false; throw new Error("provider down"); }
     sent.push({ to, code });
@@ -66,12 +67,12 @@ describe("adding a WhatsApp number as the first second factor", () => {
     const email = await newAdmin("first");
     const login = await h.login(email);
     expect(login.body.mfa.state).toBe("ENROLMENT_REQUIRED");
-    expect(login.body.mfa.methods).toEqual({ totp: false, whatsapp: { available: true, enrolled: false, last4: null } });
+    expect(login.body.mfa.methods).toEqual({ totp: false, whatsapp: { available: true, enrolled: false, last4: null, mode: "template" } });
     const token = login.body.token as string;
 
     const start = await post(token, "/mfa/whatsapp/enroll/start", { phone: NUMBER });
     expect(start.status).toBe(200);
-    expect(start.body).toEqual({ sent: true, last4: "0100", expiresInSeconds: 300 });
+    expect(start.body).toEqual({ sent: true, mode: "template", last4: "0100", expiresInSeconds: 300 });
     expect(sent[sent.length - 1]!.to).toBe("14035550100");
     expect(lastCode()).toMatch(/^\d{6}$/);
     expect(JSON.stringify(start.body)).not.toContain(lastCode());
@@ -94,7 +95,7 @@ describe("adding a WhatsApp number as the first second factor", () => {
     expect(ok.body.recoveryCodes).toHaveLength(8);
     expect((await h.http().get("/admin/me/permissions").set(h.auth(token))).status).toBe(200);
     const session = await h.http().get("/admin/session").set(h.auth(token));
-    expect(session.body.mfa.methods.whatsapp).toEqual({ available: true, enrolled: true, last4: "0100" });
+    expect(session.body.mfa.methods.whatsapp).toEqual({ available: true, enrolled: true, last4: "0100", mode: "template" });
   });
 
   it("refuses a number that is not in international form, a blocked number, and a repeat for the same number within the hour", async () => {

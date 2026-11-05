@@ -27,6 +27,13 @@ export interface WebhookHandlerDeps {
    * requests (not per-call, which would defeat the point).
    */
   rateLimiter?: InboundMessageRateLimiter;
+  /**
+   * Optional: a first look at a plain-text message before it is queued. Returns true when it handled the message itself (the staff
+   * "ADMIN CODE" sign-in request, see admin/whatsappCodes.ts); the message is then recorded as processed and NOT queued, so the ordinary
+   * merchant pipeline (which would otherwise start onboarding for an unknown number) never sees it. Returns false for everything else,
+   * and a thrown error counts as false: the message then flows on exactly as before.
+   */
+  interceptInbound?: (message: { from: string; text: string; waMessageId: string }) => Promise<boolean>;
 }
 
 export interface ProcessWebhookResult {
@@ -63,6 +70,21 @@ export async function processIncomingWebhook(
           `Rate-limited inbound WhatsApp message from ${message.from}; retry after ${rateLimit.retryAfterSeconds}s`,
         );
         continue;
+      }
+    }
+
+    // A retry of a message already seen is never looked at again (Meta retries aggressively; handling twice must not happen).
+    if (deps.interceptInbound && message.type === "text" && message.text?.body) {
+      const seen = await deps.prisma.webhookEvent.findUnique({ where: { waMessageId: message.id }, select: { id: true } });
+      if (!seen) {
+        const handled = await deps.interceptInbound({ from: message.from, text: message.text.body, waMessageId: message.id }).catch(() => false);
+        if (handled) {
+          await deps.prisma.webhookEvent.createMany({
+            data: [{ waMessageId: message.id, payload: { handledBy: "admin-code" } as Prisma.InputJsonValue, status: "PROCESSED", processedAt: new Date() }],
+            skipDuplicates: true,
+          });
+          continue;
+        }
       }
     }
 

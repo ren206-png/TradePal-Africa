@@ -11,7 +11,7 @@ export type MfaState = "NOT_REQUIRED" | "ENROLMENT_REQUIRED" | "CHALLENGE_REQUIR
 /** Which second-factor options a person has, and whether this server offers WhatsApp codes at all. */
 export interface MfaMethods {
   totp: boolean;
-  whatsapp: { available: boolean; enrolled: boolean; last4: string | null };
+  whatsapp: { available: boolean; enrolled: boolean; last4: string | null; /** How a code reaches the person: sent to them ("template") or sent as a reply once they write first ("message"). */ mode?: "template" | "message" | null };
 }
 
 export interface AdminUser {
@@ -507,3 +507,12 @@ export interface TemplateRow {
 export interface ConsentRow { id: string; phone: string; business: string; purpose: string; status: string; basis: string; textVersion: string; updatedAt: string }
 export interface BlockRow { id: string; phone: string; source: string; reason: string | null; active: boolean; createdAt: string; liftedAt: string | null; liftReason: string | null }
 export interface StuckInboundRow { id: string; waMessageId: string; receivedAt: string; from: string | null; messageType: string | null; replayable: boolean; tooOld: boolean }
+
+/** What the server answers when a WhatsApp code is asked for. In "message" mode nothing has been sent: the person writes `message.text` to `message.to` first. */
+export interface WhatsappCodeRequest {
+  sent: boolean;
+  mode?: "template" | "message";
+  last4: string;
+  expiresInSeconds: number;
+  message?: { to: string; text: string; url: string };
+}

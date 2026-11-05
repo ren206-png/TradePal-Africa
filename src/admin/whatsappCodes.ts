@@ -23,6 +23,8 @@ export const WHATSAPP_MAX_GUESSES = 5;
 const SENDS_PER_ACCOUNT_10_MIN = 3;
 const SENDS_PER_ACCOUNT_DAY = 10;
 const SENDS_PER_NUMBER_HOUR = 3;
+/** "Message" mode: how long a person has to send "ADMIN CODE" after asking. */
+const MESSAGE_WAIT_MS = 10 * 60_000;
 
 export type WhatsappPurpose = "ENROL" | "SIGNIN" | "REAUTH";
 
@@ -34,17 +36,51 @@ export class WhatsappCodeError extends Error {
   }
 }
 
-/** What actually delivers a code. Production wires the WhatsApp transport; tests record. */
+/**
+ * What actually delivers a code. Two ways, chosen by configuration:
+ *  - "template": TradePal sends the code to the person's number when they ask (needs an approved Meta authentication template);
+ *  - "message":  TradePal only ever replies to a person who has just written "ADMIN CODE" to its WhatsApp number (no template needed).
+ */
 export interface WhatsappCodeSender {
+  readonly mode: "template" | "message";
+  /** Delivers a code to this number now. In "message" mode this is only ever called as the reply to that person's own message. */
   send(toPhoneDigits: string, code: string): Promise<void>;
+  /** "message" mode: the number people write to, digits with country code. */
+  readonly chatNumber?: string;
 }
 
+/** The phrase a person sends to ask for a code in "message" mode. */
+export const WHATSAPP_CODE_KEYWORD = "ADMIN CODE";
+const KEYWORD_RE = /^\s*admin\s+code\s*$/i;
+export const codeReplyText = (code: string): string => `Your TradePal Admin sign-in code is ${code}. It works once and expires in 5 minutes. If you did not ask for it, ignore this message and do not share it.`;
+
 export function createWhatsappCodeSender(transport: MessageTransport, config: AdminWhatsappCodeConfig): WhatsappCodeSender {
+  if (config.templateName) {
+    const templateName = config.templateName;
+    return {
+      mode: "template",
+      async send(toPhoneDigits, code) {
+        await transport.sendTemplate(toPhoneDigits, templateName, config.languageCode, [code], { otpButtonCode: code });
+      },
+    };
+  }
   return {
+    mode: "message",
+    ...(config.chatNumber ? { chatNumber: config.chatNumber } : {}),
     async send(toPhoneDigits, code) {
-      await transport.sendTemplate(toPhoneDigits, config.templateName, config.languageCode, [code], { otpButtonCode: code });
+      await transport.sendText(toPhoneDigits, codeReplyText(code));
     },
   };
+}
+
+/** What the person must do next, shown in the console in "message" mode. */
+export interface WhatsappChatInstruction { to: string; text: string; url: string }
+export interface WhatsappIssued {
+  last4: string;
+  expiresInSeconds: number;
+  mode: "template" | "message";
+  /** Present in "message" mode: the code has NOT been sent; it arrives as a reply once the person sends this message. */
+  message?: WhatsappChatInstruction;
 }
 
 export interface WhatsappCodeDeps {
@@ -73,10 +109,11 @@ export async function hasConfirmedWhatsapp(prisma: PrismaClient, adminUserId: st
   return f !== null;
 }
 
-export interface WhatsappMethodInfo { available: boolean; enrolled: boolean; last4: string | null }
+export interface WhatsappMethodInfo { available: boolean; enrolled: boolean; last4: string | null; mode: "template" | "message" | null }
 export async function whatsappMethodInfo(deps: Pick<WhatsappCodeDeps, "prisma" | "sender" | "key">, adminUserId: string): Promise<WhatsappMethodInfo> {
   const f = await deps.prisma.adminWhatsappFactor.findFirst({ where: { adminUserId, disabledAt: null, confirmedAt: { not: null } }, select: { phoneLast4: true } });
-  return { available: !!deps.sender && !!deps.key, enrolled: f !== null, last4: f?.phoneLast4 ?? null };
+  const available = !!deps.sender && !!deps.key && (deps.sender.mode === "template" || !!deps.sender.chatNumber);
+  return { available, enrolled: f !== null, last4: f?.phoneLast4 ?? null, mode: available ? deps.sender!.mode : null };
 }
 
 function requireAvailable(deps: WhatsappCodeDeps): { sender: WhatsappCodeSender; key: Buffer } {
@@ -88,7 +125,7 @@ async function issueChallenge(
   deps: WhatsappCodeDeps,
   sender: WhatsappCodeSender,
   input: { adminUserId: string; sessionId: string; purpose: WhatsappPurpose; phoneDigits: string },
-): Promise<{ last4: string; expiresInSeconds: number }> {
+): Promise<WhatsappIssued> {
   const { prisma, jwtSecret } = deps;
   const now = deps.now();
   const phoneHash = phoneHashOf(jwtSecret, input.phoneDigits);
@@ -104,10 +141,23 @@ async function issueChallenge(
   }
   if (await isBlocked(prisma, input.phoneDigits)) throw new WhatsappCodeError("BLOCKED_NUMBER", "We cannot send messages to that number.");
 
-  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-  // Only the newest code for this session works: an older one still in someone's chat history is retired.
+  // Only the newest request for this session works: an older one still in someone's chat history is retired.
   await prisma.adminWhatsappChallenge.updateMany({ where: { adminUserId: input.adminUserId, sessionId: input.sessionId, consumedAt: null }, data: { consumedAt: now } });
   const challengeId = randomUUID();
+
+  if (sender.mode === "message") {
+    // Nothing is sent. The person writes first; the code is made and sent as the reply (see handleAdminCodeMessage). Ten minutes to do so.
+    const chatNumber = sender.chatNumber ?? "";
+    await prisma.adminWhatsappChallenge.create({
+      data: { id: challengeId, adminUserId: input.adminUserId, sessionId: input.sessionId, purpose: input.purpose, codeHash: "awaiting-message", awaitingMessage: true, phoneHash, expiresAt: new Date(now.getTime() + MESSAGE_WAIT_MS), createdAt: now },
+    });
+    return {
+      last4: last4Of(input.phoneDigits), expiresInSeconds: Math.floor(MESSAGE_WAIT_MS / 1000), mode: "message",
+      message: { to: chatNumber, text: WHATSAPP_CODE_KEYWORD, url: `https://wa.me/${chatNumber}?text=${encodeURIComponent(WHATSAPP_CODE_KEYWORD)}` },
+    };
+  }
+
+  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
   await prisma.adminWhatsappChallenge.create({
     data: { id: challengeId, adminUserId: input.adminUserId, sessionId: input.sessionId, purpose: input.purpose, codeHash: codeHashOf(jwtSecret, challengeId, code), phoneHash, expiresAt: new Date(now.getTime() + WHATSAPP_CODE_TTL_MS), createdAt: now },
   });
@@ -117,11 +167,42 @@ async function issueChallenge(
     await prisma.adminWhatsappChallenge.update({ where: { id: challengeId }, data: { consumedAt: now } });
     throw new WhatsappCodeError("SEND_FAILED", "We could not send the code. Try again in a minute, or use your authenticator app or a recovery code.");
   }
-  return { last4: last4Of(input.phoneDigits), expiresInSeconds: Math.floor(WHATSAPP_CODE_TTL_MS / 1000) };
+  return { last4: last4Of(input.phoneDigits), expiresInSeconds: Math.floor(WHATSAPP_CODE_TTL_MS / 1000), mode: "template" };
+}
+
+/**
+ * "Message" mode: a person has just written "ADMIN CODE" to TradePal's WhatsApp number. If that number belongs to a pending request (made from a
+ * password-signed-in session, within ten minutes), make the code and reply with it, which is allowed because they wrote first. Returns true when the
+ * message was handled here (the caller then does not treat it as an ordinary message); false for everything else, so any other message, and a
+ * "ADMIN CODE" from a number nobody asked about, flows on exactly as before. Never sends to anyone who has not just written.
+ */
+export async function handleAdminCodeMessage(deps: WhatsappCodeDeps, message: { from: string; text: string }): Promise<boolean> {
+  if (deps.sender?.mode !== "message" || !KEYWORD_RE.test(message.text)) return false;
+  const digits = message.from.replace(/\D/g, "");
+  if (!/^[1-9]\d{7,14}$/.test(digits)) return false;
+  const now = deps.now();
+  const phoneHash = phoneHashOf(deps.jwtSecret, digits);
+  const pending = await deps.prisma.adminWhatsappChallenge.findFirst({
+    where: { phoneHash, awaitingMessage: true, consumedAt: null, expiresAt: { gt: now } },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!pending) return false;
+  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  const claimed = await deps.prisma.adminWhatsappChallenge.updateMany({
+    where: { id: pending.id, awaitingMessage: true, consumedAt: null },
+    data: { awaitingMessage: false, codeHash: codeHashOf(deps.jwtSecret, pending.id, code), attempts: 0, expiresAt: new Date(now.getTime() + WHATSAPP_CODE_TTL_MS) },
+  });
+  if (claimed.count !== 1) return true; // a repeat of the same message a moment later: already answered
+  try {
+    await deps.sender.send(digits, code);
+  } catch {
+    await deps.prisma.adminWhatsappChallenge.update({ where: { id: pending.id }, data: { consumedAt: now } });
+  }
+  return true;
 }
 
 /** Starts adding a number: stores it (encrypted, unconfirmed) and sends the proving code. Refuses when a number is already confirmed. */
-export async function startWhatsappEnrolment(deps: WhatsappCodeDeps, admin: { id: string }, sessionId: string, phoneInput: string): Promise<{ last4: string; expiresInSeconds: number }> {
+export async function startWhatsappEnrolment(deps: WhatsappCodeDeps, admin: { id: string }, sessionId: string, phoneInput: string): Promise<WhatsappIssued> {
   const { sender, key } = requireAvailable(deps);
   const digits = normalisePhone(phoneInput);
   if (await hasConfirmedWhatsapp(deps.prisma, admin.id)) throw new WhatsappCodeError("ALREADY_ENROLLED", "A WhatsApp number is already set up. Remove it first to use a different one.");
@@ -131,7 +212,7 @@ export async function startWhatsappEnrolment(deps: WhatsappCodeDeps, admin: { id
 }
 
 /** Sends a sign-in (or re-authentication) code to the confirmed number. */
-export async function sendWhatsappCode(deps: WhatsappCodeDeps, admin: { id: string }, sessionId: string, purpose: "SIGNIN" | "REAUTH"): Promise<{ last4: string; expiresInSeconds: number }> {
+export async function sendWhatsappCode(deps: WhatsappCodeDeps, admin: { id: string }, sessionId: string, purpose: "SIGNIN" | "REAUTH"): Promise<WhatsappIssued> {
   const { sender, key } = requireAvailable(deps);
   const factor = await deps.prisma.adminWhatsappFactor.findFirst({ where: { adminUserId: admin.id, disabledAt: null, confirmedAt: { not: null } } });
   if (!factor) throw new WhatsappCodeError("NO_FACTOR", "No WhatsApp number is set up for this account.");
@@ -148,7 +229,7 @@ async function verifyChallenge(deps: WhatsappCodeDeps, adminUserId: string, sess
   if (!/^\d{6}$/.test(cleaned)) throw bad;
   const now = deps.now();
   const challenge = await deps.prisma.adminWhatsappChallenge.findFirst({
-    where: { adminUserId, sessionId, purpose: { in: purposes }, consumedAt: null, expiresAt: { gt: now } },
+    where: { adminUserId, sessionId, purpose: { in: purposes }, consumedAt: null, awaitingMessage: false, expiresAt: { gt: now } },
     orderBy: { createdAt: "desc" },
   });
   if (!challenge) throw bad;
@@ -186,7 +267,7 @@ export async function verifyWhatsappCode(deps: WhatsappCodeDeps, adminUserId: st
 
 /** Whether a live (unused, unexpired) code has been sent for this session: tells a re-authentication which kind of code it was given. */
 export async function hasLiveWhatsappCode(deps: WhatsappCodeDeps, adminUserId: string, sessionId: string): Promise<boolean> {
-  const c = await deps.prisma.adminWhatsappChallenge.findFirst({ where: { adminUserId, sessionId, consumedAt: null, expiresAt: { gt: deps.now() } }, select: { id: true } });
+  const c = await deps.prisma.adminWhatsappChallenge.findFirst({ where: { adminUserId, sessionId, consumedAt: null, awaitingMessage: false, expiresAt: { gt: deps.now() } }, select: { id: true } });
   return c !== null;
 }
 

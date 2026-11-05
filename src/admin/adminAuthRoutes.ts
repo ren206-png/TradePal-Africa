@@ -20,7 +20,7 @@ import {
 } from "./mfa.js";
 import {
   WhatsappCodeError, confirmWhatsappEnrolment, hasConfirmedWhatsapp, hasLiveWhatsappCode, removeWhatsappFactor, sendWhatsappCode,
-  startWhatsappEnrolment, verifyWhatsappCode, whatsappMethodInfo, type WhatsappCodeDeps, type WhatsappCodeSender, type WhatsappMethodInfo,
+  startWhatsappEnrolment, verifyWhatsappCode, whatsappMethodInfo, type WhatsappCodeDeps, type WhatsappCodeSender, type WhatsappIssued, type WhatsappMethodInfo,
 } from "./whatsappCodes.js";
 import { callerHashes, recordSecurityEvent, type SecurityEventInput } from "./securityEvents.js";
 
@@ -122,6 +122,14 @@ async function blockedFromAddingMethod(ctx: AdminAuthContext, req: Authenticated
     return true;
   }
   return false;
+}
+
+/**
+ * What the screens get after asking for a code. "template" mode: the code is on its way (`sent: true`). "message" mode: nothing has been sent;
+ * `message` says what to send from WhatsApp, and the code arrives as the reply.
+ */
+function issuedBody(out: WhatsappIssued) {
+  return { sent: out.mode === "template", mode: out.mode, last4: out.last4, expiresInSeconds: out.expiresInSeconds, ...(out.message ? { message: out.message } : {}) };
 }
 
 const whatsappErrorStatus: Record<WhatsappCodeError["code"], number> = {
@@ -341,8 +349,8 @@ export function createSessionRouter(ctx: AdminAuthContext): Router {
       if (await blockedFromAddingMethod(ctx, req, res, admin.id)) return;
       try {
         const out = await startWhatsappEnrolment(whatsappDeps(ctx), { id: admin.id }, sessionIdOf(req, admin), parsed.data.phone);
-        await event(ctx, req, res, { type: "WHATSAPP_ENROLL_STARTED", result: "SUCCESS", adminUserId: admin.id, metadata: { last4: out.last4 } });
-        res.json({ sent: true, last4: out.last4, expiresInSeconds: out.expiresInSeconds });
+        await event(ctx, req, res, { type: "WHATSAPP_ENROLL_STARTED", result: "SUCCESS", adminUserId: admin.id, metadata: { last4: out.last4, mode: out.mode } });
+        res.json(issuedBody(out));
       } catch (error) {
         if (!(error instanceof WhatsappCodeError)) throw error;
         await event(ctx, req, res, { type: "WHATSAPP_CODE_FAILED", result: "FAILURE", adminUserId: admin.id, metadata: { stage: "enrol-start", reason: error.code } });
@@ -389,8 +397,8 @@ export function createSessionRouter(ctx: AdminAuthContext): Router {
       const purpose = req.adminSession?.mfaVerifiedAt ? "REAUTH" : "SIGNIN";
       try {
         const out = await sendWhatsappCode(whatsappDeps(ctx), { id: admin.id }, sessionIdOf(req, admin), purpose);
-        await event(ctx, req, res, { type: "WHATSAPP_CODE_SENT", result: "SUCCESS", adminUserId: admin.id, metadata: { purpose, last4: out.last4 } });
-        res.json({ sent: true, last4: out.last4, expiresInSeconds: out.expiresInSeconds });
+        await event(ctx, req, res, { type: "WHATSAPP_CODE_SENT", result: "SUCCESS", adminUserId: admin.id, metadata: { purpose, last4: out.last4, mode: out.mode } });
+        res.json(issuedBody(out));
       } catch (error) {
         if (!(error instanceof WhatsappCodeError)) throw error;
         await event(ctx, req, res, { type: "WHATSAPP_CODE_FAILED", result: "FAILURE", adminUserId: admin.id, metadata: { stage: "send", reason: error.code } });
